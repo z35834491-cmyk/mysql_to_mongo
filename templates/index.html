@@ -750,6 +750,7 @@
                             <div class="card-header" style="margin-bottom: 10px; justify-content: space-between; display: flex;">
                                 <span style="font-weight: bold;">Archived Logs (Local)</span>
                                 <div style="display: flex; gap: 10px;">
+                                    <el-button @click="showMultiLogSearch" type="primary" plain>Combined Search</el-button>
                                     <el-input v-model="logSearch" placeholder="Search logs..." style="width: 200px;" clearable>
                                         <template #prefix><el-icon><Search /></el-icon></template>
                                     </el-input>
@@ -757,7 +758,8 @@
                                 </div>
                             </div>
                             
-                            <el-table :data="filteredLogFiles" style="width: 100%" height="500" border>
+                            <el-table :data="filteredLogFiles" style="width: 100%" height="500" border @selection-change="handleLogSelectionChange">
+                                <el-table-column type="selection" width="55"></el-table-column>
                                 <el-table-column prop="name" label="Filename" sortable></el-table-column>
                                 <el-table-column prop="size" label="Size" sortable width="150">
                                     <template #default="scope">{{ formatSize(scope.row.size) }}</template>
@@ -886,6 +888,43 @@
                     </el-tabs>
                 </div>
 
+                <!-- Multi Log Search Dialog -->
+                <el-dialog v-model="multiLogDialogVisible" title="Combined Log Search" width="80%">
+                    <div style="margin-bottom: 20px;">
+                        <el-form :inline="true">
+                            <el-form-item label="Keywords">
+                                <el-input v-model="multiLogKeyword" placeholder="Enter keywords (AND logic)" style="width: 300px;"></el-input>
+                            </el-form-item>
+                            <el-form-item>
+                                <el-button type="primary" @click="performMultiLogSearch" :loading="multiLogLoading">Search</el-button>
+                                <el-button @click="downloadMultiLogResults" :disabled="!multiLogResults.length">Download Results</el-button>
+                            </el-form-item>
+                        </el-form>
+                        <div style="margin-top: 10px; color: #606266; font-size: 12px;">
+                            Searching in {{ selectedLogFiles.length }} selected files.
+                        </div>
+                    </div>
+
+                    <el-table :data="paginatedMultiLogResults" border height="400" v-loading="multiLogLoading">
+                        <el-table-column prop="file" label="File" width="250"></el-table-column>
+                        <el-table-column prop="line" label="Line" width="80"></el-table-column>
+                        <el-table-column prop="content" label="Content">
+                            <template #default="scope">
+                                <span v-html="highlightLogLine(scope.row.content)"></span>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                    
+                    <div style="margin-top: 10px; text-align: right;">
+                         <el-pagination
+                            layout="prev, pager, next"
+                            :total="multiLogResults.length"
+                            :page-size="50"
+                            v-model:current-page="multiLogPage"
+                        />
+                    </div>
+                </el-dialog>
+
                 <!-- Log View Dialog -->
                 <el-dialog v-model="logDialogVisible" :title="'Log Content: ' + currentLogFile" width="90%" top="5vh">
                     <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
@@ -894,6 +933,11 @@
                         </el-input>
                         <span style="font-size: 12px; color: #909399;">(Local filtering)</span>
                         <div style="flex-grow: 1;"></div>
+                        <el-select v-model="logPageSize" placeholder="Lines per page" style="width: 120px; margin-right: 10px;">
+                            <el-option label="500 Lines" :value="500"></el-option>
+                            <el-option label="1000 Lines" :value="1000"></el-option>
+                            <el-option label="3000 Lines" :value="3000"></el-option>
+                        </el-select>
                         <el-pagination
                             v-if="logLines.length > 0"
                             small
@@ -3359,6 +3403,78 @@
                     }
                 });
 
+                // Multi Log Search
+                const multiLogDialogVisible = ref(false);
+                const selectedLogFiles = ref([]);
+                const multiLogKeyword = ref('');
+                const multiLogResults = ref([]);
+                const multiLogLoading = ref(false);
+                const multiLogPage = ref(1);
+
+                const handleLogSelectionChange = (val) => {
+                    selectedLogFiles.value = val;
+                };
+
+                const showMultiLogSearch = () => {
+                    if (selectedLogFiles.value.length === 0) {
+                        ElMessage.warning('Please select at least one log file to search.');
+                        return;
+                    }
+                    multiLogDialogVisible.value = true;
+                    multiLogKeyword.value = '';
+                    multiLogResults.value = [];
+                };
+
+                const performMultiLogSearch = async () => {
+                    if (!multiLogKeyword.value) {
+                        ElMessage.warning('Please enter keywords');
+                        return;
+                    }
+                    
+                    multiLogLoading.value = true;
+                    try {
+                        const filenames = selectedLogFiles.value.map(f => f.name);
+                        const res = await fetchWithCSRF('/monitor/logs/multi_search', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                task_id: currentMonitorTask.value.id,
+                                filenames: filenames,
+                                keyword: multiLogKeyword.value
+                            })
+                        });
+                        
+                        if (res.ok) {
+                            multiLogResults.value = await res.json();
+                            multiLogPage.value = 1;
+                        } else {
+                            ElMessage.error('Search failed');
+                        }
+                    } catch (e) {
+                        ElMessage.error(e.message);
+                    } finally {
+                        multiLogLoading.value = false;
+                    }
+                };
+                
+                const downloadMultiLogResults = () => {
+                    if (!multiLogResults.value.length) return;
+                    
+                    const content = multiLogResults.value.map(r => `[${r.file}:${r.line}] ${r.content}`).join('\n');
+                    const blob = new Blob([content], { type: 'text/plain' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `search_results_${new Date().toISOString()}.txt`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                };
+
+                const paginatedMultiLogResults = computed(() => {
+                    const start = (multiLogPage.value - 1) * 50;
+                    return multiLogResults.value.slice(start, start + 50);
+                });
+
                 return {
                     currentView, tasks, connections, syncTasks, monitorTasks, overview, collapseSync, collapseMonitor,
                     createVisible, activeStep, creating, form,
@@ -3393,6 +3509,8 @@
                     formatMetricLabels, getMetricLevelType, getMetricStatusType,
                     formatSize, formatTime,
                     logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine,
+                    multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
+                    handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
                     // deploy
                     deployServers, fetchDeployServers, serverDialogVisible, serverForm, openServerDialog, editServer, saveServer, savingServer,
                     deployStep, selectedServers, handleServerSelection, goToDeployConfig, deploySingle,

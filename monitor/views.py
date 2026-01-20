@@ -158,3 +158,48 @@ def monitor_log_download(request):
         
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename)
 
+@api_view(['POST'])
+def monitor_log_multi_search(request):
+    data = request.data
+    task_id = data.get('task_id')
+    filenames = data.get('filenames', [])
+    keyword = data.get('keyword', '')
+    
+    if not task_id or not filenames or not keyword:
+        return Response({"error": "Missing parameters"}, status=400)
+        
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+    results = []
+    
+    # Simple AND logic for keywords (space separated)
+    keywords = keyword.lower().split()
+    
+    for fname in filenames:
+        if os.path.sep in fname or '..' in fname:
+            continue
+            
+        fpath = os.path.join(log_dir, fname)
+        if not os.path.exists(fpath):
+            continue
+            
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                for i, line in enumerate(f, 1):
+                    line_lower = line.lower()
+                    if all(k in line_lower for k in keywords):
+                        results.append({
+                            "file": fname,
+                            "line": i,
+                            "content": line.strip()
+                        })
+                        # Limit results per file to avoid explosion
+                        if len(results) > 5000: 
+                            break
+        except Exception as e:
+            continue
+            
+        if len(results) > 5000:
+            break
+            
+    return Response(results)
+
