@@ -205,15 +205,28 @@ class MonitorEngine:
         # Write error/alert lines to a separate file
         if error_lines:
             today_str = datetime.date.today().isoformat()
-            # Naming convention: {pod_name}_{today}_errors.log
-            err_filename = f"{source_name}_{today_str}_errors.log"
-            err_path = os.path.join(log_dir, err_filename)
+            
+            # 1. Pod specific error log (existing)
+            # err_filename = f"{source_name}_{today_str}_errors.log"
+            # err_path = os.path.join(log_dir, err_filename)
+            # ...
+            
+            # 2. Task wide aggregated error log (New Requirement)
+            # "task_errors_{today_str}.log"
+            task_err_filename = f"task_errors_{today_str}.log"
+            task_err_path = os.path.join(log_dir, task_err_filename)
+            
             try:
-                with open(err_path, "a", encoding="utf-8") as f:
+                # Append mode is safe for concurrent writes on POSIX usually if small, 
+                # but technically could race. 
+                # Since we are inside a single threaded loop for this task (in _run_loop), 
+                # this is actually safe for this process.
+                with open(task_err_path, "a", encoding="utf-8") as f:
                     for l in error_lines:
-                        f.write(l + "\n")
+                        # Prefix with source pod for clarity in aggregated log
+                        f.write(f"[{source_name}] {l}\n")
             except Exception as e:
-                logger.error(f"Failed to write error log for {source_name}: {e}")
+                logger.error(f"Failed to write aggregated error log: {e}")
 
         if alerts:
             self._send_slack_alert(alerts, task, source_name)
