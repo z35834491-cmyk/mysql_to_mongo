@@ -7,6 +7,7 @@ import logging
 import json
 import requests
 from django.conf import settings
+from django.utils import timezone
 from .models import MonitorTask
 try:
     from kubernetes import client, config as k8s_config
@@ -67,7 +68,7 @@ class MonitorEngine:
                     # Basic scheduling: run if last_run is older than interval
                     # Or just run every loop and let loop sleep handle it?
                     # Better: Check timestamp.
-                    now = datetime.datetime.now()
+                    now = timezone.now()
                     
                     # Convert last_run to offset-naive if needed, or handle timezone
                     # Simplified: if last_run is None or (now - last_run).total_seconds() > poll_interval
