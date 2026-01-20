@@ -26,11 +26,19 @@ class InspectionEngine:
     def config(self, value):
         self._config = value
 
+    def _get_base_url(self):
+        url = self.config.prometheus_url
+        if not url:
+            return ""
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "http://" + url
+        return url.rstrip('/')
+
     def _query_prometheus(self, query):
         if not self.config.prometheus_url:
             return []
         try:
-            url = f"{self.config.prometheus_url.rstrip('/')}/api/v1/query"
+            url = f"{self._get_base_url()}/api/v1/query"
             log("inspection", f"Querying Prometheus: {query}")
             resp = requests.get(url, params={'query': query}, timeout=10)
             if resp.ok:
@@ -44,7 +52,7 @@ class InspectionEngine:
         if not self.config.prometheus_url:
             return []
         try:
-            url = f"{self.config.prometheus_url.rstrip('/')}/api/v1/targets"
+            url = f"{self._get_base_url()}/api/v1/targets"
             resp = requests.get(url, timeout=5)
             if resp.ok:
                 return resp.json().get('data', {}).get('activeTargets', [])
@@ -56,7 +64,7 @@ class InspectionEngine:
         if not self.config.prometheus_url:
             return []
         try:
-            url = f"{self.config.prometheus_url.rstrip('/')}/api/v1/alerts"
+            url = f"{self._get_base_url()}/api/v1/alerts"
             resp = requests.get(url, timeout=5)
             if resp.ok:
                 return resp.json().get('data', {}).get('alerts', [])

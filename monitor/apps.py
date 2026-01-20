@@ -7,7 +7,25 @@ class MonitorConfig(AppConfig):
 
     def ready(self):
         import os
-        if os.environ.get('RUN_MAIN') == 'true' or not os.environ.get('DJANGO_SETTINGS_MODULE'):
-            # Only start in the main process when using runserver
+        import sys
+        
+        # Determine if we are running in the main process (Gunicorn) 
+        # or the inner process of runserver.
+        # Gunicorn does not set RUN_MAIN, but runserver does for the inner reloader.
+        # We want to avoid running in the outer runserver process.
+        
+        is_runserver = 'runserver' in sys.argv
+        should_start = False
+        
+        if is_runserver:
+            # Only start in the inner process of runserver
+            if os.environ.get('RUN_MAIN') == 'true':
+                should_start = True
+        else:
+            # Assume Gunicorn or other production WSGI server -> always start
+            # (Assuming single worker as per entrypoint.sh)
+            should_start = True
+            
+        if should_start:
             from .engine import monitor_engine
             monitor_engine.start()
