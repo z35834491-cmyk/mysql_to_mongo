@@ -12,6 +12,11 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+import warnings
+
+# Suppress FutureWarning from google.auth and google.oauth2 regarding Python 3.9 EOL
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.auth")
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.oauth2")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

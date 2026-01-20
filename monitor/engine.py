@@ -168,25 +168,53 @@ class MonitorEngine:
                         if not logs.endswith('\n'):
                             f.write('\n')
                     
-                    self._analyze_logs(logs, task, pod_name)
+                    self._analyze_logs(logs, task, pod_name, task_log_dir)
                     
             except Exception as e:
                 # logger.warning(f"Failed to read log for {pod_name}: {e}")
                 pass
 
-    def _analyze_logs(self, log_content, task, source_name):
-        if not task.alert_keywords:
-            return
-
+    def _analyze_logs(self, log_content, task, source_name, log_dir):
         lines = log_content.splitlines()
         alerts = []
+        error_lines = []
+        
+        # Default error keywords to capture separately
+        default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
         
         for line in lines:
             if any(k in line for k in task.ignore_keywords):
                 continue
-            if any(k in line for k in task.alert_keywords):
-                alerts.append(line)
+                
+            line_lower = line.lower()
+            
+            # Check for explicitly configured alert keywords
+            is_alert = False
+            if task.alert_keywords:
+                if any(k in line for k in task.alert_keywords):
+                    alerts.append(line)
+                    is_alert = True
+            
+            # Check for generic errors (case insensitive)
+            is_error = any(k in line_lower for k in default_error_keywords)
+            
+            # If it's an alert or a generic error, add to error_lines
+            if is_alert or is_error:
+                error_lines.append(line)
         
+        # Write error/alert lines to a separate file
+        if error_lines:
+            today_str = datetime.date.today().isoformat()
+            # Naming convention: {pod_name}_{today}_errors.log
+            err_filename = f"{source_name}_{today_str}_errors.log"
+            err_path = os.path.join(log_dir, err_filename)
+            try:
+                with open(err_path, "a", encoding="utf-8") as f:
+                    for l in error_lines:
+                        f.write(l + "\n")
+            except Exception as e:
+                logger.error(f"Failed to write error log for {source_name}: {e}")
+
         if alerts:
             self._send_slack_alert(alerts, task, source_name)
 

@@ -765,8 +765,11 @@
                                 <el-table-column prop="mtime" label="Modified Time" sortable width="200">
                                     <template #default="scope">{{ formatTime(scope.row.mtime) }}</template>
                                 </el-table-column>
-                                <el-table-column label="Actions" width="120" align="center">
+                                <el-table-column label="Actions" width="200" align="center">
                                     <template #default="scope">
+                                        <el-button link type="primary" @click="viewLog(scope.row.name)">
+                                            <el-icon><View /></el-icon> View
+                                        </el-button>
                                         <el-button link type="primary" @click="downloadLog(scope.row.name)">
                                             <el-icon><Download /></el-icon> Download
                                         </el-button>
@@ -882,6 +885,13 @@
                         </el-tab-pane>
                     </el-tabs>
                 </div>
+
+                <!-- Log View Dialog -->
+                <el-dialog v-model="logDialogVisible" :title="'Log Content: ' + currentLogFile" width="80%">
+                    <div v-loading="logLoading" style="height: 600px; overflow: auto; background-color: #f5f5f5; padding: 10px; border-radius: 4px;">
+                        <pre style="margin: 0; white-space: pre-wrap; font-family: monospace;">{{ logContent }}</pre>
+                    </div>
+                </el-dialog>
 
                 <!-- Add Monitor Dialog -->
                 <el-dialog v-model="monitorConfigVisible" title="Add Monitor Task" width="500px">
@@ -3199,6 +3209,11 @@
                     finally { monitorSaving.value = false; }
                 };
 
+                const logDialogVisible = ref(false);
+                const logContent = ref('');
+                const currentLogFile = ref('');
+                const logContentLoading = ref(false);
+
                 const fetchLogFiles = async () => {
                     if (!currentMonitorTask.value) return;
                     logsLoading.value = true;
@@ -3219,6 +3234,27 @@
                 const downloadLog = (filename) => {
                     if (!currentMonitorTask.value) return;
                     window.location.href = `/monitor/logs/download?task_id=${currentMonitorTask.value.id}&filename=${encodeURIComponent(filename)}`;
+                };
+
+                const viewLog = async (filename) => {
+                    currentLogFile.value = filename;
+                    logDialogVisible.value = true;
+                    logContent.value = 'Loading...';
+                    logContentLoading.value = true;
+                    
+                    try {
+                        const res = await fetchWithCSRF(`/monitor/logs/view?task_id=${currentMonitorTask.value.id}&filename=${encodeURIComponent(filename)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            logContent.value = data.content;
+                        } else {
+                            logContent.value = "Failed to load log content.";
+                        }
+                    } catch (e) {
+                        logContent.value = "Error: " + e.message;
+                    } finally {
+                        logContentLoading.value = false;
+                    }
                 };
 
                 const handleLogout = () => {
@@ -3254,7 +3290,8 @@
                     // monitor
                     monitorStatus, monitorConfig, monitorActionLoading, monitorSaving,
                     monitorConfigVisible, showCreateMonitorDialog,
-                    logFiles, logsLoading, logSearch, filteredLogFiles, fetchLogFiles, downloadLog,
+                    logFiles, logsLoading, logSearch, filteredLogFiles, fetchLogFiles, downloadLog, viewLog,
+                    logDialogVisible, logContent, currentLogFile, logContentLoading,
                     logMonitorList, logMonitorLoading, currentMonitorTask, newMonitorForm, createMonitorTask, deleteMonitorTask, openMonitorTask, saveCurrentMonitorTask,
                     inspectionReport, inspectionLoading, runInspection, inspectionConfigVisible, inspectionConfig,
                     inspectionHistoryList, inspectionHistorySelected, inspectionHistoryLoading,

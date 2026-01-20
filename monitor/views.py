@@ -99,6 +99,46 @@ def monitor_logs(request):
     return Response(files)
 
 @api_view(['GET'])
+def monitor_log_view(request):
+    filename = request.query_params.get('filename')
+    task_id = request.query_params.get('task_id')
+    
+    if not filename or not task_id:
+        return Response({"error": "filename and task_id required"}, status=400)
+    
+    # Security check
+    if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
+         return Response({"error": "invalid parameters"}, status=400)
+         
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+    file_path = os.path.join(log_dir, filename)
+    
+    if not os.path.exists(file_path):
+        return Response({"error": "File not found"}, status=404)
+        
+    try:
+        # Read file content. Limit to last 100KB to prevent huge payloads
+        stat = os.stat(file_path)
+        size = stat.st_size
+        max_read = 100 * 1024 # 100KB
+        
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            if size > max_read:
+                f.seek(size - max_read)
+                content = f.read()
+                # If we started in the middle of a line, skip first partial line
+                first_newline = content.find('\n')
+                if first_newline != -1:
+                    content = content[first_newline+1:]
+                content = f"... (showing last {len(content)} bytes) ...\n" + content
+            else:
+                content = f.read()
+                
+        return Response({"content": content})
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+@api_view(['GET'])
 def monitor_log_download(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')

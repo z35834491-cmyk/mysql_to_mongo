@@ -5,5 +5,6 @@ urlpatterns = [
     path('tasks', views.monitor_tasks),
     path('tasks/<int:pk>', views.monitor_task_detail),
     path('logs', views.monitor_logs),
+    path('logs/view', views.monitor_log_view),
     path('logs/download', views.monitor_log_download),
 ]
