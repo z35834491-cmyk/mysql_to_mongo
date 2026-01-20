@@ -9,9 +9,22 @@ from core.logging import log
 
 class InspectionEngine:
     def __init__(self):
-        self.config = InspectionConfig.load()
-        # self.reports_dir = 'state/inspection_reports/daily' # Deprecated
-        # os.makedirs(self.reports_dir, exist_ok=True) # Deprecated
+        self._config = None
+
+    @property
+    def config(self):
+        if self._config is None:
+            try:
+                self._config = InspectionConfig.load()
+            except Exception as e:
+                print(f"Warning: Failed to load InspectionConfig: {e}")
+                # Return a dummy config or handle gracefully during migration
+                self._config = InspectionConfig()
+        return self._config
+
+    @config.setter
+    def config(self, value):
+        self._config = value
 
     def _query_prometheus(self, query):
         if not self.config.prometheus_url:
