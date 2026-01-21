@@ -932,6 +932,7 @@
                             <template #prefix><el-icon><Search /></el-icon></template>
                         </el-input>
                         <span style="font-size: 12px; color: #909399;">(Local filtering)</span>
+                        <el-button @click="refreshLogView" :loading="logContentLoading" circle icon="Refresh" size="small" title="Refresh Log"></el-button>
                         <div style="flex-grow: 1;"></div>
                         <el-select v-model="logPageSize" placeholder="Lines per page" style="width: 120px; margin-right: 10px;">
                             <el-option label="500 Lines" :value="500"></el-option>
@@ -3324,6 +3325,16 @@
                             logContent.value = data.content || '';
                             // Split into lines for pagination
                             logLines.value = logContent.value.split('\n');
+                            
+                            // Auto scroll to bottom initially
+                            const totalPages = Math.ceil(logLines.value.length / logPageSize.value);
+                            if (totalPages > 0) logCurrentPage.value = totalPages;
+                            
+                            setTimeout(() => {
+                                const container = document.querySelector('.el-dialog__body div[style*="overflow: auto"]');
+                                if (container) container.scrollTop = container.scrollHeight;
+                            }, 100);
+                            
                         } else {
                             logContent.value = "Failed to load log content.";
                             logLines.value = ["Failed to load log content."];
@@ -3358,6 +3369,36 @@
                     // Auto scroll to top when page changes
                     const container = document.querySelector('.el-dialog__body div[style*="overflow: auto"]');
                     if (container) container.scrollTop = 0;
+                };
+
+                const refreshLogView = async () => {
+                    if (!currentLogFile.value) return;
+                    
+                    logContentLoading.value = true;
+                    try {
+                        const res = await fetchWithCSRF(`/monitor/logs/view?task_id=${currentMonitorTask.value.id}&filename=${encodeURIComponent(currentLogFile.value)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const newContent = data.content || '';
+                            if (newContent !== logContent.value) {
+                                logContent.value = newContent;
+                                logLines.value = logContent.value.split('\n');
+                                
+                                // Auto go to last page and scroll bottom
+                                const totalPages = Math.ceil(logLines.value.length / logPageSize.value);
+                                if (totalPages > 0) logCurrentPage.value = totalPages;
+                                
+                                setTimeout(() => {
+                                    const container = document.querySelector('.el-dialog__body div[style*="overflow: auto"]');
+                                    if (container) container.scrollTop = container.scrollHeight;
+                                }, 100);
+                            }
+                        }
+                    } catch(e) {
+                        console.error(e);
+                    } finally {
+                        logContentLoading.value = false;
+                    }
                 };
 
                 const highlightLogLine = (line) => {
@@ -3508,7 +3549,7 @@
                     monthlyReportVisible, monthlyReportData, openMonthlyReport,
                     formatMetricLabels, getMetricLevelType, getMetricStatusType,
                     formatSize, formatTime,
-                    logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine,
+                    logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine, refreshLogView,
                     multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
                     handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
                     // deploy

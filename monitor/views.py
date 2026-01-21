@@ -117,20 +117,16 @@ def monitor_log_view(request):
         return Response({"error": "File not found"}, status=404)
         
     try:
-        # Read file content. Limit to last 100KB to prevent huge payloads
+        # Read entire file content if possible, but limit to 10MB to prevent memory explosion
         stat = os.stat(file_path)
         size = stat.st_size
-        max_read = 100 * 1024 # 100KB
+        max_read = 10 * 1024 * 1024 # 10MB
         
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             if size > max_read:
-                f.seek(size - max_read)
-                content = f.read()
-                # If we started in the middle of a line, skip first partial line
-                first_newline = content.find('\n')
-                if first_newline != -1:
-                    content = content[first_newline+1:]
-                content = f"... (showing last {len(content)} bytes) ...\n" + content
+                # Too large, maybe just read head/tail or reject? 
+                # User asked to skip if > 10M.
+                return Response({"content": f"File is too large ({size} bytes). Please download to view."})
             else:
                 content = f.read()
                 
