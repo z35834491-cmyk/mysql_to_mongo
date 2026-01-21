@@ -763,12 +763,23 @@
                                 <el-table-column prop="name" label="Filename" sortable>
                                     <template #default="scope">
                                         <div style="display: flex; align-items: center;">
-                                            <el-icon v-if="scope.row.name.includes('errors')" style="color: #F56C6C; margin-right: 5px; font-size: 16px;"><WarningFilled /></el-icon>
-                                            <el-icon v-else style="margin-right: 5px; color: #909399;"><Document /></el-icon>
-                                            <span :style="{ fontWeight: scope.row.name.includes('errors') ? 'bold' : 'normal', color: scope.row.name.includes('errors') ? '#F56C6C' : 'inherit' }">
-                                                {{ scope.row.name }}
-                                            </span>
-                                            <el-tag v-if="scope.row.name.includes('errors')" size="small" type="danger" effect="plain" style="margin-left: 10px; border-radius: 10px;">Alert Log</el-tag>
+                                            <!-- Error Logs -->
+                                            <template v-if="scope.row.name.includes('errors')">
+                                                <el-icon style="color: #F56C6C; margin-right: 5px; font-size: 16px;"><WarningFilled /></el-icon>
+                                                <span style="font-weight: bold; color: #F56C6C;">{{ scope.row.name }}</span>
+                                                <el-tag size="small" type="danger" effect="plain" style="margin-left: 10px; border-radius: 10px;">Alert Log</el-tag>
+                                            </template>
+                                            <!-- System Alert History -->
+                                            <template v-else-if="scope.row.name.includes('alert_history')">
+                                                <el-icon style="color: #409EFF; margin-right: 5px; font-size: 16px;"><BellFilled /></el-icon>
+                                                <span style="font-weight: bold; color: #409EFF;">{{ scope.row.name }}</span>
+                                                <el-tag size="small" type="primary" effect="plain" style="margin-left: 10px; border-radius: 10px;">System History</el-tag>
+                                            </template>
+                                            <!-- Normal Logs -->
+                                            <template v-else>
+                                                <el-icon style="margin-right: 5px; color: #909399;"><Document /></el-icon>
+                                                <span>{{ scope.row.name }}</span>
+                                            </template>
                                         </div>
                                     </template>
                                 </el-table-column>
@@ -967,14 +978,14 @@
                         </span>
                     </div>
                     
-                    <div v-loading="logLoading" style="height: 600px; overflow: auto; background-color: #f5f5f5; padding: 10px; border-radius: 4px; border: 1px solid #dcdfe6;">
+                    <div v-loading="logLoading" style="height: 600px; overflow: auto; background-color: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; border: 1px solid #333;">
                         <template v-if="filteredLogLines.length > 0">
-                            <div v-for="(line, index) in paginatedLogLines" :key="index" style="font-family: monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.5; border-bottom: 1px solid #ebeef5;">
-                                <span style="color: #909399; margin-right: 10px; user-select: none;">{{ (logCurrentPage - 1) * logPageSize + index + 1 }}</span>
+                            <div v-for="(line, index) in paginatedLogLines" :key="index" style="font-family: 'Menlo', 'Monaco', 'Courier New', monospace; white-space: pre-wrap; font-size: 12px; line-height: 1.5; border-bottom: 1px solid #2d2d2d;">
+                                <span style="color: #606266; margin-right: 10px; user-select: none; width: 40px; display: inline-block; text-align: right;">{{ (logCurrentPage - 1) * logPageSize + index + 1 }}</span>
                                 <span v-html="highlightLogLine(line)"></span>
                             </div>
                         </template>
-                        <div v-else style="text-align: center; color: #909399; margin-top: 50px;">
+                        <div v-else style="text-align: center; color: #606266; margin-top: 50px;">
                             No matching logs found.
                         </div>
                     </div>
@@ -3449,14 +3460,15 @@
                     if (logContentSearch.value) {
                         const keyword = logContentSearch.value;
                         const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-                        escaped = escaped.replace(regex, '<span style="background-color: #ffff00; color: #000; font-weight: bold;">$1</span>');
+                        escaped = escaped.replace(regex, '<span style="background-color: #d19a66; color: #000; font-weight: bold;">$1</span>');
                     }
                     
-                    // Simple syntax highlighting for log levels
-                    escaped = escaped.replace(/(INFO)/g, '<span style="color: #409EFF;">$1</span>')
-                                     .replace(/(WARN|WARNING)/g, '<span style="color: #E6A23C;">$1</span>')
-                                     .replace(/(ERROR|FAIL|EXCEPTION|FATAL)/g, '<span style="color: #F56C6C; font-weight: bold;">$1</span>')
-                                     .replace(/(DEBUG)/g, '<span style="color: #909399;">$1</span>');
+                    // Dark theme syntax highlighting
+                    escaped = escaped.replace(/(INFO)/g, '<span style="color: #61afef;">$1</span>')
+                                     .replace(/(WARN|WARNING)/g, '<span style="color: #e5c07b;">$1</span>')
+                                     .replace(/(ERROR|FAIL|EXCEPTION|FATAL)/g, '<span style="color: #e06c75; font-weight: bold;">$1</span>')
+                                     .replace(/(DEBUG)/g, '<span style="color: #98c379;">$1</span>')
+                                     .replace(/(\[.*?\])/g, '<span style="color: #56b6c2;">$1</span>'); // Brackets in cyan
                     
                     return escaped;
                 };

@@ -245,9 +245,9 @@ class MonitorEngine:
                 logger.error(f"Failed to write aggregated error log: {e}")
 
         if alerts:
-            self._send_slack_alert(alerts, task, source_name)
+            self._send_slack_alert(alerts, task, source_name, log_dir)
 
-    def _send_slack_alert(self, alerts, task, source):
+    def _send_slack_alert(self, alerts, task, source, log_dir):
         if not task.slack_webhook_url:
             return
             
@@ -260,12 +260,22 @@ class MonitorEngine:
             "text": msg + "```" + snippet + "```"
         }
         
+        # Log alert attempt to a specific system history log in the task folder
+        alert_history_path = os.path.join(log_dir, "alert_history.log")
+        timestamp = datetime.datetime.now().isoformat()
+        
         try:
             requests.post(task.slack_webhook_url, json=payload, timeout=5)
             task.alerts_sent_count += 1
-            # We don't save task here to avoid excessive DB writes, rely on loop update
+            # Log success
+            with open(alert_history_path, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] [SUCCESS] Sent alert to Slack for {source}. Snippet: {snippet[:50]}...\n")
+                
         except Exception as e:
             logger.error(f"Failed to send slack alert: {e}")
+            # Log failure
+            with open(alert_history_path, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] [FAILED] Failed to send alert to Slack for {source}: {e}\n")
 
     def _rotate_and_archive(self, task):
         retention = task.retention_days
