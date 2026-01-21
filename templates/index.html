@@ -928,11 +928,14 @@
                 <!-- Log View Dialog -->
                 <el-dialog v-model="logDialogVisible" :title="'Log Content: ' + currentLogFile" width="90%" top="5vh">
                     <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
-                        <el-input v-model="logContentSearch" placeholder="Search in logs..." clearable style="width: 300px;">
+                        <el-input v-model="logContentSearch" placeholder="Search in logs (Enter to search server)" clearable style="width: 350px;" @keyup.enter="performSingleLogSearch">
                             <template #prefix><el-icon><Search /></el-icon></template>
+                            <template #append>
+                                <el-button @click="performSingleLogSearch">Search</el-button>
+                            </template>
                         </el-input>
-                        <span style="font-size: 12px; color: #909399;">(Local filtering)</span>
-                        <el-button @click="refreshLogView" :loading="logContentLoading" circle icon="Refresh" size="small" title="Refresh Log"></el-button>
+                        <span style="font-size: 12px; color: #909399;">(Server-side search)</span>
+                        <el-button @click="refreshLogView" :loading="logContentLoading" circle icon="Refresh" size="small" title="Refresh/Reset"></el-button>
                         <div style="flex-grow: 1;"></div>
                         <el-select v-model="logPageSize" placeholder="Lines per page" style="width: 120px; margin-right: 10px;">
                             <el-option label="500 Lines" :value="500"></el-option>
@@ -3346,6 +3349,27 @@
                         logContentLoading.value = false;
                     }
                 };
+
+                const performSingleLogSearch = async () => {
+                    if (!logContentSearch.value || !currentLogFile.value) return;
+                    
+                    logContentLoading.value = true;
+                    try {
+                        // Use backend search for full file access
+                        const res = await fetchWithCSRF(`/monitor/logs/view?task_id=${currentMonitorTask.value.id}&filename=${encodeURIComponent(currentLogFile.value)}&keyword=${encodeURIComponent(logContentSearch.value)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            // If it's a search result, it replaces the content view temporarily
+                            logContent.value = data.content || 'No matches found.';
+                            logLines.value = logContent.value.split('\n');
+                            logCurrentPage.value = 1; // Go to first page of results
+                        }
+                    } catch(e) {
+                        ElMessage.error(e.message);
+                    } finally {
+                        logContentLoading.value = false;
+                    }
+                };
                 
                 // Log View Features
                 const logLines = ref([]);
@@ -3354,9 +3378,9 @@
                 const logPageSize = ref(500); // Lines per page
 
                 const filteredLogLines = computed(() => {
-                    if (!logContentSearch.value) return logLines.value;
-                    const keyword = logContentSearch.value.toLowerCase();
-                    return logLines.value.filter(line => line.toLowerCase().includes(keyword));
+                    // Since we do server-side search now, we just show all lines returned
+                    // But we keep local highlighting logic
+                    return logLines.value;
                 });
 
                 const paginatedLogLines = computed(() => {
@@ -3549,7 +3573,7 @@
                     monthlyReportVisible, monthlyReportData, openMonthlyReport,
                     formatMetricLabels, getMetricLevelType, getMetricStatusType,
                     formatSize, formatTime,
-                    logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine, refreshLogView,
+                    logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine, refreshLogView, performSingleLogSearch,
                     multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
                     handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
                     // deploy

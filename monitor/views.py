@@ -102,6 +102,7 @@ def monitor_logs(request):
 def monitor_log_view(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
+    keyword = request.query_params.get('keyword') # Add search support for single file
     
     if not filename or not task_id:
         return Response({"error": "filename and task_id required"}, status=400)
@@ -117,16 +118,35 @@ def monitor_log_view(request):
         return Response({"error": "File not found"}, status=404)
         
     try:
-        # Read entire file content if possible, but limit to 10MB to prevent memory explosion
         stat = os.stat(file_path)
         size = stat.st_size
         max_read = 10 * 1024 * 1024 # 10MB
         
+        # If search keyword is provided, we scan the whole file (streaming) regardless of size
+        if keyword:
+            results = []
+            keywords = keyword.lower().split()
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                for i, line in enumerate(f, 1):
+                    line_lower = line.lower()
+                    if all(k in line_lower for k in keywords):
+                        # For search results, we just return matching lines to avoid huge payload
+                        results.append(line.rstrip())
+                        if len(results) > 2000: # Limit matches
+                             results.append(f"... (Matches truncated, found > 2000 lines) ...")
+                             break
+            return Response({"content": "\n".join(results), "is_search_result": True})
+
+        # Normal view logic
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             if size > max_read:
-                # Too large, maybe just read head/tail or reject? 
-                # User asked to skip if > 10M.
-                return Response({"content": f"File is too large ({size} bytes). Please download to view."})
+                # Read only last 10MB if too large
+                f.seek(size - max_read)
+                content = f.read()
+                first_newline = content.find('\n')
+                if first_newline != -1:
+                    content = content[first_newline+1:]
+                content = f"... (File is {size} bytes, showing last 10MB. Use search to find older logs or download full file.) ...\n" + content
             else:
                 content = f.read()
                 
