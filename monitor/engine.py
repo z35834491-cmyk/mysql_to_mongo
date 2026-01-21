@@ -182,6 +182,10 @@ class MonitorEngine:
         # Default error keywords to capture separately
         default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
         
+        # Clean keywords once
+        clean_alert_keywords = [k.strip() for k in task.alert_keywords if k.strip()] if task.alert_keywords else []
+        clean_record_keywords = [k.strip() for k in task.record_only_keywords if k.strip()] if task.record_only_keywords else []
+        
         for line in lines:
             if any(k in line for k in task.ignore_keywords):
                 continue
@@ -190,24 +194,31 @@ class MonitorEngine:
             
             # Check for explicitly configured alert keywords
             is_alert = False
-            if task.alert_keywords:
-                # Use simple string containment check.
-                # If users want exact match, they should use regex? 
-                # For now simple substring.
-                # FIX: Check if keywords list is clean (strip whitespace)
-                clean_keywords = [k.strip() for k in task.alert_keywords if k.strip()]
-                if any(k in line for k in clean_keywords):
+            if clean_alert_keywords:
+                if any(k in line for k in clean_alert_keywords):
                     alerts.append(line)
                     is_alert = True
             
             # Check for generic errors (case insensitive)
             is_error = any(k in line_lower for k in default_error_keywords)
             
-            # If it's an alert or a generic error, add to error_lines
-            if is_alert or is_error:
-                error_lines.append(line)
+            # Check for record only keywords
+            is_record = False
+            if clean_record_keywords:
+                 if any(k in line for k in clean_record_keywords):
+                     is_record = True
+
+            # If it's an alert or a generic error or record-only, add to error_lines (which is our "important logs" file)
+            if is_alert or is_error or is_record:
+                # We can prefix type for clarity
+                prefix = ""
+                if is_alert: prefix += "[ALERT]"
+                if is_error: prefix += "[ERROR]"
+                if is_record: prefix += "[RECORD]"
+                
+                error_lines.append(f"{prefix} {line}")
         
-        # Write error/alert lines to a separate file
+        # Write error/alert/record lines to a separate file
         if error_lines:
             today_str = datetime.date.today().isoformat()
             

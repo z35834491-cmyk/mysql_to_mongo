@@ -760,7 +760,18 @@
                             
                             <el-table :data="filteredLogFiles" style="width: 100%" height="500" border @selection-change="handleLogSelectionChange">
                                 <el-table-column type="selection" width="55"></el-table-column>
-                                <el-table-column prop="name" label="Filename" sortable></el-table-column>
+                                <el-table-column prop="name" label="Filename" sortable>
+                                    <template #default="scope">
+                                        <div style="display: flex; align-items: center;">
+                                            <el-icon v-if="scope.row.name.includes('errors')" style="color: #F56C6C; margin-right: 5px; font-size: 16px;"><WarningFilled /></el-icon>
+                                            <el-icon v-else style="margin-right: 5px; color: #909399;"><Document /></el-icon>
+                                            <span :style="{ fontWeight: scope.row.name.includes('errors') ? 'bold' : 'normal', color: scope.row.name.includes('errors') ? '#F56C6C' : 'inherit' }">
+                                                {{ scope.row.name }}
+                                            </span>
+                                            <el-tag v-if="scope.row.name.includes('errors')" size="small" type="danger" effect="plain" style="margin-left: 10px; border-radius: 10px;">Alert Log</el-tag>
+                                        </div>
+                                    </template>
+                                </el-table-column>
                                 <el-table-column prop="size" label="Size" sortable width="150">
                                     <template #default="scope">{{ formatSize(scope.row.size) }}</template>
                                 </el-table-column>
