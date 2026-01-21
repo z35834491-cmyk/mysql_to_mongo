@@ -191,7 +191,12 @@ class MonitorEngine:
             # Check for explicitly configured alert keywords
             is_alert = False
             if task.alert_keywords:
-                if any(k in line for k in task.alert_keywords):
+                # Use simple string containment check.
+                # If users want exact match, they should use regex? 
+                # For now simple substring.
+                # FIX: Check if keywords list is clean (strip whitespace)
+                clean_keywords = [k.strip() for k in task.alert_keywords if k.strip()]
+                if any(k in line for k in clean_keywords):
                     alerts.append(line)
                     is_alert = True
             
