@@ -332,12 +332,12 @@
                         <div class="system-info-item">
                             <el-icon><Monitor /></el-icon>
                             <span>Status:</span>
-                            <span class="system-info-tag">Running</span>
+                            <span class="system-info-tag">{{ systemStats.load_status }}</span>
                         </div>
                         <div class="system-info-item">
                             <el-icon><Cpu /></el-icon>
-                            <span>CPU:</span>
-                            <span class="system-info-tag">2 Cores</span>
+                            <span>Resource:</span>
+                            <span class="system-info-tag">{{ systemStats.cpu_cores }}</span>
                         </div>
                     </div>
                     <div class="header-right">
@@ -363,38 +363,45 @@
                 <el-main>
             <!-- DASHBOARD VIEW -->
             <div v-if="currentView === 'dashboard'">
+                <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Overview</h2>
+                    <el-button type="primary" @click="currentView = 'tasks'; showCreateDialog()">
+                        <el-icon style="margin-right: 5px"><Plus /></el-icon> New Task
+                    </el-button>
+                </div>
+
                 <div class="stat-row" style="margin-bottom: 20px;">
                     <div class="stat-card">
                         <div class="stat-info">
                             <span class="stat-label">Load</span>
-                            <span class="stat-value">Running Smoothly</span>
+                            <span class="stat-value">{{ systemStats.load_status }}</span>
                             <span class="stat-status success">Normal</span>
                         </div>
-                        <el-progress type="circle" :percentage="3" :width="60" color="#20a53a"></el-progress>
+                        <el-progress type="circle" :percentage="systemStats.cpu_usage" :width="60" color="#20a53a"></el-progress>
                     </div>
                     <div class="stat-card">
                         <div class="stat-info">
-                            <span class="stat-label">CPU</span>
-                            <span class="stat-value">2 Cores</span>
-                            <span class="stat-status success">Normal</span>
+                            <span class="stat-label">System</span>
+                            <span class="stat-value">{{ systemStats.cpu_cores }}</span>
+                            <span class="stat-status success">Active</span>
                         </div>
-                        <el-progress type="circle" :percentage="51" :width="60" color="#20a53a"></el-progress>
+                        <el-progress type="circle" :percentage="systemStats.cpu_usage" :width="60" color="#20a53a"></el-progress>
                     </div>
                     <div class="stat-card">
                         <div class="stat-info">
                             <span class="stat-label">Memory</span>
-                            <span class="stat-value">1.0GB / 3.7GB</span>
+                            <span class="stat-value">{{ systemStats.mem_usage }}%</span>
                             <span class="stat-status success">Normal</span>
                         </div>
-                        <el-progress type="circle" :percentage="27" :width="60" color="#20a53a"></el-progress>
+                        <el-progress type="circle" :percentage="systemStats.mem_usage" :width="60" color="#20a53a"></el-progress>
                     </div>
                     <div class="stat-card">
                         <div class="stat-info">
                             <span class="stat-label">Disk (/)</span>
-                            <span class="stat-value">9.6GB / 50.0GB</span>
+                            <span class="stat-value">{{ systemStats.disk_usage }}%</span>
                             <span class="stat-status success">Normal</span>
                         </div>
-                        <el-progress type="circle" :percentage="19" :width="60" color="#20a53a"></el-progress>
+                        <el-progress type="circle" :percentage="systemStats.disk_usage" :width="60" color="#20a53a"></el-progress>
                     </div>
                 </div>
 
@@ -447,38 +454,23 @@
                             <el-card>
                                 <template #header>
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>Software</span>
-                                        <el-icon><MoreFilled /></el-icon>
+                                        <span>Data Sources</span>
+                                        <el-icon @click="currentView = 'connections'" style="cursor: pointer;"><MoreFilled /></el-icon>
                                     </div>
                                 </template>
                                 <div class="software-grid">
-                                    <div class="software-item">
-                                        <div class="software-icon"><el-icon><Operation /></el-icon></div>
+                                    <div class="software-item" v-for="conn in connections.slice(0, 4)" :key="conn.id">
+                                        <div class="software-icon">
+                                            <el-icon v-if="conn.type === 'mysql'"><Operation /></el-icon>
+                                            <el-icon v-else><Connection /></el-icon>
+                                        </div>
                                         <div class="software-info">
-                                            <div class="software-name">MySQL</div>
-                                            <div class="software-status running">Running</div>
+                                            <div class="software-name">{{ conn.name }}</div>
+                                            <div class="software-status running">Connected</div>
                                         </div>
                                     </div>
-                                    <div class="software-item">
-                                        <div class="software-icon"><el-icon><Connection /></el-icon></div>
-                                        <div class="software-info">
-                                            <div class="software-name">MongoDB</div>
-                                            <div class="software-status running">Running</div>
-                                        </div>
-                                    </div>
-                                    <div class="software-item">
-                                        <div class="software-icon"><el-icon><Cpu /></el-icon></div>
-                                        <div class="software-info">
-                                            <div class="software-name">Redis</div>
-                                            <div class="software-status running">Running</div>
-                                        </div>
-                                    </div>
-                                    <div class="software-item">
-                                        <div class="software-icon"><el-icon><Monitor /></el-icon></div>
-                                        <div class="software-info">
-                                            <div class="software-name">Nginx</div>
-                                            <div class="software-status stopped">Stopped</div>
-                                        </div>
+                                    <div v-if="connections.length === 0" style="text-align: center; width: 100%; color: #909399; font-size: 12px; padding: 20px;">
+                                        No connections configured.
                                     </div>
                                 </div>
                             </el-card>
@@ -1829,6 +1821,17 @@
                         const tasks = ref([]);
                         const connections = ref([]);
                         const overview = reactive({ all: 0, sync: 0, monitor: 0 });
+                        const systemStats = reactive({
+                            cpu_usage: 0,
+                            mem_usage: 0,
+                            disk_usage: 0,
+                            load_status: 'Loading...',
+                            cpu_cores: '-',
+                            mem_total: '-',
+                            mem_used: '-',
+                            disk_total: '-',
+                            disk_used: '-'
+                        });
                 
                 // --- Task Creation State ---
                 const createVisible = ref(false);
@@ -2013,7 +2016,7 @@
                                 ctx.fillText(labels[i] + '：' + values[i], legendX, y);
                             }
                         };
-                        const _updateOverview = () => {
+                        const _updateOverview = async () => {
                             overview.sync = syncTasks.value.length;
                             overview.monitor = monitorTasks.value.length;
                             overview.all = tasks.value.length;
@@ -2021,8 +2024,55 @@
                             const stopped = syncTasks.value.filter(t => t.status === 'stopped').length;
                             const error = syncTasks.value.filter(t => t.status === 'error').length;
                             _drawOverviewRing(running, stopped, error);
+
+                            // Try to fetch real system stats from the latest inspection report
+                            try {
+                                const res = await fetchWithCSRF('/inspection/reports?kind=daily&limit=1');
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    if (data.items && data.items.length > 0) {
+                                        const reportRes = await fetchWithCSRF('/inspection/reports/' + data.items[0]);
+                                        if (reportRes.ok) {
+                                            const report = await reportRes.json();
+                                            const metrics = report.metrics_summary || [];
+                                            
+                                            // Extract CPU (Top 1)
+                                            const cpu = metrics.find(m => m.category === 'cpu');
+                                            if (cpu) systemStats.cpu_usage = cpu.value;
+                                            else systemStats.cpu_usage = 0;
+                                            
+                                            // Extract Mem (Top 1)
+                                            const mem = metrics.find(m => m.category === 'memory');
+                                            if (mem) systemStats.mem_usage = mem.value;
+                                            else systemStats.mem_usage = 0;
+                                            
+                                            // Extract Disk (Top 1)
+                                            const disk = metrics.find(m => m.category === 'disk');
+                                            if (disk) systemStats.disk_usage = disk.value;
+                                            else systemStats.disk_usage = 0;
+
+                                            systemStats.load_status = (systemStats.cpu_usage > 80 || systemStats.mem_usage > 90) ? 'Heavy Load' : 'Running Smoothly';
+                                            
+                                            // Additional info
+                                            const targets = metrics.find(m => m.name === 'targets_total');
+                                            if (targets) systemStats.cpu_cores = targets.value + ' Nodes';
+                                            else systemStats.cpu_cores = '0 Nodes';
+                                        }
+                                    } else {
+                                        // No reports yet, set defaults
+                                        systemStats.load_status = 'No Inspection Data';
+                                        systemStats.cpu_usage = 0;
+                                        systemStats.mem_usage = 0;
+                                        systemStats.disk_usage = 0;
+                                        systemStats.cpu_cores = '0 Nodes';
+                                    }
+                                }
+                            } catch (e) { console.error("Failed to fetch system stats:", e); }
                         };
+                        const fetchOverview = _updateOverview;
                         onMounted(() => {
+                            fetchTasks();
+                            fetchConnections();
                             _updateOverview();
                         });
                         watch(tasks, () => _updateOverview(), { deep: true });
@@ -3849,6 +3899,7 @@
                     multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
                     handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
                     logFileListCurrentPage, logFileListPageSize, paginatedLogFileList, handleLogFileListSizeChange, handleLogFileListCurrentChange,
+                    systemStats, fetchOverview,
                     // deploy
                     deployServers, fetchDeployServers, serverDialogVisible, serverForm, openServerDialog, editServer, saveServer, savingServer,
                     deployStep, selectedServers, handleServerSelection, goToDeployConfig, deploySingle,
