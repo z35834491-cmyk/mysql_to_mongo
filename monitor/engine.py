@@ -211,7 +211,8 @@ class MonitorEngine:
             # Check for explicitly configured alert keywords
             is_alert = False
             if clean_alert_keywords:
-                if any(k in line for k in clean_alert_keywords):
+                # Use case-insensitive matching for alert keywords
+                if any(k.lower() in line_lower for k in clean_alert_keywords):
                     alerts.append(line)
                     is_alert = True
             
