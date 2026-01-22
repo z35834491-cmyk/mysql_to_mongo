@@ -1255,6 +1255,7 @@
                 </el-form>
                 <template #footer>
                     <el-button @click="inspectionConfigVisible = false">关闭</el-button>
+                    <el-button type="primary" @click="saveInspectionConfig" :loading="inspectionConfigSaving">保存配置</el-button>
                 </template>
             </el-dialog>
 
@@ -1677,10 +1678,10 @@
                 const inspectionLoading = ref(false);
                 const inspectionConfigVisible = ref(false);
                 const inspectionConfig = ref({
-                    prometheus_url: 'https://prometheus.test.exc888.org',
-                    ark_api_key: '7a15ca7d-a3ec-4818-a0f4-0046cd1bcd49',
-                    ark_model_id: 'doubao-seed-1-6-251015',
-                    ark_base_url: 'https://ark.cn-beijing.volces.com/api/v3'
+                    prometheus_url: 'http://192.168.12.135:30910',
+                    ark_api_key: '',
+                    ark_model_id: 'deepseek-chat',
+                    ark_base_url: 'https://api.deepseek.com'
                 });
                 const inspectionHistoryList = ref([]);
                 const inspectionHistorySelected = ref('');
@@ -2963,10 +2964,47 @@
                 
                 const formatTime = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '-';
 
+                const fetchInspectionConfig = async () => {
+                    try {
+                        const res = await fetchWithCSRF('/inspection/config');
+                        if (res.ok) {
+                            const data = await res.json();
+                            // Only update if backend has data (non-empty)
+                            if (data.prometheus_url) inspectionConfig.value.prometheus_url = data.prometheus_url;
+                            if (data.ark_base_url) inspectionConfig.value.ark_base_url = data.ark_base_url;
+                            if (data.ark_api_key) inspectionConfig.value.ark_api_key = data.ark_api_key;
+                            if (data.ark_model_id) inspectionConfig.value.ark_model_id = data.ark_model_id;
+                        }
+                    } catch (e) { console.error('Failed to load inspection config', e); }
+                };
+
+                const inspectionConfigSaving = ref(false);
+                const saveInspectionConfig = async () => {
+                    inspectionConfigSaving.value = true;
+                    try {
+                        const res = await fetchWithCSRF('/inspection/config', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(inspectionConfig.value)
+                        });
+                        if (res.ok) {
+                            ElMessage.success('配置已保存');
+                            inspectionConfigVisible.value = false;
+                        } else {
+                            ElMessage.error('保存失败');
+                        }
+                    } catch(e) {
+                        ElMessage.error('保存失败: ' + e.message);
+                    } finally {
+                        inspectionConfigSaving.value = false;
+                    }
+                };
+
                 onMounted(() => {
                     fetchTasks();
                     fetchConnections();
                     fetchDeployServers();
+                    fetchInspectionConfig();
                 });
                 // Reset test status if critical fields change
                 watch(() => [connForm.type, connForm.host, connForm.port, connForm.mongo_hosts, connForm.replica_set, connForm.user, connForm.password, connForm.database, connForm.auth_source], () => {
