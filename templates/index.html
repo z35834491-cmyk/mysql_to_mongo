@@ -346,7 +346,7 @@
                                 <span class="el-dropdown-link" style="display:flex; align-items:center; color:#303133; cursor:pointer;">
                                     <el-avatar :size="24" class="header-avatar" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png"></el-avatar>
                                     <span style="margin-left: 8px; font-weight: 500;">{{ currentUser }}</span>
-                                    <el-icon class="header-caret" style="margin-left: 4px;"><Caret-Bottom /></el-icon>
+                                    <el-icon class="header-caret" style="margin-left: 4px;"><CaretBottom /></el-icon>
                                 </span>
                                 <template #dropdown>
                                     <el-dropdown-menu>
@@ -365,7 +365,7 @@
             <div v-if="currentView === 'dashboard'">
                 <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h2 style="margin: 0;">Overview</h2>
-                    <el-button type="primary" @click="currentView = 'tasks'; showCreateDialog()">
+                    <el-button type="primary" @click="showCreateDialog()">
                         <el-icon style="margin-right: 5px"><Plus /></el-icon> New Task
                     </el-button>
                 </div>
@@ -477,15 +477,8 @@
                         </el-col>
                     </el-row>
                 </div>
-            </div>
-
-                <el-row :gutter="20" v-if="currentView === 'tasks' && tasks.length === 0">
-                    <el-col :span="24">
-                        <el-empty description="No active tasks. Go to Task Management to create one."></el-empty>
-                    </el-col>
-                </el-row>
-
-                <!-- Bottom Panels: Sync + Monitor -->
+                
+                <!-- Bottom Panels: Sync + Monitor (Belongs to Overview) -->
                 <el-row :gutter="20" style="margin-top:10px;">
                     <el-col :span="12">
                         <el-card>
@@ -598,6 +591,9 @@
                         </el-card>
                     </el-col>
                 </el-row>
+                
+                <!-- If no tasks at all, show empty state in dashboard -->
+                <el-empty v-if="overview.all === 0" description="No active tasks. Create one to get started." style="margin-top: 40px;"></el-empty>
             </div>
 
             <!-- TASKS VIEW -->
@@ -608,8 +604,10 @@
                         <el-icon style="margin-right: 5px"><Plus /></el-icon> Create Task
                     </el-button>
                 </div>
+
+                <el-empty v-if="tasks.length === 0" description="No active tasks. Create one to get started."></el-empty>
                 
-                <el-table :data="tasks" style="width: 100%" border>
+                <el-table v-else :data="tasks" style="width: 100%" border>
                     <el-table-column prop="task_id" label="Task ID" width="180"></el-table-column>
                     <el-table-column prop="status" label="Status" width="120">
                         <template #default="scope">
@@ -1807,7 +1805,7 @@
             Odometer, List, Connection, Plus, Delete, Right, Edit, Download, 
             Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, 
             SwitchButton, Operation, MoreFilled, Search, View, WarningFilled, 
-            BellFilled, Cpu, Document, ArrowLeft, CaretBottom
+            BellFilled, Cpu, Document, ArrowLeft, CaretBottom, Monitor
         } = ElementPlusIconsVue;
 
                 const app = createApp({
@@ -1815,7 +1813,7 @@
                         Odometer, List, Connection, Plus, Delete, Right, Edit, Download, 
                         Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, 
                         SwitchButton, Operation, MoreFilled, Search, View, WarningFilled, 
-                        BellFilled, Cpu, Document, ArrowLeft, CaretBottom
+                        BellFilled, Cpu, Document, ArrowLeft, CaretBottom, Monitor
                     },
                     setup() {
                         const currentUser = ref("{{ user.username|default:'Admin' }}");
@@ -2035,50 +2033,40 @@
                             const error = syncTasks.value.filter(t => t.status === 'error').length;
                             _drawOverviewRing(running, stopped, error);
 
-                            // Try to fetch real system stats from the latest inspection report
+                            // --- Overview Stats Logic ---
+                            const now = Date.now();
+                            if (!force && now - lastOverviewFetch < 10000) return; // Debounce to 10s
+                            lastOverviewFetch = now;
+
                             try {
                                 const res = await fetchWithCSRF('/inspection/reports?kind=daily&limit=1');
                                 if (res.ok) {
                                     const data = await res.json();
                                     if (data.items && data.items.length > 0) {
-                                        const reportRes = await fetchWithCSRF('/inspection/reports/' + data.items[0]);
-                                        if (reportRes.ok) {
-                                            const report = await reportRes.json();
+                                        const latestDate = data.items[0];
+                                        const fullRes = await fetchWithCSRF('/inspection/reports/' + encodeURIComponent(latestDate) + '?kind=daily');
+                                        if (fullRes.ok) {
+                                            const report = await fullRes.json();
                                             const metrics = report.metrics_summary || [];
-                                            
-                                            // Extract CPU (Top 1)
-                                            const cpu = metrics.find(m => m.category === 'cpu');
-                                            if (cpu) systemStats.cpu_usage = cpu.value;
-                                            else systemStats.cpu_usage = 0;
-                                            
-                                            // Extract Mem (Top 1)
-                                            const mem = metrics.find(m => m.category === 'memory');
-                                            if (mem) systemStats.mem_usage = mem.value;
-                                            else systemStats.mem_usage = 0;
-                                            
-                                            // Extract Disk (Top 1)
-                                            const disk = metrics.find(m => m.category === 'disk');
-                                            if (disk) systemStats.disk_usage = disk.value;
-                                            else systemStats.disk_usage = 0;
-
-                                            systemStats.load_status = (systemStats.cpu_usage > 80 || systemStats.mem_usage > 90) ? 'Heavy Load' : 'Running Smoothly';
-                                            
-                                            // Additional info
-                                            const targets = metrics.find(m => m.name === 'targets_total');
-                                            if (targets) systemStats.cpu_cores = targets.value + ' Nodes';
-                                            else systemStats.cpu_cores = '0 Nodes';
+                                            if (metrics.length > 0) {
+                                                const cpu = metrics.find(m => m.category === 'cpu');
+                                                systemStats.cpu_usage = cpu ? cpu.value : 0;
+                                                const mem = metrics.find(m => m.category === 'memory');
+                                                systemStats.mem_usage = mem ? mem.value : 0;
+                                                const disk = metrics.find(m => m.category === 'disk');
+                                                systemStats.disk_usage = disk ? disk.value : 0;
+                                                systemStats.load_status = (systemStats.cpu_usage > 80 || systemStats.mem_usage > 90) ? 'Heavy Load' : 'Running Smoothly';
+                                                const targets = metrics.find(m => m.name === 'targets_total');
+                                                systemStats.cpu_cores = targets ? targets.value + ' Nodes' : '0 Nodes';
+                                            }
                                         }
                                     } else {
-                                        // No reports yet, set defaults
                                         systemStats.load_status = 'No Inspection Data';
-                                        systemStats.cpu_usage = 0;
-                                        systemStats.mem_usage = 0;
-                                        systemStats.disk_usage = 0;
-                                        systemStats.cpu_cores = '0 Nodes';
                                     }
                                 }
-                            } catch (e) { console.error("Failed to fetch system stats:", e); }
+                            } catch (e) { console.error("Overview update failed", e); }
                         };
+
                         const fetchOverview = _updateOverview;
                         const mysqlConnections = computed(() => connections.value.filter(c => c.type === 'mysql'));
                         const mongoConnections = computed(() => connections.value.filter(c => c.type === 'mongo'));
@@ -2101,18 +2089,28 @@
                 };
 
                 const handleMenuSelect = (index) => {
-                    currentView.value = index;
-                    if (index === 'connections') fetchConnections();
-                    if (index === 'dashboard' || index === 'tasks') fetchTasks();
-                    if (index === 'monitor') {
-                        fetchLogMonitorTasks();
-                    }
-                    if (index === 'inspection') {
-                        fetchInspectionHistory();
-                    }
-                    if (index === 'deploy') {
-                        fetchDeployServers();
-                        initDeployDefaults();
+                    try {
+                        currentView.value = index;
+                        console.log('Navigating to:', index);
+                        
+                        if (index === 'connections') fetchConnections();
+                        if (index === 'dashboard' || index === 'tasks') fetchTasks();
+                        if (index === 'monitor') {
+                            fetchLogMonitorTasks();
+                        }
+                        if (index === 'inspection') {
+                            fetchInspectionHistory();
+                        }
+                        if (index === 'deploy') {
+                            fetchDeployServers();
+                            initDeployDefaults();
+                        }
+                        
+                        // Force an overview update if returning to dashboard
+                        if (index === 'dashboard') _updateOverview(force=true);
+                    } catch (err) {
+                        console.error('Navigation error:', err);
+                        ElMessage.error('Navigation failed: ' + err.message);
                     }
                 };
 
@@ -2122,15 +2120,18 @@
                     if (pollingTimer) clearTimeout(pollingTimer);
                     pollingTimer = setTimeout(async () => {
                         try {
+                            // Only poll the active view's data
                             if (currentView.value === 'dashboard' || currentView.value === 'tasks') {
                                 await fetchTasks();
-                            } else if (currentView.value === 'monitor') {
+                            } else if (currentView.value === 'monitor' && !currentMonitorTask.value) {
                                 await fetchLogMonitorTasks();
                             }
+                        } catch (e) {
+                            console.warn("Polling error:", e);
                         } finally {
-                            startPolling(); // Schedule next poll
+                            startPolling();
                         }
-                    }, 5000); // 5s interval is safer
+                    }, 5000);
                 };
                 // --- Lifecycle ---
                 onMounted(() => {
@@ -2144,10 +2145,17 @@
                 });
 
                 const showCreateDialog = async () => {
-                    await fetchConnections();
-                    form.task_id = 'task_' + Date.now();
-                    activeStep.value = 0;
-                    createVisible.value = true;
+                    console.log('Opening task creation dialog...');
+                    try {
+                        await fetchConnections();
+                        form.task_id = 'task_' + Date.now();
+                        activeStep.value = 0;
+                        createVisible.value = true;
+                        console.log('Dialog visible set to true');
+                    } catch (err) {
+                        console.error('Failed to open create dialog:', err);
+                        ElMessage.error('Failed to open dialog: ' + err.message);
+                    }
                 };
 
                 const showConnDialog = () => {
