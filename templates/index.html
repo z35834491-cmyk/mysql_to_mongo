@@ -758,7 +758,7 @@
                                 </div>
                             </div>
                             
-                            <el-table :data="filteredLogFiles" style="width: 100%" height="500" border @selection-change="handleLogSelectionChange">
+                            <el-table :data="paginatedLogFileList" style="width: 100%" height="500" border @selection-change="handleLogSelectionChange">
                                 <el-table-column type="selection" width="55"></el-table-column>
                                 <el-table-column prop="name" label="Filename" sortable>
                                     <template #default="scope">
@@ -806,6 +806,20 @@
                                     </template>
                                 </el-table-column>
                             </el-table>
+                            
+                            <!-- File List Pagination -->
+                            <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+                                <el-pagination
+                                    v-if="filteredLogFiles.length > 0"
+                                    v-model:current-page="logFileListCurrentPage"
+                                    v-model:page-size="logFileListPageSize"
+                                    :page-sizes="[10, 20, 50]"
+                                    layout="total, sizes, prev, pager, next"
+                                    :total="filteredLogFiles.length"
+                                    @size-change="handleLogFileListSizeChange"
+                                    @current-change="handleLogFileListCurrentChange"
+                                />
+                            </div>
                         </el-tab-pane>
 
                         <el-tab-pane label="Configuration">
@@ -966,9 +980,10 @@
                         <el-button @click="refreshLogView" :loading="logContentLoading" circle icon="Refresh" size="small" title="Refresh/Reset"></el-button>
                         <div style="flex-grow: 1;"></div>
                         <el-select v-model="logPageSize" placeholder="Lines per page" style="width: 120px; margin-right: 10px;">
+                            <el-option label="100 Lines" :value="100"></el-option>
+                            <el-option label="200 Lines" :value="200"></el-option>
                             <el-option label="500 Lines" :value="500"></el-option>
                             <el-option label="1000 Lines" :value="1000"></el-option>
-                            <el-option label="3000 Lines" :value="3000"></el-option>
                         </el-select>
                         <el-pagination
                             v-if="logLines.length > 0"
@@ -3548,6 +3563,25 @@
                 const multiLogResults = ref([]);
                 const multiLogLoading = ref(false);
                 const multiLogPage = ref(1);
+                
+                // Log File List Pagination
+                const logFileListCurrentPage = ref(1);
+                const logFileListPageSize = ref(10);
+                
+                const paginatedLogFileList = computed(() => {
+                    const start = (logFileListCurrentPage.value - 1) * logFileListPageSize.value;
+                    const end = start + logFileListPageSize.value;
+                    return filteredLogFiles.value.slice(start, end);
+                });
+                
+                const handleLogFileListSizeChange = (val) => {
+                    logFileListPageSize.value = val;
+                    logFileListCurrentPage.value = 1;
+                };
+                
+                const handleLogFileListCurrentChange = (val) => {
+                    logFileListCurrentPage.value = val;
+                };
 
                 const handleLogSelectionChange = (val) => {
                     selectedLogFiles.value = val;
@@ -3649,6 +3683,7 @@
                     logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine, refreshLogView, performSingleLogSearch,
                     multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
                     handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
+                    logFileListCurrentPage, logFileListPageSize, paginatedLogFileList, handleLogFileListSizeChange, handleLogFileListCurrentChange,
                     // deploy
                     deployServers, fetchDeployServers, serverDialogVisible, serverForm, openServerDialog, editServer, saveServer, savingServer,
                     deployStep, selectedServers, handleServerSelection, goToDeployConfig, deploySingle,

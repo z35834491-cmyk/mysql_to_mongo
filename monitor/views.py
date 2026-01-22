@@ -120,7 +120,7 @@ def monitor_log_view(request):
     try:
         stat = os.stat(file_path)
         size = stat.st_size
-        max_read = 10 * 1024 * 1024 # 10MB
+        max_read = 1 * 1024 * 1024 # 1MB (Requested by user)
         
         # If search keyword is provided, we scan the whole file (streaming) regardless of size
         if keyword:
@@ -140,13 +140,13 @@ def monitor_log_view(request):
         # Normal view logic
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             if size > max_read:
-                # Read only last 10MB if too large
+                # Read only last 1MB if too large
                 f.seek(size - max_read)
                 content = f.read()
                 first_newline = content.find('\n')
                 if first_newline != -1:
                     content = content[first_newline+1:]
-                content = f"... (File is {size} bytes, showing last 10MB. Use search to find older logs or download full file.) ...\n" + content
+                content = f"... (File is {size} bytes, showing last 1MB. Use search to find older logs or download full file.) ...\n" + content
             else:
                 content = f.read()
                 
