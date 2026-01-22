@@ -479,8 +479,8 @@
                 </div>
             </div>
 
-                <el-row :gutter="20">
-                    <el-col :span="24" v-if="tasks.length === 0">
+                <el-row :gutter="20" v-if="currentView === 'tasks' && tasks.length === 0">
+                    <el-col :span="24">
                         <el-empty description="No active tasks. Go to Task Management to create one."></el-empty>
                     </el-col>
                 </el-row>
@@ -1803,10 +1803,20 @@
 
         const { createApp, ref, reactive, onMounted, computed, watch, nextTick } = Vue;
         const { ElMessage, ElMessageBox } = ElementPlus;
-        const { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled } = ElementPlusIconsVue;
+        const { 
+            Odometer, List, Connection, Plus, Delete, Right, Edit, Download, 
+            Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, 
+            SwitchButton, Operation, MoreFilled, Search, View, WarningFilled, 
+            BellFilled, Cpu, Document, ArrowLeft, CaretBottom
+        } = ElementPlusIconsVue;
 
                 const app = createApp({
-                    components: { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled },
+                    components: { 
+                        Odometer, List, Connection, Plus, Delete, Right, Edit, Download, 
+                        Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, 
+                        SwitchButton, Operation, MoreFilled, Search, View, WarningFilled, 
+                        BellFilled, Cpu, Document, ArrowLeft, CaretBottom
+                    },
                     setup() {
                         const currentUser = ref("{{ user.username|default:'Admin' }}");
                         const handleUserCommand = (cmd) => {
@@ -2018,8 +2028,8 @@
                         };
                         const _updateOverview = async () => {
                             overview.sync = syncTasks.value.length;
-                            overview.monitor = monitorTasks.value.length;
-                            overview.all = tasks.value.length;
+                            overview.monitor = logMonitorList.value.length; // Use the correct monitor task list
+                            overview.all = tasks.value.length + logMonitorList.value.length;
                             const running = syncTasks.value.filter(t => t.status === 'running').length;
                             const stopped = syncTasks.value.filter(t => t.status === 'stopped').length;
                             const error = syncTasks.value.filter(t => t.status === 'error').length;
@@ -2075,26 +2085,20 @@
 
                 // --- Methods ---
                 const fetchTasks = async () => {
-                    const res = await fetchWithCSRF('/tasks/status');
-                    const data = await res.json();
-                    tasks.value = data.tasks;
+                    try {
+                        const res = await fetchWithCSRF('/tasks/status');
+                        const data = await res.json();
+                        tasks.value = data.tasks || [];
+                    } catch (e) { console.error("Fetch tasks failed", e); }
                 };
 
                 const fetchConnections = async () => {
-                    const res = await fetchWithCSRF('/connections');
-                    const data = await res.json();
-                    connections.value = data.connections;
+                    try {
+                        const res = await fetchWithCSRF('/connections');
+                        const data = await res.json();
+                        connections.value = data.connections || [];
+                    } catch (e) { console.error("Fetch connections failed", e); }
                 };
-
-                // Polling
-                setInterval(() => {
-                    if (currentView.value === 'dashboard' || currentView.value === 'tasks') {
-                        fetchTasks();
-                    }
-                    if (currentView.value === 'monitor') {
-                        fetchLogMonitorTasks();
-                    }
-                }, 3000);
 
                 const handleMenuSelect = (index) => {
                     currentView.value = index;
@@ -2111,6 +2115,33 @@
                         initDeployDefaults();
                     }
                 };
+
+                // Improved Polling Logic
+                let pollingTimer = null;
+                const startPolling = () => {
+                    if (pollingTimer) clearTimeout(pollingTimer);
+                    pollingTimer = setTimeout(async () => {
+                        try {
+                            if (currentView.value === 'dashboard' || currentView.value === 'tasks') {
+                                await fetchTasks();
+                            } else if (currentView.value === 'monitor') {
+                                await fetchLogMonitorTasks();
+                            }
+                        } finally {
+                            startPolling(); // Schedule next poll
+                        }
+                    }, 5000); // 5s interval is safer
+                };
+                // --- Lifecycle ---
+                onMounted(() => {
+                    fetchTasks();
+                    fetchConnections();
+                    fetchDeployServers();
+                    fetchInspectionConfig();
+                    fetchLogMonitorTasks(); // Initial fetch for monitor count
+                    _updateOverview();
+                    startPolling();
+                });
 
                 const showCreateDialog = async () => {
                     await fetchConnections();
@@ -3752,6 +3783,8 @@
                     window.location.href = '/accounts/logout/';
                 };
 
+                watch(tasks, () => _updateOverview(), { deep: true });
+                watch(logMonitorList, () => _updateOverview(), { deep: true });
                 watch(currentView, (newVal) => {
                     if (newVal === 'monitor') {
                         fetchLogMonitorTasks();
@@ -3849,17 +3882,10 @@
                     return multiLogResults.value.slice(start, start + 50);
                 });
 
-                onMounted(() => {
-                    fetchTasks();
-                    fetchConnections();
-                    fetchDeployServers();
-                    fetchInspectionConfig();
-                    _updateOverview();
-                });
-
                 return {
                     // Icons
                     Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled,
+                    Search, View, WarningFilled, BellFilled, Cpu, Document, ArrowLeft, CaretBottom,
                     // State
                     currentView, tasks, connections, syncTasks, monitorTasks, overview, collapseSync, collapseMonitor,
                     createVisible, activeStep, creating, form,
