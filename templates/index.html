@@ -29,36 +29,41 @@
     </script>
     <style>
         :root {
-            --primary-color: #409EFF;
-            --primary-light: #ecf5ff;
-            --bg-color: #f5f7fa;
+            --primary-color: #20a53a;
+            --primary-light: #e8f5e9;
+            --bg-color: #f0f2f5;
             --card-bg: #ffffff;
             --text-main: #2c3e50;
-            --text-secondary: #7f8c8d;
+            --text-secondary: #909399;
             --sidebar-bg: #1e222d;
-            --sidebar-width: 220px;
+            --sidebar-width: 200px;
             --header-height: 60px;
-            --border-radius: 10px;
+            --border-radius: 8px;
             --transition-speed: 0.3s;
         }
 
-        body { margin: 0; padding: 0; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-main); -webkit-font-smoothing: antialiased; overflow: hidden; }
+        body { margin: 0; padding: 0; font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", Arial, sans-serif; background-color: var(--bg-color); color: var(--text-main); -webkit-font-smoothing: antialiased; overflow: hidden; }
         #app { height: 100vh; display: flex; width: 100%; }
 
         /* Top Header */
         .app-header {
-            background-color: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(10px);
+            background-color: #fff;
             height: var(--header-height);
             display: flex;
             align-items: center;
-            justify-content: flex-end;
-            padding: 0 30px;
+            justify-content: space-between;
+            padding: 0 20px;
             color: var(--text-main);
-            border-bottom: 1px solid rgba(0,0,0,0.05);
+            border-bottom: 1px solid #e6e8eb;
             z-index: 100;
         }
         
+        .header-left { display: flex; align-items: center; gap: 20px; }
+        .header-right { display: flex; align-items: center; gap: 15px; }
+
+        .system-info-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+        .system-info-tag { padding: 2px 8px; border-radius: 4px; background: #f0f2f5; color: #606266; font-weight: 500; }
+
         .header-item {
             display: flex;
             align-items: center;
@@ -80,26 +85,26 @@
         }
         
         .sidebar-header { 
-            padding: 24px 20px; 
+            padding: 20px; 
             display: flex; 
             align-items: center; 
-            gap: 12px;
+            justify-content: center;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
         }
-        .logo-area { display: flex; align-items: center; gap: 12px; }
+        .logo-area { display: flex; align-items: center; gap: 10px; }
         .brand-logo { 
-            width: 36px; 
-            height: 36px; 
-            border-radius: 8px; 
-            background: linear-gradient(135deg, var(--primary-color), #36cfc9);
+            width: 32px; 
+            height: 32px; 
+            border-radius: 6px; 
+            background: var(--primary-color);
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 10px rgba(64, 158, 255, 0.3);
         }
         .brand-logo::before { 
             content: ""; 
-            width: 24px; 
-            height: 24px; 
+            width: 20px; 
+            height: 20px; 
             background-image: url('/ui/images/brand.png'); 
             background-size: contain; 
             background-repeat: no-repeat;
@@ -107,90 +112,114 @@
             filter: brightness(0) invert(1);
         }
         .app-name { 
-            font-size: 18px; 
+            font-size: 16px; 
             font-weight: 700; 
             color: #fff; 
-            letter-spacing: 0.5px;
+            white-space: nowrap;
         }
         
-        .el-menu { border-right: none; background: transparent; padding: 10px; }
+        .el-menu { border-right: none; background: transparent; padding: 10px 0; }
         .el-menu-item { 
-            height: 48px; 
-            line-height: 48px; 
+            height: 50px; 
+            line-height: 50px; 
             margin: 4px 0; 
-            border-radius: 8px; 
+            padding-left: 20px !important;
             color: #a3afb7 !important;
             transition: all 0.2s;
+            position: relative;
         }
         .el-menu-item:hover { 
             background-color: rgba(255,255,255,0.05) !important; 
             color: #fff !important; 
         }
         .el-menu-item.is-active { 
-            background: var(--primary-color) !important; 
-            color: #fff !important; 
-            box-shadow: 0 4px 12px rgba(64,158,255,0.3);
+            background: rgba(32, 165, 58, 0.1) !important; 
+            color: var(--primary-color) !important; 
+        }
+        .el-menu-item.is-active::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background-color: var(--primary-color);
         }
         .el-menu-item .el-icon { font-size: 18px; margin-right: 12px; }
 
         /* Main Content */
         .el-main { 
             background-color: var(--bg-color); 
-            padding: 30px; 
+            padding: 20px; 
             overflow-y: auto; 
             display: flex; 
             flex-direction: column; 
-            gap: 24px;
+            gap: 20px;
         }
 
-        /* Page Header */
-        .page-header { margin-bottom: 24px; }
-        .page-header h2 { 
-            font-size: 26px; 
-            font-weight: 700; 
-            color: #1a1a1a; 
-            margin: 0; 
+        /* Dashboard Styles */
+        .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+        .stat-card {
+            background: #fff;
+            padding: 20px;
+            border-radius: var(--border-radius);
             display: flex;
             align-items: center;
-            gap: 10px;
+            justify-content: space-between;
+            box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
         }
+        .stat-info { display: flex; flex-direction: column; gap: 4px; }
+        .stat-label { font-size: 14px; color: var(--text-secondary); }
+        .stat-value { font-size: 20px; font-weight: 700; color: var(--text-main); }
+        .stat-status { font-size: 12px; margin-top: 4px; }
+        .stat-card .el-progress-circle { width: 60px !important; height: 60px !important; }
+        .stat-card .el-progress__text { font-size: 14px !important; font-weight: 700; }
+
+        .software-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+        .software-item { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 6px; background: #f8f9fb; transition: all 0.2s; }
+        .software-item:hover { background: #f0f2f5; }
+        .software-icon { width: 36px; height: 36px; border-radius: 6px; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--primary-color); box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+        .software-info { flex: 1; }
+        .software-name { font-size: 13px; font-weight: 600; color: var(--text-main); }
+        .software-status { font-size: 11px; margin-top: 2px; }
+        .software-status.running { color: var(--primary-color); }
+        .software-status.stopped { color: #f56c6c; }
 
         /* Cards and Tiles */
         .el-card { 
             border: none; 
             border-radius: var(--border-radius); 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.04); 
-            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
         }
-        .el-card:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+        .el-card__header { padding: 15px 20px; border-bottom: 1px solid #f0f2f5; font-weight: 600; }
         
         .tile { 
             background: #fff; 
-            padding: 24px; 
+            padding: 20px; 
             border-radius: var(--border-radius); 
             display: flex; 
             align-items: center; 
-            gap: 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+            gap: 15px;
+            box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
             transition: all 0.3s ease;
         }
-        .tile:hover { transform: translateY(-5px); box-shadow: 0 12px 30px rgba(0,0,0,0.1); }
+        .tile:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
         .tile-icon { 
-            width: 52px; 
-            height: 52px; 
-            border-radius: 12px; 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 8px; 
             display: flex; 
             align-items: center; 
             justify-content: center; 
-            font-size: 24px; 
+            font-size: 22px; 
             color: #fff;
         }
-        .tile-icon.primary { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
-        .tile-icon.success { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
-        .tile-icon.warning { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); }
+        .tile-icon.primary { background: var(--primary-color); }
+        .tile-icon.success { background: #67C23A; }
+        .tile-icon.warning { background: #E6A23C; }
         
-        .tile-label { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
-        .tile-value { font-size: 28px; font-weight: 800; color: #2c3e50; }
+        .tile-label { font-size: 13px; color: var(--text-secondary); }
+        .tile-value { font-size: 24px; font-weight: 700; color: #2c3e50; }
 
         /* Tables and Tags */
         .el-table { border-radius: var(--border-radius); overflow: hidden; }
@@ -268,30 +297,30 @@
                     </div>
                 </div>
                 
-                <el-menu :default-active="currentView" @select="handleMenuSelect" text-color="#bfcbd9" active-text-color="#409EFF" background-color="#304156">
+                <el-menu :default-active="currentView" @select="handleMenuSelect">
                     <el-menu-item index="dashboard">
                         <el-icon><Odometer /></el-icon>
-                        <span>Dashboard</span>
+                        <span>Overview</span>
                     </el-menu-item>
                     <el-menu-item index="tasks">
                         <el-icon><List /></el-icon>
-                        <span>Task Management</span>
+                        <span>Tasks</span>
                     </el-menu-item>
                     <el-menu-item index="connections">
                         <el-icon><Connection /></el-icon>
-                        <span>Data Sources</span>
+                        <span>Sources</span>
                     </el-menu-item>
                     <el-menu-item index="monitor">
                         <el-icon><Bell /></el-icon>
-                        <span>Log Monitoring</span>
+                        <span>Monitor</span>
                     </el-menu-item>
                     <el-menu-item index="inspection">
                         <el-icon><Aim /></el-icon>
-                        <span>Inspection</span>
+                        <span>Inspect</span>
                     </el-menu-item>
                     <el-menu-item index="deploy">
                         <el-icon><Setting /></el-icon>
-                        <span>Server Deploy</span>
+                        <span>Deploy</span>
                     </el-menu-item>
                 </el-menu>
             </el-aside>
@@ -299,20 +328,34 @@
             <el-container direction="vertical">
                 <!-- Top Header -->
                 <el-header class="app-header">
-                    <div class="header-item">
-                        <el-dropdown trigger="click" @command="handleUserCommand">
-                            <span class="el-dropdown-link" style="display:flex; align-items:center; color:#303133; cursor:pointer;">
-                                <el-avatar :size="24" class="header-avatar" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png"></el-avatar>
-                                <span class="header-text">{{ currentUser }}</span>
-                                <el-icon class="header-caret"><Caret-Bottom /></el-icon>
-                            </span>
-                            <template #dropdown>
-                                <el-dropdown-menu>
-                                    <el-dropdown-item command="settings">Settings</el-dropdown-item>
-                                    <el-dropdown-item divided command="logout">Logout</el-dropdown-item>
-                                </el-dropdown-menu>
-                            </template>
-                        </el-dropdown>
+                    <div class="header-left">
+                        <div class="system-info-item">
+                            <el-icon><Monitor /></el-icon>
+                            <span>Status:</span>
+                            <span class="system-info-tag">Running</span>
+                        </div>
+                        <div class="system-info-item">
+                            <el-icon><Cpu /></el-icon>
+                            <span>CPU:</span>
+                            <span class="system-info-tag">2 Cores</span>
+                        </div>
+                    </div>
+                    <div class="header-right">
+                        <div class="header-item">
+                            <el-dropdown trigger="click" @command="handleUserCommand">
+                                <span class="el-dropdown-link" style="display:flex; align-items:center; color:#303133; cursor:pointer;">
+                                    <el-avatar :size="24" class="header-avatar" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png"></el-avatar>
+                                    <span style="margin-left: 8px; font-weight: 500;">{{ currentUser }}</span>
+                                    <el-icon class="header-caret" style="margin-left: 4px;"><Caret-Bottom /></el-icon>
+                                </span>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item command="settings">Settings</el-dropdown-item>
+                                        <el-dropdown-item divided command="logout">Logout</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
+                        </div>
                     </div>
                 </el-header>
 
@@ -320,57 +363,129 @@
                 <el-main>
             <!-- DASHBOARD VIEW -->
             <div v-if="currentView === 'dashboard'">
-                <div class="page-header">
-                    <h2>Dashboard</h2>
-                    <el-button type="primary" @click="currentView = 'tasks'; showCreateDialog()">
-                        <el-icon style="margin-right: 5px"><Plus /></el-icon> New Task
-                    </el-button>
+                <div class="stat-row" style="margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <span class="stat-label">Load</span>
+                            <span class="stat-value">Running Smoothly</span>
+                            <span class="stat-status success">Normal</span>
+                        </div>
+                        <el-progress type="circle" :percentage="3" :width="60" color="#20a53a"></el-progress>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <span class="stat-label">CPU</span>
+                            <span class="stat-value">2 Cores</span>
+                            <span class="stat-status success">Normal</span>
+                        </div>
+                        <el-progress type="circle" :percentage="51" :width="60" color="#20a53a"></el-progress>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <span class="stat-label">Memory</span>
+                            <span class="stat-value">1.0GB / 3.7GB</span>
+                            <span class="stat-status success">Normal</span>
+                        </div>
+                        <el-progress type="circle" :percentage="27" :width="60" color="#20a53a"></el-progress>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-info">
+                            <span class="stat-label">Disk (/)</span>
+                            <span class="stat-value">9.6GB / 50.0GB</span>
+                            <span class="stat-status success">Normal</span>
+                        </div>
+                        <el-progress type="circle" :percentage="19" :width="60" color="#20a53a"></el-progress>
+                    </div>
                 </div>
-                
+
                 <div class="dashboard-layout">
-                <el-row class="dashboard-overview" :gutter="20" style="margin-bottom:20px;">
-                    <el-col :xs="24" :sm="12" :md="8">
-                        <div class="tile">
-                            <div class="tile-left">
-                                <div class="tile-icon primary"><el-icon><Odometer /></el-icon></div>
+                    <el-row :gutter="20" style="margin-bottom: 20px;">
+                        <el-col :span="8">
+                            <div class="tile" @click="currentView = 'tasks'">
+                                <div class="tile-icon primary"><el-icon><List /></el-icon></div>
                                 <div>
                                     <div class="tile-label">All Items</div>
                                     <div class="tile-value">{{ overview.all }}</div>
                                 </div>
                             </div>
-                        </div>
-                    </el-col>
-                    <el-col :xs="24" :sm="12" :md="8">
-                        <div class="tile">
-                            <div class="tile-left">
+                        </el-col>
+                        <el-col :span="8">
+                            <div class="tile" @click="currentView = 'connections'">
                                 <div class="tile-icon success"><el-icon><Connection /></el-icon></div>
                                 <div>
                                     <div class="tile-label">Sync Tasks</div>
-                                    <div class="tile-value" style="color:#67C23A">{{ overview.sync }}</div>
+                                    <div class="tile-value">{{ overview.sync }}</div>
                                 </div>
                             </div>
-                        </div>
-                    </el-col>
-                    <el-col :xs="24" :sm="12" :md="8">
-                        <div class="tile">
-                            <div class="tile-left">
+                        </el-col>
+                        <el-col :span="8">
+                            <div class="tile" @click="currentView = 'monitor'">
                                 <div class="tile-icon warning"><el-icon><Bell /></el-icon></div>
                                 <div>
                                     <div class="tile-label">Log Monitors</div>
-                                    <div class="tile-value" style="color:#E6A23C">{{ overview.monitor }}</div>
+                                    <div class="tile-value">{{ overview.monitor }}</div>
                                 </div>
                             </div>
-                        </div>
-                    </el-col>
-                </el-row>
-                <el-row class="dashboard-ring" :gutter="20" style="margin-bottom:20px;">
-                    <el-col :span="24">
-                        <div class="tile" style="padding:8px 10px;">
-                            <canvas id="syncStatusRingCanvas" height="140"></canvas>
-                        </div>
-                    </el-col>
-                </el-row>
+                        </el-col>
+                    </el-row>
+                    
+                    <el-row :gutter="20">
+                        <el-col :span="16">
+                            <el-card>
+                                <template #header>
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span>Status Distribution</span>
+                                        <el-button type="primary" link @click="fetchOverview">Refresh</el-button>
+                                    </div>
+                                </template>
+                                <div style="height: 250px; display: flex; align-items: center; justify-content: center;">
+                                    <canvas id="syncStatusRingCanvas" height="220"></canvas>
+                                </div>
+                            </el-card>
+                        </el-col>
+                        <el-col :span="8">
+                            <el-card>
+                                <template #header>
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span>Software</span>
+                                        <el-icon><MoreFilled /></el-icon>
+                                    </div>
+                                </template>
+                                <div class="software-grid">
+                                    <div class="software-item">
+                                        <div class="software-icon"><el-icon><Operation /></el-icon></div>
+                                        <div class="software-info">
+                                            <div class="software-name">MySQL</div>
+                                            <div class="software-status running">Running</div>
+                                        </div>
+                                    </div>
+                                    <div class="software-item">
+                                        <div class="software-icon"><el-icon><Connection /></el-icon></div>
+                                        <div class="software-info">
+                                            <div class="software-name">MongoDB</div>
+                                            <div class="software-status running">Running</div>
+                                        </div>
+                                    </div>
+                                    <div class="software-item">
+                                        <div class="software-icon"><el-icon><Cpu /></el-icon></div>
+                                        <div class="software-info">
+                                            <div class="software-name">Redis</div>
+                                            <div class="software-status running">Running</div>
+                                        </div>
+                                    </div>
+                                    <div class="software-item">
+                                        <div class="software-icon"><el-icon><Monitor /></el-icon></div>
+                                        <div class="software-info">
+                                            <div class="software-name">Nginx</div>
+                                            <div class="software-status stopped">Stopped</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </el-card>
+                        </el-col>
+                    </el-row>
                 </div>
+            </div>
 
                 <el-row :gutter="20">
                     <el-col :span="24" v-if="tasks.length === 0">
