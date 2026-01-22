@@ -15,7 +15,7 @@ class ServerConfigSchema(BaseModel):
     key_path: Optional[str] = None
 
 class DeployServiceSchema(BaseModel):
-    name: Literal["nginx","mysql","mongo","elasticsearch","rabbitmq","kafka","node_exporter","mysqld_exporter","blackbox_exporter","prometheus","grafana","alertmanager"]
+    name: Literal["apache","nginx","mysql","mongo","elasticsearch","rabbitmq","kafka","node_exporter","mysqld_exporter","blackbox_exporter","prometheus","grafana","alertmanager"]
     version: Optional[str] = None
     config: Dict[str, str] = Field(default_factory=dict)
 

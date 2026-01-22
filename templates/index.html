@@ -95,21 +95,18 @@
         .brand-logo { 
             width: 32px; 
             height: 32px; 
-            border-radius: 6px; 
-            background: var(--primary-color);
-            display: flex;
-            align-items: center;
+            display: flex; 
+            align-items: center; 
             justify-content: center;
         }
         .brand-logo::before { 
             content: ""; 
             width: 20px; 
             height: 20px; 
-            background-image: url('/ui/images/brand.png'); 
+            background-image: url('/static/images/brand.png'); 
             background-size: contain; 
             background-repeat: no-repeat;
             background-position: center;
-            filter: brightness(0) invert(1);
         }
         .app-name { 
             font-size: 16px; 
@@ -245,42 +242,20 @@
                 c.width = c.height = size;
                 const ctx = c.getContext('2d');
                 ctx.clearRect(0,0,size,size);
-                // rounded background
-                const radius = 12;
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath();
-                ctx.moveTo(radius,0);
-                ctx.arcTo(size,0,size,size,radius);
-                ctx.arcTo(size,size,0,size,radius);
-                ctx.arcTo(0,size,0,0,radius);
-                ctx.arcTo(0,0,size,0,radius);
-                ctx.closePath();
-                ctx.fill();
-                // circular clip for image
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(size/2, size/2, size*0.36, 0, Math.PI*2);
-                ctx.closePath();
-                ctx.clip();
-                // draw image centered and cover
+                
+                // Draw image directly to maintain transparency
                 const iw = img.naturalWidth || img.width;
                 const ih = img.naturalHeight || img.height;
-                const s = Math.max(size*0.8/iw, size*0.8/ih);
+                const s = Math.min(size/iw, size/ih);
                 const dw = iw*s, dh = ih*s;
                 ctx.drawImage(img, (size-dw)/2, (size-dh)/2, dw, dh);
-                ctx.restore();
-                // subtle inner ring
-                ctx.strokeStyle = 'rgba(0,0,0,0.1)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(size/2, size/2, size*0.36, 0, Math.PI*2);
-                ctx.stroke();
+                
                 linkEl.href = c.toDataURL('image/png');
             }
             const img = new Image();
             img.onload = function(){ setBrandIcon(img); };
             img.onerror = function(){ setDefaultIcon(); };
-            img.src = '/ui/images/brand.png';
+            img.src = '/static/images/brand.png';
         })();
     </script>
 </head>
@@ -344,7 +319,7 @@
                         <div class="header-item">
                             <el-dropdown trigger="click" @command="handleUserCommand">
                                 <span class="el-dropdown-link" style="display:flex; align-items:center; color:#303133; cursor:pointer;">
-                                    <el-avatar :size="24" class="header-avatar" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png"></el-avatar>
+                                    <el-avatar :size="24" class="header-avatar" src="/static/images/brand.png"></el-avatar>
                                     <span style="margin-left: 8px; font-weight: 500;">{{ currentUser }}</span>
                                     <el-icon class="header-caret" style="margin-left: 4px;"><CaretBottom /></el-icon>
                                 </span>
