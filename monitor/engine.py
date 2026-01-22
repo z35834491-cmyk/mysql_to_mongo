@@ -154,28 +154,23 @@ class MonitorEngine:
             since_seconds = task.poll_interval_seconds + 10
             
             try:
-                logs = api.read_namespaced_pod_log(
+                # Use streaming to avoid loading huge logs into memory
+                response = api.read_namespaced_pod_log(
                     name=pod_name,
                     namespace=namespace,
                     container=container_name,
                     since_seconds=since_seconds,
-                    timestamps=True 
+                    timestamps=True,
+                    _preload_content=False # Enable streaming
                 )
                 
-                if logs:
-                    with open(log_file_path, "a", encoding="utf-8") as f:
-                        f.write(logs)
-                        if not logs.endswith('\n'):
-                            f.write('\n')
-                    
-                    self._analyze_logs(logs, task, pod_name, task_log_dir)
+                self._process_log_stream(response, task, pod_name, task_log_dir, log_file_path)
                     
             except Exception as e:
                 # logger.warning(f"Failed to read log for {pod_name}: {e}")
                 pass
 
-    def _analyze_logs(self, log_content, task, source_name, log_dir):
-        lines = log_content.splitlines()
+    def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
         alerts = []
         error_lines = []
         
@@ -185,98 +180,103 @@ class MonitorEngine:
         count_info = 0
         count_other = 0
         
-        # Default error keywords to capture separately
+        # Default error keywords
         default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
         
         # Clean keywords once
         clean_alert_keywords = [k.strip() for k in task.alert_keywords if k.strip()] if task.alert_keywords else []
         clean_record_keywords = [k.strip() for k in task.record_only_keywords if k.strip()] if task.record_only_keywords else []
         
-        for line in lines:
-            line_lower = line.lower()
-            
-            # Simple counting based on keywords
-            if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
-                count_error += 1
-            elif 'warn' in line_lower:
-                count_warn += 1
-            elif 'info' in line_lower:
-                count_info += 1
-            else:
-                count_other += 1
-
-            if any(k in line for k in task.ignore_keywords):
-                continue
+        # Open file in append mode. Buffering is default.
+        with open(log_file_path, "a", encoding="utf-8") as f:
+            for line_bytes in stream:
+                if not line_bytes:
+                    continue
+                    
+                # Decode bytes to string
+                line = line_bytes.decode('utf-8', errors='replace')
                 
-            # Check for explicitly configured alert keywords
-            is_alert = False
-            if clean_alert_keywords:
-                # Use case-insensitive matching for alert keywords
-                if any(k.lower() in line_lower for k in clean_alert_keywords):
-                    alerts.append(line)
-                    is_alert = True
-            
-            # Check for generic errors (case insensitive)
-            is_error = any(k in line_lower for k in default_error_keywords)
-            
-            # Check for record only keywords
-            is_record = False
-            if clean_record_keywords:
-                 if any(k in line for k in clean_record_keywords):
-                     is_record = True
-
-            # If it's an alert or a generic error or record-only, add to error_lines (which is our "important logs" file)
-            if is_alert or is_error or is_record:
-                # We can prefix type for clarity
-                prefix = ""
-                if is_alert: prefix += "[ALERT]"
-                if is_error: prefix += "[ERROR]"
-                if is_record: prefix += "[RECORD]"
+                # Write to file immediately
+                f.write(line)
+                if not line.endswith('\n'):
+                    f.write('\n')
                 
-                error_lines.append(f"{prefix} {line}")
+                # --- Analysis Logic Per Line ---
+                if any(k in line for k in task.ignore_keywords):
+                    continue
+
+                line_lower = line.lower()
+                
+                # Simple counting
+                if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
+                    count_error += 1
+                elif 'warn' in line_lower:
+                    count_warn += 1
+                elif 'info' in line_lower:
+                    count_info += 1
+                else:
+                    count_other += 1
+
+                # Check for alerts (Case Insensitive)
+                is_alert = False
+                if clean_alert_keywords:
+                    if any(k.lower() in line_lower for k in clean_alert_keywords):
+                        alerts.append(line)
+                        is_alert = True
+                
+                # Check for generic errors
+                is_error = any(k in line_lower for k in default_error_keywords)
+                
+                # Check for record only
+                is_record = False
+                if clean_record_keywords:
+                     if any(k in line for k in clean_record_keywords):
+                         is_record = True
+
+                # Collect "important" lines
+                if is_alert or is_error or is_record:
+                    prefix = ""
+                    if is_alert: prefix += "[ALERT]"
+                    if is_error: prefix += "[ERROR]"
+                    if is_record: prefix += "[RECORD]"
+                    
+                    error_lines.append(f"{prefix} {line}")
+
+        # --- Post-processing after stream ends ---
         
-        # Write scan history log (monitor.log style)
-        # [Timestamp] [monitor] Scan window ... counts ...
+        # 1. Write scan history
         scan_history_path = os.path.join(log_dir, "scan_history.log")
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # We don't have exact scan window start/end passed in easily, use current time
         log_entry = (f"[{timestamp}] [monitor] Pod: {source_name} | "
                      f"counts error={count_error} warn={count_warn} info={count_info} other={count_other} alerts={len(alerts)}\n")
-        
         try:
             with open(scan_history_path, "a", encoding="utf-8") as f:
                 f.write(log_entry)
         except Exception as e:
             logger.error(f"Failed to write scan history: {e}")
 
-        # Write error/alert/record lines to a separate file
+        # 2. Write aggregated error/alert/record lines
         if error_lines:
             today_str = datetime.date.today().isoformat()
-            
-            # 1. Pod specific error log (existing)
-            # err_filename = f"{source_name}_{today_str}_errors.log"
-            # err_path = os.path.join(log_dir, err_filename)
-            # ...
-            
-            # 2. Task wide aggregated error log (New Requirement)
-            # "task_errors_{today_str}.log"
             task_err_filename = f"task_errors_{today_str}.log"
             task_err_path = os.path.join(log_dir, task_err_filename)
-            
             try:
-                # Append mode is safe for concurrent writes on POSIX usually if small, 
-                # but technically could race. 
-                # Since we are inside a single threaded loop for this task (in _run_loop), 
-                # this is actually safe for this process.
                 with open(task_err_path, "a", encoding="utf-8") as f:
                     for l in error_lines:
-                        # Prefix with source pod for clarity in aggregated log
-                        f.write(f"[{source_name}] {l}\n")
+                        f.write(f"[{source_name}] {l}")
+                        if not l.endswith('\n'):
+                            f.write('\n')
             except Exception as e:
                 logger.error(f"Failed to write aggregated error log: {e}")
 
+        # 3. Send Slack Alerts
         if alerts:
             self._send_slack_alert(alerts, task, source_name, log_dir)
+
+    def _analyze_logs(self, log_content, task, source_name, log_dir):
+        # DEPRECATED: Kept only if needed for non-streaming fallback, 
+        # but _fetch_k8s_logs now uses _process_log_stream.
+        pass
 
     def _send_slack_alert(self, alerts, task, source, log_dir):
         if not task.slack_webhook_url:
