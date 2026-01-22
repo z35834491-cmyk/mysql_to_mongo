@@ -99,6 +99,65 @@ class InspectionEngine:
             }
         ]
 
+    def _call_gemini_api(self, prompt, system_prompt):
+        """Call Google Gemini API (REST)"""
+        api_key = self.config.ark_api_key
+        model = self.config.ark_model_id or "gemini-1.5-flash"
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "systemInstruction": {
+                "parts": [{"text": system_prompt}]
+            }
+        }
+        
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            if resp.ok:
+                data = resp.json()
+                # Gemini response structure
+                try:
+                    return data['candidates'][0]['content']['parts'][0]['text']
+                except (KeyError, IndexError):
+                    return f"Gemini response parsing failed: {json.dumps(data)}"
+            else:
+                return f"Gemini API failed: {resp.status_code} {resp.text}"
+        except Exception as e:
+            return f"Gemini connection error: {e}"
+
+    def _call_openai_compatible_api(self, prompt, system_prompt):
+        """Call OpenAI/Ark/Doubao compatible API"""
+        url = f"{self.config.ark_base_url.rstrip('/')}/chat/completions"
+        
+        payload = {
+            "model": self.config.ark_model_id,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        try:
+            resp = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self.config.ark_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=300
+            )
+            if resp.ok:
+                return resp.json()['choices'][0]['message']['content']
+            else:
+                return f"AI analysis failed: {resp.status_code} {resp.text}"
+        except Exception as e:
+            return f"AI analysis error: {e}"
+
     def run(self):
         log("inspection", "Starting inspection run...")
         report_id = datetime.now().strftime('%Y-%m-%d')
@@ -213,33 +272,23 @@ class InspectionEngine:
         # 2. AI Analysis
         log("inspection", "Starting AI analysis...")
         ai_analysis = "AI analysis failed or not configured."
-        if self.config.ark_api_key and self.config.ark_base_url:
-            try:
-                # Include vulnerabilities in the prompt
-                prompt = f"请分析以下系统巡检数据并提供报告：\n指标数据：\n{json.dumps(metrics_summary, indent=2, ensure_ascii=False)}\n\n发现的官方披露漏洞：\n{json.dumps(vulnerabilities, indent=2, ensure_ascii=False)}"
-                resp = requests.post(
-                    f"{self.config.ark_base_url.rstrip('/')}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.config.ark_api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.config.ark_model_id,
-                        "messages": [
-                            {"role": "system", "content": f"你是一个资深的运维架构师。请根据我提供的系统巡检报告还有指标数据和官方披露漏洞进行综合分析。并且详细分析我的报警以及系统资源使用情况，对当前情况进行分析并且给出处置意见\n请在报告开头严格按照以下格式输出元数据：\n**报告生成时间**：{datetime.now().strftime('%Y-%m-%d')}\n***报告人***：运维团队\n**联系方式**：slack @运维团队\n\n。请全程使用中文回复。"},
-                            {"role": "user", "content": prompt}
-                        ]
-                    },
-                    timeout=300  # Increased timeout for AI response
-                )
-                if resp.ok:
-                    ai_analysis = resp.json()['choices'][0]['message']['content']
-                    log("inspection", "AI analysis completed successfully")
-                else:
-                    log("inspection", f"AI analysis failed: {resp.status_code} {resp.text}")
-            except Exception as e:
-                ai_analysis = f"AI analysis error: {e}"
-                log("inspection", f"AI analysis exception: {e}")
+        
+        if self.config.ark_api_key:
+            # Include vulnerabilities in the prompt
+            prompt = f"请分析以下系统巡检数据并提供报告：\n指标数据：\n{json.dumps(metrics_summary, indent=2, ensure_ascii=False)}\n\n发现的官方披露漏洞：\n{json.dumps(vulnerabilities, indent=2, ensure_ascii=False)}"
+            system_prompt = f"你是一个资深的运维架构师。请根据我提供的系统巡检报告还有指标数据和官方披露漏洞进行综合分析。并且详细分析我的报警以及系统资源使用情况，对当前情况进行分析并且给出处置意见\n请在报告开头严格按照以下格式输出元数据：\n**报告生成时间**：{datetime.now().strftime('%Y-%m-%d')}\n***报告人***：运维团队\n**联系方式**：slack @运维团队\n\n。请全程使用中文回复。"
+            
+            # Detect provider
+            model_id = self.config.ark_model_id.lower()
+            if 'gemini' in model_id:
+                log("inspection", f"Using Google Gemini API with model: {self.config.ark_model_id}")
+                ai_analysis = self._call_gemini_api(prompt, system_prompt)
+            elif self.config.ark_base_url:
+                log("inspection", f"Using OpenAI compatible API with model: {self.config.ark_model_id}")
+                ai_analysis = self._call_openai_compatible_api(prompt, system_prompt)
+            else:
+                log("inspection", "AI config missing Base URL for non-Gemini model")
+                ai_analysis = "AI configuration error: Missing Base URL."
         else:
             log("inspection", "AI analysis skipped (not configured)")
 

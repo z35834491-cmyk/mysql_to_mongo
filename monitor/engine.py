@@ -179,6 +179,12 @@ class MonitorEngine:
         alerts = []
         error_lines = []
         
+        # Counters for scan history
+        count_error = 0
+        count_warn = 0
+        count_info = 0
+        count_other = 0
+        
         # Default error keywords to capture separately
         default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
         
@@ -187,11 +193,21 @@ class MonitorEngine:
         clean_record_keywords = [k.strip() for k in task.record_only_keywords if k.strip()] if task.record_only_keywords else []
         
         for line in lines:
+            line_lower = line.lower()
+            
+            # Simple counting based on keywords
+            if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
+                count_error += 1
+            elif 'warn' in line_lower:
+                count_warn += 1
+            elif 'info' in line_lower:
+                count_info += 1
+            else:
+                count_other += 1
+
             if any(k in line for k in task.ignore_keywords):
                 continue
                 
-            line_lower = line.lower()
-            
             # Check for explicitly configured alert keywords
             is_alert = False
             if clean_alert_keywords:
@@ -218,6 +234,20 @@ class MonitorEngine:
                 
                 error_lines.append(f"{prefix} {line}")
         
+        # Write scan history log (monitor.log style)
+        # [Timestamp] [monitor] Scan window ... counts ...
+        scan_history_path = os.path.join(log_dir, "scan_history.log")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # We don't have exact scan window start/end passed in easily, use current time
+        log_entry = (f"[{timestamp}] [monitor] Pod: {source_name} | "
+                     f"counts error={count_error} warn={count_warn} info={count_info} other={count_other} alerts={len(alerts)}\n")
+        
+        try:
+            with open(scan_history_path, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except Exception as e:
+            logger.error(f"Failed to write scan history: {e}")
+
         # Write error/alert/record lines to a separate file
         if error_lines:
             today_str = datetime.date.today().isoformat()

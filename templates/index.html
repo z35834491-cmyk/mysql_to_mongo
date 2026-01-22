@@ -773,7 +773,13 @@
                                             <template v-else-if="scope.row.name.includes('alert_history')">
                                                 <el-icon style="color: #409EFF; margin-right: 5px; font-size: 16px;"><BellFilled /></el-icon>
                                                 <span style="font-weight: bold; color: #409EFF;">{{ scope.row.name }}</span>
-                                                <el-tag size="small" type="primary" effect="plain" style="margin-left: 10px; border-radius: 10px;">System History</el-tag>
+                                                <el-tag size="small" type="primary" effect="plain" style="margin-left: 10px; border-radius: 10px;">Alert History</el-tag>
+                                            </template>
+                                            <!-- Scan History (monitor log) -->
+                                            <template v-else-if="scope.row.name.includes('scan_history')">
+                                                <el-icon style="color: #67C23A; margin-right: 5px; font-size: 16px;"><Cpu /></el-icon>
+                                                <span style="font-weight: bold; color: #67C23A;">{{ scope.row.name }}</span>
+                                                <el-tag size="small" type="success" effect="plain" style="margin-left: 10px; border-radius: 10px;">Monitor Log</el-tag>
                                             </template>
                                             <!-- Normal Logs -->
                                             <template v-else>
@@ -1229,16 +1235,22 @@
             <el-dialog v-model="inspectionConfigVisible" title="config" width="700px">
                 <el-form :model="inspectionConfig" label-width="140px">
                     <el-form-item label="Prometheus 地址">
-                        <el-input v-model="inspectionConfig.prometheus_url" placeholder="https://prometheus.example.com"></el-input>
+                        <el-input v-model="inspectionConfig.prometheus_url" placeholder="http://192.168.12.135:30910"></el-input>
                     </el-form-item>
-                    <el-form-item label="Ark 基础地址">
-                        <el-input v-model="inspectionConfig.ark_base_url" placeholder="https://ark.cn-beijing.volces.com/api/v3"></el-input>
+                    <el-form-item label="AI Base URL">
+                        <el-input v-model="inspectionConfig.ark_base_url" placeholder="https://api.deepseek.com"></el-input>
+                        <div style="font-size: 12px; color: #909399; margin-top: 5px;">
+                            Supports OpenAI compatible APIs (DeepSeek, Doubao, etc.). Leave empty for Gemini (Google).
+                        </div>
                     </el-form-item>
-                    <el-form-item label="Ark API 密钥">
-                        <el-input v-model="inspectionConfig.ark_api_key" type="password" show-password placeholder="Your API Key"></el-input>
+                    <el-form-item label="AI API Key">
+                        <el-input v-model="inspectionConfig.ark_api_key" type="password" show-password placeholder="sk-..."></el-input>
                     </el-form-item>
-                    <el-form-item label="Ark 模型 ID">
-                        <el-input v-model="inspectionConfig.ark_model_id" placeholder="doubao-seed-1-6-251015"></el-input>
+                    <el-form-item label="AI Model ID">
+                        <el-input v-model="inspectionConfig.ark_model_id" placeholder="deepseek-chat"></el-input>
+                        <div style="font-size: 12px; color: #909399; margin-top: 5px;">
+                            e.g. 'deepseek-chat', 'gemini-1.5-flash', 'doubao-pro-32k'
+                        </div>
                     </el-form-item>
                 </el-form>
                 <template #footer>
