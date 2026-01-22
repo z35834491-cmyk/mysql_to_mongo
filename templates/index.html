@@ -1803,10 +1803,10 @@
 
         const { createApp, ref, reactive, onMounted, computed, watch, nextTick } = Vue;
         const { ElMessage, ElMessageBox } = ElementPlus;
-        const { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton } = ElementPlusIconsVue;
+        const { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled } = ElementPlusIconsVue;
 
                 const app = createApp({
-                    components: { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton },
+                    components: { Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled },
                     setup() {
                         const currentUser = ref("{{ user.username|default:'Admin' }}");
                         const handleUserCommand = (cmd) => {
@@ -2070,33 +2070,10 @@
                             } catch (e) { console.error("Failed to fetch system stats:", e); }
                         };
                         const fetchOverview = _updateOverview;
-                        onMounted(() => {
-                            fetchTasks();
-                            fetchConnections();
-                            _updateOverview();
-                        });
-                        watch(tasks, () => _updateOverview(), { deep: true });
-                const mysqlConnections = computed(() => connections.value.filter(c => c.type === 'mysql'));
-                const mongoConnections = computed(() => connections.value.filter(c => c.type === 'mongo'));
+                        const mysqlConnections = computed(() => connections.value.filter(c => c.type === 'mysql'));
+                        const mongoConnections = computed(() => connections.value.filter(c => c.type === 'mongo'));
 
                 // --- Methods ---
-                const handleMenuSelect = (index) => {
-                    currentView.value = index;
-                    if (index === 'connections') fetchConnections();
-                    if (index === 'dashboard' || index === 'tasks') fetchTasks();
-                    if (index === 'monitor') {
-                        fetchMonitorStatus();
-                        fetchMonitorConfig();
-                    }
-                    if (index === 'inspection') {
-                        fetchInspectionHistory();
-                    }
-                    if (index === 'deploy') {
-                        fetchDeployServers();
-                        initDeployDefaults();
-                    }
-                };
-
                 const fetchTasks = async () => {
                     const res = await fetchWithCSRF('/tasks/status');
                     const data = await res.json();
@@ -2115,9 +2092,25 @@
                         fetchTasks();
                     }
                     if (currentView.value === 'monitor') {
-                        fetchMonitorStatus();
+                        fetchLogMonitorTasks();
                     }
                 }, 3000);
+
+                const handleMenuSelect = (index) => {
+                    currentView.value = index;
+                    if (index === 'connections') fetchConnections();
+                    if (index === 'dashboard' || index === 'tasks') fetchTasks();
+                    if (index === 'monitor') {
+                        fetchLogMonitorTasks();
+                    }
+                    if (index === 'inspection') {
+                        fetchInspectionHistory();
+                    }
+                    if (index === 'deploy') {
+                        fetchDeployServers();
+                        initDeployDefaults();
+                    }
+                };
 
                 const showCreateDialog = async () => {
                     await fetchConnections();
@@ -3091,7 +3084,7 @@
                         });
                         if (res.ok) {
                             ElMessage.success('Configuration saved & monitor restarted');
-                            fetchMonitorStatus();
+                            fetchLogMonitorTasks();
                         } else {
                             let err = {};
                             try { err = await res.json(); } catch(_) {}
@@ -3230,12 +3223,6 @@
                     }
                 };
 
-                onMounted(() => {
-                    fetchTasks();
-                    fetchConnections();
-                    fetchDeployServers();
-                    fetchInspectionConfig();
-                });
                 // Reset test status if critical fields change
                 watch(() => [connForm.type, connForm.host, connForm.port, connForm.mongo_hosts, connForm.replica_set, connForm.user, connForm.password, connForm.database, connForm.auth_source], () => {
                     if (connVisible.value) {
@@ -3862,13 +3849,25 @@
                     return multiLogResults.value.slice(start, start + 50);
                 });
 
+                onMounted(() => {
+                    fetchTasks();
+                    fetchConnections();
+                    fetchDeployServers();
+                    fetchInspectionConfig();
+                    _updateOverview();
+                });
+
                 return {
+                    // Icons
+                    Odometer, List, Connection, Plus, Delete, Right, Edit, Download, Setting, VideoPlay, Aim, Bell, ChatLineSquare, Histogram, Refresh, SwitchButton, Operation, MoreFilled,
+                    // State
                     currentView, tasks, connections, syncTasks, monitorTasks, overview, collapseSync, collapseMonitor,
                     createVisible, activeStep, creating, form,
                     sourceSelectionMode, targetSelectionMode, selectedSourceId, selectedTargetId,
                     connVisible, connForm, editingConnId,
                     mysqlConnections, mongoConnections, syncScope, syncMode,
                     testing, testPassed, testMsg,
+                    // Methods
                     handleMenuSelect, showCreateDialog, showConnDialog, saveConnection, deleteConnection, testConnection,
                     editConnection,
                     confirmStop, confirmStart, confirmResetAndStart, confirmReset, confirmDelete, viewLogs,
@@ -3894,7 +3893,7 @@
                     weeklyReportVisible, weeklyReportData, openWeeklyReport,
                     monthlyReportVisible, monthlyReportData, openMonthlyReport,
                     formatMetricLabels, getMetricLevelType, getMetricStatusType,
-                    formatSize, formatTime,
+                    formatSize,
                     logLines, logContentSearch, logCurrentPage, logPageSize, filteredLogLines, paginatedLogLines, handleLogPageChange, highlightLogLine, refreshLogView, performSingleLogSearch,
                     multiLogDialogVisible, selectedLogFiles, multiLogKeyword, multiLogResults, multiLogLoading, multiLogPage, paginatedMultiLogResults,
                     handleLogSelectionChange, showMultiLogSearch, performMultiLogSearch, downloadMultiLogResults,
