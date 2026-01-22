@@ -253,7 +253,7 @@
             const img = new Image();
             img.onload = function(){ setBrandIcon(img); };
             img.onerror = function(){ setDefaultIcon(); };
-            img.src = '/static/images/brand.png';
+            img.src = '/ui/images/brand.png';
         })();
     </script>
 </head>
@@ -266,7 +266,7 @@
                 <div class="sidebar-header">
                     <div class="logo-area">
                         <div class="brand-logo">
-                            <img src="/static/images/brand.png" alt="Logo">
+                            <img src="/ui/images/brand.png" alt="Logo">
                         </div>
                         <span class="app-name">Shark Platform</span>
                     </div>
@@ -319,7 +319,7 @@
                         <div class="header-item">
                             <el-dropdown trigger="click" @command="handleUserCommand">
                                 <span class="el-dropdown-link" style="display:flex; align-items:center; color:#303133; cursor:pointer;">
-                                    <el-avatar :size="24" class="header-avatar" src="/static/images/brand.png"></el-avatar>
+                                    <el-avatar :size="24" class="header-avatar" src="/ui/images/brand.png"></el-avatar>
                                     <span style="margin-left: 8px; font-weight: 500;">{{ currentUser }}</span>
                                     <el-icon class="header-caret" style="margin-left: 4px;"><CaretBottom /></el-icon>
                                 </span>
