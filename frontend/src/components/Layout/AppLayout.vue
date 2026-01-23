@@ -46,7 +46,7 @@
           
           <el-dropdown>
             <div class="user-profile">
-              <el-avatar :size="32" :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${currentUser?.username || 'Admin'}`" />
+              <el-avatar :size="32" :src="sharkAvatar" />
               <div class="user-info">
                 <span class="username">{{ currentUser?.username || 'Administrator' }}</span>
                 <span class="user-role">{{ isAdmin ? 'System Admin' : 'User' }}</span>
@@ -79,6 +79,7 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
+import sharkAvatar from '@/assets/images/brand.png'
 import { 
   ArrowDown, Bell, Moon, Sunny, Cpu, PieChart, 
   User, Setting, SwitchButton 

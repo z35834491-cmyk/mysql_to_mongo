@@ -21,7 +21,7 @@
         <el-table-column prop="username" label="Username" min-width="150">
           <template #default="{ row }">
             <div class="user-cell">
-              <el-avatar :size="24" :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${row.username}`" />
+              <el-avatar :size="24" :src="sharkAvatar" />
               <span>{{ row.username }}</span>
             </div>
           </template>
@@ -91,6 +91,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Search, Plus, Lock } from '@element-plus/icons-vue'
+import sharkAvatar from '@/assets/images/brand.png'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
@@ -112,7 +113,7 @@ const userForm = ref({
 const fetchUsers = async () => {
   loading.value = true
   try {
-    const res = await request.get('/api/users')
+    const res = await request.get<any>('/api/users')
     users.value = res.users
   } catch (e) {
     console.error(e)
