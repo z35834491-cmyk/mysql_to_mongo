@@ -69,6 +69,7 @@
         <el-form-item label="Sync Options">
           <el-checkbox v-model="form.auto_discover_new_tables">Auto Discover New Tables</el-checkbox>
           <el-checkbox v-model="form.update_insert_new_doc">Update Inserts New Doc (Versioning)</el-checkbox>
+          <el-checkbox v-model="form.use_pk_as_mongo_id">Use MySQL PK as Mongo _id</el-checkbox>
         </el-form-item>
         
         <el-form-item>
@@ -107,6 +108,7 @@ const form = reactive({
   mongo_database: '',
   auto_discover_new_tables: true,
   update_insert_new_doc: true,
+  use_pk_as_mongo_id: true,
   pk_field: 'id'
 })
 
