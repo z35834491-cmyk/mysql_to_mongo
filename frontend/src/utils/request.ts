@@ -20,6 +20,11 @@ class Request {
     // Request interceptor
     this.instance.interceptors.request.use(
       (config) => {
+        // CSRF Token for Django
+        const csrfToken = this.getCookie('csrftoken')
+        if (csrfToken) {
+          config.headers['X-CSRFToken'] = csrfToken
+        }
         return config
       },
       (error) => Promise.reject(error)
@@ -49,6 +54,21 @@ class Request {
         return Promise.reject(error)
       }
     )
+  }
+
+  private getCookie(name: string): string | null {
+    let cookieValue = null
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';')
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim()
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1))
+          break
+        }
+      }
+    }
+    return cookieValue
   }
   
   public get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {

@@ -101,14 +101,51 @@ const isDark = useDark()
 const toggleDark = useToggle(isDark)
 
 // Theme Color
-const themeColor = ref('#ffffff')
+const themeColor = ref('#3b82f6')
 const updateThemeColor = (color: string | null) => {
   if (color) {
-    document.documentElement.style.setProperty('--app-main-bg', color)
-    // Calculate if the background is dark to adjust text color
-    const isDarkBg = isColorDark(color)
-    document.documentElement.style.setProperty('--app-content-bg', isDarkBg ? 'rgba(255,255,255,0.05)' : '#ffffff')
+    // 1. Set Element Plus Primary Color
+    document.documentElement.style.setProperty('--el-color-primary', color)
+    
+    // 2. Generate shades for Element Plus components (buttons, etc.)
+    for (let i = 1; i <= 9; i++) {
+      const lightColor = mixColor('#ffffff', color, i * 10)
+      document.documentElement.style.setProperty(`--el-color-primary-light-${i}`, lightColor)
+    }
+    const darkColor = mixColor('#000000', color, 20)
+    document.documentElement.style.setProperty('--el-color-primary-dark-2', darkColor)
+
+    // 3. Set Application Layout Backgrounds
+    // Use a lighter version of the theme color for the background to keep it professional
+    const bgTint = mixColor('#ffffff', color, 90) 
+    document.documentElement.style.setProperty('--app-main-bg', isDark.value ? mixColor('#000000', color, 80) : bgTint)
+    
+    // 4. Adjust content card background
+    document.documentElement.style.setProperty('--app-content-bg', isDark.value ? 'rgba(255,255,255,0.05)' : '#ffffff')
   }
+}
+
+// Helper to mix colors for theme generation
+const mixColor = (color1: string, color2: string, weight: number) => {
+  const p = weight / 100
+  const w = p * 2 - 1
+  const a = 0
+  const w1 = ((w * a === -1 ? w : (w + a) / (1 + w * a)) + 1) / 2
+  const w2 = 1 - w1
+
+  const hex = (c: string) => parseInt(c.replace('#', ''), 16)
+  const r1 = (hex(color1) >> 16) & 0xff
+  const g1 = (hex(color1) >> 8) & 0xff
+  const b1 = hex(color1) & 0xff
+  const r2 = (hex(color2) >> 16) & 0xff
+  const g2 = (hex(color2) >> 8) & 0xff
+  const b2 = hex(color2) & 0xff
+
+  const r = Math.round(r1 * w1 + r2 * w2)
+  const g = Math.round(g1 * w1 + g2 * w2)
+  const b = Math.round(b1 * w1 + b2 * w2)
+
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)
 }
 
 const isColorDark = (color: string) => {
