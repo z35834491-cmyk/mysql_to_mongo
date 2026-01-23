@@ -148,23 +148,25 @@ const handleLogout = () => {
 
 <style>
 :root {
-  --app-main-bg: #f1f5f9;
-  --app-sidebar-bg: #0f172a;
+  --app-main-bg: #f3f4f6;
+  --app-sidebar-bg: #2c313c;
   --app-header-bg: #ffffff;
   --app-card-bg: #ffffff;
-  --app-text-main: #1e293b;
-  --app-text-muted: #64748b;
-  --app-border-color: #e2e8f0;
+  --app-text-main: #333333;
+  --app-text-muted: #999999;
+  --app-border-color: #e5e7eb;
+  --primary-green: #20a53a;
 }
 
 html.dark {
-  --app-main-bg: #020617;
-  --app-sidebar-bg: #0f172a;
-  --app-header-bg: #0f172a;
-  --app-card-bg: #1e293b;
-  --app-text-main: #f8fafc;
-  --app-text-muted: #94a3b8;
-  --app-border-color: #334155;
+  --app-main-bg: #18191b;
+  --app-sidebar-bg: #1c1d1f;
+  --app-header-bg: #1c1d1f;
+  --app-card-bg: #222325;
+  --app-text-main: #cccccc;
+  --app-text-muted: #888888;
+  --app-border-color: #333333;
+  --primary-green: #20a53a;
 }
 </style>
 
