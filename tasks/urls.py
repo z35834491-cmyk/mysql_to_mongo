@@ -18,6 +18,11 @@ urlpatterns = [
     path('tasks/delete/<str:task_id>', views.delete_task),
     path('tasks/logs/<str:task_id>', views.task_logs),
     
+    # Global Log APIs
+    path('logs/files', views.log_files_list),
+    path('logs/stats', views.log_stats),
+    path('logs/search', views.log_global_search),
+    
     path('mysql/databases', views.mysql_databases),
     path('mysql/databases_by_id/<str:conn_id>', views.mysql_databases_by_id),
     path('mysql/tables', views.mysql_tables),

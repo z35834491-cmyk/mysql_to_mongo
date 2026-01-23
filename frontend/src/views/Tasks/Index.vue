@@ -14,19 +14,10 @@
 
     <!-- Dashboard Charts -->
     <div class="charts-row">
-      <el-card shadow="never" class="chart-card">
+      <el-card shadow="never" class="chart-card full-width">
         <template #header>
           <div class="card-header">
-            <span>Task Status Distribution</span>
-          </div>
-        </template>
-        <div ref="statusChartRef" class="chart-container"></div>
-      </el-card>
-      
-      <el-card shadow="never" class="chart-card">
-        <template #header>
-          <div class="card-header">
-            <span>Total Events Processed</span>
+            <span>Overall Task Performance</span>
           </div>
         </template>
         <div ref="eventsChartRef" class="chart-container"></div>
@@ -34,7 +25,15 @@
     </div>
 
     <el-card shadow="never" class="table-card">
-      <el-table :data="tasks" v-loading="loading" style="width: 100%">
+      <el-table :data="tasks" v-loading="loading" style="width: 100%" @expand-change="handleExpandChange">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div class="expanded-chart-container">
+              <div :id="'chart-' + row.task_id" class="task-mini-chart"></div>
+            </div>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="task_id" label="Task Identifier" min-width="180">
           <template #default="{ row }">
             <div class="task-id-cell">
@@ -140,10 +139,11 @@ const taskStore = useTaskStore()
 const { tasks, taskStats } = storeToRefs(taskStore)
 const loading = ref(false)
 
-const statusChartRef = ref<HTMLElement>()
 const eventsChartRef = ref<HTMLElement>()
-let statusChart: echarts.ECharts | null = null
 let eventsChart: echarts.ECharts | null = null
+
+// Store chart instances for each row
+const rowCharts = new Map<string, any>()
 
 let timer: any = null
 
@@ -164,101 +164,155 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   window.removeEventListener('resize', handleResize)
-  statusChart?.dispose()
   eventsChart?.dispose()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const c of rowCharts.values()) {
+    if (c && typeof c.dispose === 'function') {
+      c.dispose()
+    }
+  }
 })
 
 const handleResize = () => {
-  statusChart?.resize()
   eventsChart?.resize()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const c of rowCharts.values()) {
+    if (c && typeof c.resize === 'function') {
+      c.resize()
+    }
+  }
 }
 
 watch(tasks, () => {
   updateCharts()
+  // Update all active row charts
+  tasks.value.forEach(task => {
+    if (rowCharts.has(task.task_id)) {
+      updateRowChart(task.task_id)
+    }
+  })
 }, { deep: true })
 
 const initCharts = () => {
-  if (statusChartRef.value) {
-    statusChart = echarts.init(statusChartRef.value)
-  }
   if (eventsChartRef.value) {
     eventsChart = echarts.init(eventsChartRef.value)
   }
-  // Ensure DOM is ready and charts are initialized before updating
   nextTick(() => {
-    if (statusChart && eventsChart) {
+    if (eventsChart) {
       updateCharts()
     }
   })
 }
 
 const updateCharts = () => {
-  if (!statusChart || !eventsChart) return
+  if (!eventsChart) return
 
-  // 1. Status Chart
-  const stats = taskStats.value
-  statusChart.setOption({
-    tooltip: { trigger: 'item' },
-    legend: { bottom: '0%', left: 'center' },
-    series: [
-      {
-        name: 'Task Status',
-        type: 'pie',
-        radius: ['40%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: {
-          borderRadius: 10,
-          borderColor: '#fff',
-          borderWidth: 2
-        },
-        label: { show: false, position: 'center' },
-        emphasis: {
-          label: { show: true, fontSize: 20, fontWeight: 'bold' }
-        },
-        labelLine: { show: false },
-        data: [
-          { value: stats.running, name: 'Running', itemStyle: { color: '#10b981' } },
-          { value: stats.stopped, name: 'Stopped', itemStyle: { color: '#94a3b8' } },
-          { value: stats.error, name: 'Error', itemStyle: { color: '#ef4444' } }
-        ]
-      }
-    ]
-  })
-
-  // 2. Events Chart
-  // Aggregate metrics
-  let totalInsert = 0
-  let totalUpdate = 0
-  let totalDelete = 0
+  // 1. Status Chart (Removed as requested)
   
-  tasks.value.forEach(t => {
-    if (t.metrics) {
-      totalInsert += (t.metrics.inc_insert_count || 0) + (t.metrics.full_insert_count || 0)
-      totalUpdate += (t.metrics.update_count || 0)
-      totalDelete += (t.metrics.delete_count || 0)
-    }
-  })
+  // 2. Events Chart (Overall) - Grouped Bar Chart by Task
+  
+  const taskNames = tasks.value.map(t => t.task_id)
+  const insertData = tasks.value.map(t => (t.metrics?.inc_insert_count || 0) + (t.metrics?.full_insert_count || 0))
+  const updateData = tasks.value.map(t => t.metrics?.update_count || 0)
+  const deleteData = tasks.value.map(t => t.metrics?.delete_count || 0)
 
   eventsChart.setOption({
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    legend: { bottom: '0%' },
+    grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
     xAxis: [
       {
         type: 'category',
-        data: ['Insert', 'Update', 'Delete'],
-        axisTick: { alignWithLabel: true }
+        data: taskNames,
+        axisTick: { alignWithLabel: true },
+        axisLabel: { interval: 0, rotate: 30 }
       }
     ],
     yAxis: [{ type: 'value' }],
     series: [
       {
-        name: 'Events',
+        name: 'Insert',
         type: 'bar',
-        barWidth: '60%',
+        stack: 'total',
+        emphasis: { focus: 'series' },
+        data: insertData,
+        itemStyle: { color: '#3b82f6' }
+      },
+      {
+        name: 'Update',
+        type: 'bar',
+        stack: 'total',
+        emphasis: { focus: 'series' },
+        data: updateData,
+        itemStyle: { color: '#f59e0b' }
+      },
+      {
+        name: 'Delete',
+        type: 'bar',
+        stack: 'total',
+        emphasis: { focus: 'series' },
+        data: deleteData,
+        itemStyle: { color: '#ef4444' }
+      }
+    ]
+  })
+}
+
+const handleExpandChange = (row: any, expandedRows: any[]) => {
+  const isExpanded = expandedRows.some(r => r.task_id === row.task_id)
+  if (isExpanded) {
+    nextTick(() => {
+      initRowChart(row.task_id)
+    })
+  } else {
+    const chart = rowCharts.get(row.task_id)
+    chart?.dispose()
+    rowCharts.delete(row.task_id)
+  }
+}
+
+const initRowChart = (taskId: string) => {
+  const el = document.getElementById(`chart-${taskId}`)
+  if (!el) return
+  
+  const chart = echarts.init(el)
+  rowCharts.set(taskId, chart)
+  updateRowChart(taskId)
+}
+
+const updateRowChart = (taskId: string) => {
+  const chart = rowCharts.get(taskId)
+  if (!chart) return
+  
+  const task = tasks.value.find(t => t.task_id === taskId)
+  if (!task || !task.metrics) return
+
+  const m = task.metrics
+  const insert = (m.inc_insert_count || 0) + (m.full_insert_count || 0)
+  const update = m.update_count || 0
+  const del = m.delete_count || 0
+
+  chart.setOption({
+    title: { 
+      text: 'Event Distribution', 
+      left: 'center',
+      textStyle: { fontSize: 12, color: '#64748b' }
+    },
+    tooltip: { trigger: 'item' },
+    series: [
+      {
+        name: 'Events',
+        type: 'pie',
+        radius: ['50%', '70%'],
+        avoidLabelOverlap: false,
+        label: { show: false },
+        emphasis: {
+          label: { show: true, fontSize: 14, fontWeight: 'bold' }
+        },
         data: [
-          { value: totalInsert, itemStyle: { color: '#3b82f6' } },
-          { value: totalUpdate, itemStyle: { color: '#f59e0b' } },
-          { value: totalDelete, itemStyle: { color: '#ef4444' } }
+          { value: insert, name: 'Insert', itemStyle: { color: '#3b82f6' } },
+          { value: update, name: 'Update', itemStyle: { color: '#f59e0b' } },
+          { value: del, name: 'Delete', itemStyle: { color: '#ef4444' } }
         ]
       }
     ]
@@ -340,14 +394,21 @@ const handleLogs = (id: string) => {
 
 /* Charts Area */
 .charts-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  display: block;
 }
 
-.chart-card {
-  border: 1px solid #f1f5f9 !important;
-  border-radius: 12px !important;
+.chart-card.full-width {
+  width: 100%;
+}
+
+.task-mini-chart {
+  height: 200px;
+  width: 100%;
+}
+
+.expanded-chart-container {
+  padding: 10px 40px;
+  background-color: #f8fafc;
 }
 
 .card-header {

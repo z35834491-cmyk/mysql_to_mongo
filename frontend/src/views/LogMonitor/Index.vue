@@ -2,462 +2,242 @@
   <div class="monitor-container">
     <div class="page-header">
       <div class="header-info">
-        <h2 class="page-title">Log Monitoring</h2>
-        <p class="page-subtitle">Centralized log aggregation and alert configuration for K8s clusters</p>
+        <h2 class="page-title">System Logs</h2>
+        <p class="page-subtitle">Centralized log monitoring and analysis</p>
+      </div>
+      <div class="header-actions">
+        <el-button @click="fetchData" :icon="Refresh" circle />
       </div>
     </div>
 
-    <el-tabs v-model="activeTab" class="custom-tabs">
-      <el-tab-pane name="files">
-        <template #label>
-          <div class="tab-label">
-            <el-icon><Files /></el-icon>
-            <span>Log Files</span>
-          </div>
-        </template>
-        
-        <div class="toolbar">
-          <div class="toolbar-left">
-            <el-select 
-              v-model="selectedTaskId" 
-              placeholder="Select Monitor Task" 
-              @change="refreshLogs" 
-              class="task-select"
+    <!-- Stats Dashboard -->
+    <el-row :gutter="20" class="stats-row">
+      <el-col :span="6">
+        <div class="stat-card error">
+          <div class="stat-label">ERRORS (Today)</div>
+          <div class="stat-value">{{ stats.summary.error }}</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
+        <div class="stat-card warning">
+          <div class="stat-label">WARNINGS</div>
+          <div class="stat-value">{{ stats.summary.warning }}</div>
+        </div>
+      </el-col>
+      <el-col :span="12">
+        <el-card shadow="never" class="chart-card">
+          <div ref="chartRef" class="chart-container"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- Search & Explorer -->
+    <el-card shadow="never" class="explorer-card">
+      <template #header>
+        <div class="explorer-header">
+          <el-input
+            v-model="globalSearchQuery"
+            placeholder="Global Search (grep all logs)..."
+            class="global-search"
+            clearable
+            @keyup.enter="handleGlobalSearch"
+          >
+            <template #prepend>
+              <el-icon><Search /></el-icon>
+            </template>
+            <template #append>
+              <el-button @click="handleGlobalSearch">Search</el-button>
+            </template>
+          </el-input>
+        </div>
+      </template>
+
+      <div class="explorer-body">
+        <!-- File List (Left) -->
+        <div class="file-list">
+          <div class="list-header">Log Files</div>
+          <div v-loading="loading" class="list-content">
+            <div 
+              v-for="file in logFiles" 
+              :key="file.name"
+              class="file-item"
+              :class="{ active: selectedFile === file.name }"
+              @click="selectFile(file.name)"
             >
-              <el-option v-for="task in monitorTasks" :key="task.id" :label="task.name" :value="task.id" />
-            </el-select>
-            <el-input
-              v-model="fileSearchQuery"
-              placeholder="Search by filename..."
-              class="search-input"
-              clearable
-              :prefix-icon="Search"
-            />
-            <el-button :icon="Refresh" @click="refreshLogs">Refresh List</el-button>
+              <div class="file-icon"><el-icon><Document /></el-icon></div>
+              <div class="file-info">
+                <div class="file-name" :title="file.name">{{ file.name }}</div>
+                <div class="file-meta">{{ file.size }} • {{ file.mtime }}</div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <el-card shadow="never" class="content-card">
-          <el-table :data="paginatedLogFiles" v-loading="loading" style="width: 100%">
-            <el-table-column label="Log File Name" min-width="400">
-              <template #default="{ row }">
-                <div class="log-file-cell">
-                  <el-icon class="file-icon"><Document /></el-icon>
-                  <span class="file-name">{{ typeof row === 'string' ? row : row.name }}</span>
+        <!-- Log Content (Right) -->
+        <div class="log-viewer" v-loading="contentLoading">
+          <div v-if="searchResults.length > 0" class="search-results">
+            <div class="results-header">
+              Found {{ searchResults.length }} matches for "{{ globalSearchQuery }}"
+              <el-button link size="small" @click="clearSearch">Clear</el-button>
+            </div>
+            <div class="results-list">
+              <div 
+                v-for="(match, idx) in searchResults" 
+                :key="idx" 
+                class="result-item"
+                @click="jumpToLog(match.file)"
+              >
+                <div class="result-meta">
+                  <span class="res-file">{{ match.file }}</span>
+                  <span class="res-line">L{{ match.line }}</span>
                 </div>
-              </template>
-            </el-table-column>
-            
-            <el-table-column label="Actions" width="220" fixed="right">
-              <template #default="{ row }">
-                <div class="action-group">
-                  <el-button type="primary" plain size="small" :icon="View" @click="viewLog(row)">
-                    View
-                  </el-button>
-                  <el-button type="success" plain size="small" :icon="Download" @click="downloadLog(row)">
-                    Download
-                  </el-button>
-                </div>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div class="pagination-container">
-            <el-pagination
-              v-model:current-page="currentPage"
-              v-model:page-size="pageSize"
-              :page-sizes="[10, 20, 50, 100]"
-              layout="total, sizes, prev, pager, next, jumper"
-              :total="filteredLogFiles.length"
-              @size-change="handleSizeChange"
-              @current-change="handleCurrentChange"
-            />
-          </div>
-        </el-card>
-      </el-tab-pane>
-      
-      <el-tab-pane name="config">
-        <template #label>
-          <div class="tab-label">
-            <el-icon><Setting /></el-icon>
-            <span>Configuration</span>
-          </div>
-        </template>
-
-        <el-card shadow="never" class="content-card">
-          <div class="toolbar">
-            <div class="toolbar-right">
-              <el-button type="primary" :icon="Plus" @click="showAddTask" class="shadow-btn">
-                Add Monitor Task
-              </el-button>
+                <div class="result-content">{{ match.content }}</div>
+              </div>
             </div>
           </div>
 
-          <el-table :data="monitorTasks" v-loading="loading" style="width: 100%">
-            <el-table-column prop="name" label="Task Name" min-width="180">
-              <template #default="{ row }">
-                <div class="task-name-cell">
-                  <el-icon class="task-icon"><Monitor /></el-icon>
-                  <span>{{ row.name }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            
-            <el-table-column prop="k8s_namespace" label="K8s Namespace" width="180">
-              <template #default="{ row }">
-                <el-tag size="small" plain>{{ row.k8s_namespace }}</el-tag>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="Status" width="120">
-              <template #default="{ row }">
-                <div class="status-wrapper">
-                  <span :class="['status-dot', row.enabled ? 'enabled' : 'disabled']"></span>
-                  <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="light">
-                    {{ row.enabled ? 'ENABLED' : 'DISABLED' }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="Actions" width="220" fixed="right">
-              <template #default="{ row }">
-                <div class="action-group">
-                  <el-button size="small" @click="editTask(row)" plain>
-                    <el-icon><Edit /></el-icon> Edit
-                  </el-button>
-                  <el-button size="small" type="danger" text @click="deleteTask(row.id)">
-                    Delete
-                  </el-button>
-                </div>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-tab-pane>
-    </el-tabs>
-
-    <!-- Task Dialog -->
-    <el-dialog 
-      v-model="taskDialogVisible" 
-      :title="editMode ? 'Edit Monitor Task' : 'New Monitor Task'" 
-      width="640px"
-      class="custom-dialog"
-    >
-      <el-form :model="taskForm" label-width="140px" label-position="top" class="monitor-form">
-        <div class="form-section">
-          <h3 class="section-title">Source Configuration</h3>
-          <el-row :gutter="20">
-            <el-col :span="14">
-              <el-form-item label="Task Display Name" required>
-                <el-input v-model="taskForm.name" placeholder="e.g. Payment Service Logs" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="10">
-              <el-form-item label="K8s Namespace" required>
-                <el-input v-model="taskForm.k8s_namespace" placeholder="default" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-          <el-form-item label="Monitoring Status">
-            <el-switch v-model="taskForm.enabled" active-text="Active Monitoring Enabled" />
-          </el-form-item>
-        </div>
-
-        <div class="form-section">
-          <h3 class="section-title">Alerting & Keywords</h3>
-          <el-form-item label="Slack Webhook URL">
-            <el-input v-model="taskForm.slack_webhook_url" placeholder="https://hooks.slack.com/services/..." />
-          </el-form-item>
-          <el-form-item label="Critical Keywords (Auto-Alert)">
-            <el-select 
-              v-model="taskForm.alert_keywords" 
-              multiple 
-              filterable 
-              allow-create 
-              default-first-option 
-              placeholder="e.g. ERROR, CRITICAL, Timeout"
-              class="w-full"
-            />
-          </el-form-item>
-        </div>
-
-        <div class="form-section">
-          <div class="section-header-row">
-            <h3 class="section-title">Cloud Archive (S3)</h3>
-            <el-switch v-model="taskForm.s3_archive_enabled" />
+          <div v-else-if="selectedFile" class="file-viewer">
+            <div class="viewer-header">
+              <span>{{ selectedFile }}</span>
+              <el-button size="small" :icon="Refresh" circle @click="fetchLogContent" />
+            </div>
+            <div class="log-lines">
+              <div v-for="(line, i) in logContent" :key="i" class="log-line">{{ line }}</div>
+            </div>
           </div>
-          
-          <template v-if="taskForm.s3_archive_enabled">
-            <el-form-item label="S3 Endpoint">
-              <el-input v-model="taskForm.s3_endpoint" placeholder="s3.amazonaws.com" />
-            </el-form-item>
-            <el-row :gutter="20">
-              <el-col :span="12">
-                <el-form-item label="Bucket Name">
-                  <el-input v-model="taskForm.s3_bucket" placeholder="my-log-archive" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item label="S3 Region">
-                  <el-input v-model="taskForm.s3_region" placeholder="us-east-1" />
-                </el-form-item>
-              </el-col>
-            </el-row>
-            <el-row :gutter="20">
-              <el-col :span="12">
-                <el-form-item label="Access Key ID">
-                  <el-input v-model="taskForm.s3_access_key" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item label="Secret Access Key">
-                  <el-input v-model="taskForm.s3_secret_key" type="password" show-password />
-                </el-form-item>
-              </el-col>
-            </el-row>
-          </template>
+
+          <div v-else class="empty-viewer">
+            <el-empty description="Select a file to view logs or search globally" />
+          </div>
         </div>
-      </el-form>
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="taskDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" @click="saveTask" class="shadow-btn">Save Monitor Task</el-button>
-        </div>
-      </template>
-    </el-dialog>
-    
-    <!-- Log Viewer Dialog -->
-    <el-dialog
-      v-model="logViewerVisible"
-      :title="`Log Viewer - ${viewingLogFile}`"
-      width="80%"
-      class="log-viewer-dialog"
-      destroy-on-close
-    >
-      <div class="log-viewer-header">
-        <el-input
-          v-model="logSearchKeyword"
-          placeholder="Search within log content..."
-          class="log-search"
-          clearable
-          @keyup.enter="fetchCurrentLogContent"
-        >
-          <template #append>
-            <el-button :icon="Search" @click="fetchCurrentLogContent" />
-          </template>
-        </el-input>
       </div>
-      <div class="log-content-wrapper" v-loading="logLoading">
-        <pre class="log-content">{{ paginatedLogLines.join('\n') }}</pre>
-      </div>
-      <div class="log-pagination" v-if="logLines.length > logPageSize">
-        <el-pagination
-          small
-          background
-          layout="prev, pager, next"
-          :total="logLines.length"
-          :page-size="logPageSize"
-          v-model:current-page="currentLogPage"
-          @current-change="handleLogPageChange"
-        />
-      </div>
-      <template #footer>
-        <el-button @click="logViewerVisible = false">Close</el-button>
-        <el-button type="primary" :icon="Refresh" @click="fetchCurrentLogContent">Refresh</el-button>
-      </template>
-    </el-dialog>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue'
-import { useSystemStore } from '@/stores/system'
-import { 
-  Document, Files, Setting, Refresh, 
-  Download, Plus, Monitor, Edit, 
-  Delete, View, Search 
-} from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { ref, onMounted, nextTick, onUnmounted } from 'vue'
+import { taskApi } from '@/api/task'
+import { Refresh, Search, Document } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 
-const activeTab = ref('files')
-const selectedTaskId = ref<number | null>(null)
-const systemStore = useSystemStore()
+const loading = ref(false)
+const contentLoading = ref(false)
+const stats = ref({ summary: { error: 0, warning: 0 }, trend: { hours: [], errors: [] } })
+const logFiles = ref<any[]>([])
+const selectedFile = ref('')
+const logContent = ref<string[]>([])
+const globalSearchQuery = ref('')
+const searchResults = ref<any[]>([])
 
-const logFiles = computed(() => systemStore.monitorLogs)
-const monitorTasks = computed(() => systemStore.monitorTasks)
-const loading = computed(() => systemStore.loading)
+const chartRef = ref<HTMLElement>()
+let chart: echarts.ECharts | null = null
 
-const taskDialogVisible = ref(false)
-const editMode = ref(false)
-const taskForm = reactive({
-  id: null,
-  name: '',
-  enabled: true,
-  k8s_namespace: 'default',
-  slack_webhook_url: '',
-  alert_keywords: [],
-  s3_archive_enabled: false,
-  s3_endpoint: '',
-  s3_bucket: '',
-  s3_access_key: '',
-  s3_secret_key: '',
-  s3_region: ''
-})
-
-const logViewerVisible = ref(false)
-const viewingLogFile = ref('')
-const logContent = ref('')
-const logLoading = ref(false)
-const logSearchKeyword = ref('')
-
-// Pagination & Search
-const fileSearchQuery = ref('')
-const currentPage = ref(1)
-const pageSize = ref(10)
-
-const filteredLogFiles = computed(() => {
-  if (!logFiles.value) return []
-  return logFiles.value.filter((f: any) => {
-    const name = typeof f === 'string' ? f : f.name
-    return name.toLowerCase().includes(fileSearchQuery.value.toLowerCase())
-  })
-})
-
-const paginatedLogFiles = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredLogFiles.value.slice(start, end)
-})
-
-const handleSizeChange = (val: number) => {
-  pageSize.value = val
-  currentPage.value = 1
-}
-
-const handleCurrentChange = (val: number) => {
-  currentPage.value = val
-}
-
-onMounted(async () => {
-  await systemStore.fetchMonitorTasks()
-  if (monitorTasks.value.length > 0) {
-    selectedTaskId.value = monitorTasks.value[0].id
-    systemStore.fetchMonitorLogs(String(selectedTaskId.value))
-  }
-})
-
-const refreshLogs = () => {
-  if (selectedTaskId.value) {
-    systemStore.fetchMonitorLogs(String(selectedTaskId.value))
-  }
-}
-
-const showAddTask = () => {
-  editMode.value = false
-  Object.assign(taskForm, {
-    id: null,
-    name: '',
-    enabled: true,
-    k8s_namespace: 'default',
-    slack_webhook_url: '',
-    alert_keywords: [],
-    s3_archive_enabled: false,
-    s3_endpoint: '',
-    s3_bucket: '',
-    s3_access_key: '',
-    s3_secret_key: '',
-    s3_region: ''
-  })
-  taskDialogVisible.value = true
-}
-
-const editTask = (task: any) => {
-  editMode.value = true
-  Object.assign(taskForm, task)
-  taskDialogVisible.value = true
-}
-
-const saveTask = async () => {
-  await systemStore.saveMonitorTask({ ...taskForm })
-  taskDialogVisible.value = false
-}
-
-const deleteTask = (id: number) => {
-  ElMessageBox.confirm('Are you sure you want to permanently remove this monitor task?', 'Delete Task', {
-    confirmButtonText: 'Remove',
-    cancelButtonText: 'Cancel',
-    type: 'error'
-  }).then(() => {
-    systemStore.deleteMonitorTask(id)
-  })
-}
-
-const viewLog = (filename: any) => {
-  const name = typeof filename === 'string' ? filename : filename.name
-  viewingLogFile.value = name
-  logViewerVisible.value = true
-  fetchCurrentLogContent()
-}
-
-const fetchCurrentLogContent = async () => {
-  if (!selectedTaskId.value || !viewingLogFile.value) return
-  logLoading.value = true
+const fetchData = async () => {
+  loading.value = true
   try {
-    logContent.value = await systemStore.getLogContent(
-      String(selectedTaskId.value), 
-      viewingLogFile.value,
-      logSearchKeyword.value
-    )
-    // Reset pagination when loading new content
-    currentLogPage.value = 1
+    const [statsRes, filesRes] = await Promise.all([
+      taskApi.getLogStats(),
+      taskApi.getLogFiles()
+    ])
+    stats.value = statsRes
+    logFiles.value = filesRes
+    updateChart()
   } finally {
-    logLoading.value = false
+    loading.value = false
   }
 }
 
-// Log Content Pagination
-const currentLogPage = ref(1)
-const logPageSize = ref(50) // Lines per page
-
-const logLines = computed(() => {
-  if (!logContent.value) return []
-  return logContent.value.split('\n')
-})
-
-const paginatedLogLines = computed(() => {
-  const start = (currentLogPage.value - 1) * logPageSize.value
-  const end = start + logPageSize.value
-  return logLines.value.slice(start, end)
-})
-
-const handleLogPageChange = (val: number) => {
-  currentLogPage.value = val
+const selectFile = (name: string) => {
+  selectedFile.value = name
+  searchResults.value = [] // Clear search results to show file content
+  fetchLogContent()
 }
 
-const downloadLog = (filename: any) => {
-  const name = typeof filename === 'string' ? filename : filename.name
-  if (!selectedTaskId.value) return
-  window.open(`/api/monitor/logs/download?filename=${name}&task_id=${selectedTaskId.value}`, '_blank')
+const fetchLogContent = async () => {
+  if (!selectedFile.value) return
+  contentLoading.value = true
+  try {
+    // Extract task_id from filename (assuming task_id.log)
+    const taskId = selectedFile.value.replace('.log', '')
+    const res = await taskApi.getTaskLogs(taskId, { page: -1, page_size: 1000 })
+    logContent.value = res.lines
+  } finally {
+    contentLoading.value = false
+  }
 }
+
+const handleGlobalSearch = async () => {
+  if (!globalSearchQuery.value) return
+  contentLoading.value = true
+  try {
+    const res = await taskApi.searchLogs(globalSearchQuery.value)
+    searchResults.value = res
+    selectedFile.value = '' // Deselect file to show results
+  } finally {
+    contentLoading.value = false
+  }
+}
+
+const clearSearch = () => {
+  searchResults.value = []
+  globalSearchQuery.value = ''
+}
+
+const jumpToLog = (filename: string) => {
+  selectFile(filename)
+}
+
+// Chart
+const updateChart = () => {
+  if (!chartRef.value) return
+  if (!chart) chart = echarts.init(chartRef.value)
+  
+  chart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { top: '10%', bottom: '10%', left: '3%', right: '4%', containLabel: true },
+    xAxis: { type: 'category', data: stats.value.trend.hours },
+    yAxis: { type: 'value' },
+    series: [{
+      data: stats.value.trend.errors,
+      type: 'line',
+      smooth: true,
+      areaStyle: { color: 'rgba(239, 68, 68, 0.1)' },
+      lineStyle: { color: '#ef4444' },
+      itemStyle: { color: '#ef4444' }
+    }]
+  })
+}
+
+onMounted(() => {
+  fetchData()
+  window.addEventListener('resize', () => chart?.resize())
+})
+
+onUnmounted(() => {
+  chart?.dispose()
+})
 </script>
 
 <style scoped>
 .monitor-container {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
+  height: calc(100vh - 100px);
 }
 
 .page-header {
-  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .page-title {
   font-size: 24px;
   font-weight: 700;
   color: #1e293b;
-  margin: 0 0 4px 0;
+  margin: 0;
 }
 
 .page-subtitle {
@@ -466,176 +246,189 @@ const downloadLog = (filename: any) => {
   margin: 0;
 }
 
-.custom-tabs :deep(.el-tabs__header) {
-  margin-bottom: 24px;
-}
-
-.tab-label {
+/* Stats */
+.stat-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  height: 120px;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 4px;
+  flex-direction: column;
+  justify-content: center;
 }
 
-.content-card {
-  border: 1px solid #f1f5f9 !important;
-  border-radius: 12px !important;
-}
+.stat-card.error { border-left: 4px solid #ef4444; }
+.stat-card.warning { border-left: 4px solid #f59e0b; }
 
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.toolbar-left {
-  display: flex;
-  gap: 12px;
-}
-
-.task-select {
-  width: 240px;
-}
-
-.log-file-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.file-icon {
-  font-size: 18px;
+.stat-label {
+  font-size: 12px;
   color: #64748b;
-}
-
-.file-name {
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  color: #334155;
-}
-
-.task-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 32px;
+  font-weight: 700;
   color: #1e293b;
 }
 
-.task-icon {
-  color: #3b82f6;
+.chart-card {
+  height: 120px;
+  padding: 0;
 }
+.chart-card :deep(.el-card__body) { padding: 0; height: 100%; }
+.chart-container { width: 100%; height: 100%; }
 
-.status-wrapper {
+/* Explorer */
+.explorer-card {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.status-dot.enabled { background: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
-.status-dot.disabled { background: #94a3b8; }
-
-.action-group {
+.explorer-card :deep(.el-card__body) {
+  flex: 1;
+  padding: 0;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.form-section {
-  margin-bottom: 24px;
-  padding: 16px;
+.explorer-header {
+  padding: 0;
+}
+
+.explorer-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* File List */
+.file-list {
+  width: 280px;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
   background: #f8fafc;
-  border-radius: 8px;
 }
 
-.section-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 16px;
-  border-left: 3px solid #3b82f6;
-  padding-left: 8px;
-}
-
-.section-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-
-.section-header-row .section-title {
-  margin-bottom: 0;
-}
-
-.shadow-btn {
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
-}
-
-.w-full { width: 100%; }
-
-:deep(.el-form-item__label) {
+.list-header {
+  padding: 12px 16px;
   font-weight: 600;
   color: #475569;
+  border-bottom: 1px solid #e2e8f0;
   font-size: 13px;
-  padding-bottom: 4px !important;
 }
 
-:deep(.el-input__inner) {
-  font-family: ui-monospace, monospace;
-}
-
-.log-content-wrapper {
-  background: #1e293b;
-  border-radius: 8px;
-  padding: 16px;
-  max-height: 600px;
+.list-content {
+  flex: 1;
   overflow-y: auto;
 }
 
-.log-content {
+.file-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  transition: all 0.2s;
+}
+
+.file-item:hover { background: #fff; }
+.file-item.active { background: #fff; border-left: 3px solid #3b82f6; }
+
+.file-icon { color: #64748b; margin-top: 2px; }
+.file-name { font-weight: 500; font-size: 13px; color: #334155; margin-bottom: 2px; word-break: break-all; }
+.file-meta { font-size: 11px; color: #94a3b8; }
+
+/* Log Viewer */
+.log-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1e293b;
+  overflow: hidden;
+}
+
+.viewer-header {
+  padding: 8px 16px;
+  background: #0f172a;
   color: #e2e8f0;
-  font-family: ui-monospace, monospace;
   font-size: 13px;
-  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #334155;
+}
+
+.log-lines {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-family: 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.log-line {
   white-space: pre-wrap;
-  line-height: 1.5;
+  word-break: break-all;
 }
 
-.log-viewer-dialog :deep(.el-dialog__body) {
-  padding-top: 10px;
-}
-
-.pagination-container {
-  margin-top: 20px;
+.empty-viewer {
+  height: 100%;
   display: flex;
-  justify-content: flex-end;
-}
-
-.search-input {
-  width: 240px;
-}
-
-.log-viewer-header {
-  margin-bottom: 16px;
-}
-
-.log-search {
-  width: 100%;
-}
-
-.log-pagination {
-  margin-top: 16px;
-  display: flex;
+  align-items: center;
   justify-content: center;
+  background: #f8fafc;
+}
+
+/* Search Results */
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.results-header {
+  padding: 12px 16px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+  color: #475569;
+  display: flex;
+  justify-content: space-between;
+}
+
+.result-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+}
+.result-item:hover { background: #f8fafc; }
+
+.result-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.res-file { font-weight: 600; color: #3b82f6; }
+.result-content {
+  font-family: monospace;
+  font-size: 12px;
+  color: #334155;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

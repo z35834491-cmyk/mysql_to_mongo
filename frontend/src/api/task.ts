@@ -24,5 +24,10 @@ export const taskApi = {
   getTaskLogs: (id: string, params?: any) => request.get<TaskLog>(`/tasks/logs/${id}`, { params }),
   
   // Download logs
-  downloadLogs: (id: string) => `/api/tasks/logs/${id}/download`
+  downloadLogs: (id: string) => `/api/tasks/logs/${id}/download`,
+
+  // Global Log Monitoring
+  getLogFiles: () => request.get<{files: any[]}>('/logs/files').then(res => res.files),
+  getLogStats: () => request.get<any>('/logs/stats'),
+  searchLogs: (q: string) => request.get<{matches: any[]}>('/logs/search', { params: { q } }).then(res => res.matches)
 }
