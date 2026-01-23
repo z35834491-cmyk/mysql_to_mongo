@@ -7,7 +7,7 @@ class Request {
   constructor() {
     this.instance = axios.create({
       baseURL: '/api',
-      timeout: 10000,
+      timeout: 30000, // Increase global timeout to 30s
       headers: {
         'Content-Type': 'application/json'
       }
