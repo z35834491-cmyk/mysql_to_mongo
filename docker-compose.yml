@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. Source MySQL
+  # Add healthcheck to MySQL for better dependency management
   mysql_source:
     image: mysql:8.0
     container_name: mysql_source
@@ -15,6 +15,10 @@ services:
       - ./mysql_init:/docker-entrypoint-initdb.d:ro
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-proot"]
+      timeout: 20s
+      retries: 10
     restart: unless-stopped
 
   # 2. MongoDB Replica Set
@@ -117,7 +121,7 @@ services:
       - mongo_keyfile:/key
     restart: "no"
 
-  # 4. Main App
+  # 4. Main App (Django + Vue 3)
   syncer_app:
     build:
       context: .
@@ -126,15 +130,13 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Data persistence (Only SQLite DB and Logs)
       - ./state:/app/state
       - ./logs:/app/logs
     depends_on:
-      - mysql_source
-      - mongo1
-      - mongo2
-      - mongo3
-      - mongo_rs_init
+      mysql_source:
+        condition: service_healthy
+      mongo_rs_init:
+        condition: service_completed_successfully
     environment:
       - DEBUG=False
       - ALLOWED_HOSTS=*

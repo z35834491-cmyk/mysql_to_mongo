@@ -1,0 +1,394 @@
+<template>
+  <div class="inspection-container">
+    <div class="page-header">
+      <div class="header-info">
+        <h2 class="page-title">System Inspection</h2>
+        <p class="page-subtitle">AI-powered system health analysis and performance auditing</p>
+      </div>
+      <div class="header-actions">
+        <el-button @click="configVisible = true" :icon="Setting">Configure AI</el-button>
+        <el-button type="primary" size="large" @click="handleRun" :loading="loading" class="action-btn shadow-btn">
+          <el-icon><Search /></el-icon> Run New Inspection
+        </el-button>
+      </div>
+    </div>
+    
+    <el-card shadow="never" class="table-card">
+      <el-table :data="tableData" v-loading="loading" style="width: 100%">
+        <el-table-column prop="report_id" label="Report Timestamp" width="220">
+          <template #default="{ row }">
+            <div class="report-id-cell">
+              <el-icon class="report-icon"><Calendar /></el-icon>
+              <span>{{ formatIdToDate(row.report_id) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="Health Score" width="160">
+          <template #default="{ row }">
+            <div class="score-wrapper">
+              <el-progress 
+                type="circle" 
+                :percentage="row.score || 0" 
+                :width="40" 
+                :stroke-width="4"
+                :status="getProgressStatus(row.score)"
+              />
+              <el-tag :type="getScoreType(row.score)" size="small" effect="plain" class="score-tag">
+                {{ row.score || '-' }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="summary" label="Analysis Summary">
+          <template #default="{ row }">
+            <span class="summary-text">{{ row.summary || 'Awaiting full report analysis...' }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="Actions" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" plain size="small" @click="viewReport(row)">
+              View Details
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- Report Detail Dialog -->
+    <el-dialog 
+      v-model="dialogVisible" 
+      title="Inspection Report Analysis" 
+      width="800px"
+      class="report-dialog"
+    >
+      <div v-if="currentReport" class="report-content">
+        <div class="report-meta">
+          <div class="meta-item">
+            <span class="label">TIMESTAMP</span>
+            <span class="value">{{ formatIdToDate(currentReport.report_id) }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">HEALTH SCORE</span>
+            <div class="score-display">
+              <span :class="['score-value', getScoreType(currentReport.score)]">{{ currentReport.score }}</span>
+              <span class="score-total">/100</span>
+            </div>
+          </div>
+        </div>
+
+        <el-divider />
+
+        <div class="analysis-section">
+          <div class="section-header">
+            <el-icon><MagicStick /></el-icon>
+            <span>AI Diagnostic Insights</span>
+          </div>
+          <div class="analysis-card">
+            <div class="markdown-body">
+              {{ currentReport.ai_analysis || 'No detailed analysis available for this report.' }}
+            </div>
+          </div>
+        </div>
+
+        <div class="metrics-grid" v-if="currentReport.metrics">
+          <!-- Placeholder for future metrics display -->
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- Config Dialog -->
+    <el-dialog v-model="configVisible" title="Inspection Configuration" width="540px" class="custom-dialog">
+      <el-form :model="configForm" label-width="140px" label-position="top" class="config-form">
+        <div class="form-section">
+          <h3 class="section-title">Monitoring Data</h3>
+          <el-form-item label="Prometheus Endpoint">
+            <el-input v-model="configForm.prometheus_url" placeholder="http://prometheus:9090" />
+            <div class="form-tip">The inspection engine pulls real-time metrics from this source</div>
+          </el-form-item>
+        </div>
+
+        <div class="form-section">
+          <h3 class="section-title">AI Analysis Engine (Ark/Doubao)</h3>
+          <el-form-item label="Ark Base URL">
+            <el-input v-model="configForm.ark_base_url" placeholder="https://ark.cn-beijing.volces.com/api/v3" />
+          </el-form-item>
+          <el-form-item label="Ark API Key">
+            <el-input v-model="configForm.ark_api_key" type="password" show-password />
+          </el-form-item>
+          <el-form-item label="Ark Model Endpoint ID">
+            <el-input v-model="configForm.ark_model_id" placeholder="ep-202xxxxxxxx-xxxxx" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="configVisible = false">Cancel</el-button>
+          <el-button type="primary" @click="saveConfig" class="shadow-btn">Save Configuration</el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, computed, watch } from 'vue'
+import { useSystemStore } from '@/stores/system'
+import type { InspectionReport } from '@/types/system'
+import { 
+  Setting, Search, Calendar, 
+  MagicStick, Warning, CircleCheck 
+} from '@element-plus/icons-vue'
+
+const systemStore = useSystemStore()
+const reports = computed(() => systemStore.reports)
+const loading = computed(() => systemStore.loading)
+const inspectionConfig = computed(() => systemStore.inspectionConfig)
+
+const tableData = computed(() => {
+  return (reports.value || []).map(id => ({ report_id: id }))
+})
+
+const formatIdToDate = (id: string) => {
+  if (!id) return '-'
+  try {
+    const d = new Date(id.replace(/-/g, '/'))
+    return isNaN(d.getTime()) ? id : d.toLocaleString()
+  } catch (e) {
+    return id
+  }
+}
+
+const dialogVisible = ref(false)
+const configVisible = ref(false)
+const currentReport = ref<InspectionReport | null>(null)
+
+const configForm = ref({
+  prometheus_url: '',
+  ark_base_url: '',
+  ark_api_key: '',
+  ark_model_id: ''
+})
+
+watch(inspectionConfig, (newVal) => {
+  if (newVal) {
+    configForm.value = { ...newVal }
+  }
+}, { immediate: true })
+
+onMounted(() => {
+  systemStore.fetchReports()
+  systemStore.fetchInspectionConfig()
+})
+
+const handleRun = () => {
+  systemStore.runInspection()
+}
+
+const saveConfig = async () => {
+  await systemStore.saveInspectionConfig(configForm.value)
+  configVisible.value = false
+}
+
+const getScoreType = (score: number) => {
+  if (!score) return 'info'
+  if (score >= 90) return 'success'
+  if (score >= 70) return 'warning'
+  return 'danger'
+}
+
+const getProgressStatus = (score: number) => {
+  if (!score) return ''
+  if (score >= 90) return 'success'
+  if (score >= 70) return 'warning'
+  return 'exception'
+}
+
+const viewReport = async (row: any) => {
+  await systemStore.fetchReportDetail(row.report_id)
+  currentReport.value = systemStore.currentReport
+  dialogVisible.value = true
+}
+</script>
+
+<style scoped>
+.inspection-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0;
+}
+
+.table-card {
+  border: 1px solid #f1f5f9 !important;
+  border-radius: 12px !important;
+}
+
+.report-id-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: #334155;
+}
+
+.report-icon {
+  color: #3b82f6;
+}
+
+.score-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.score-tag {
+  font-weight: 700;
+  font-size: 12px;
+  min-width: 36px;
+  text-align: center;
+}
+
+.summary-text {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.report-content {
+  padding: 8px;
+}
+
+.report-meta {
+  display: flex;
+  gap: 48px;
+  margin-bottom: 24px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.meta-item .label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #94a3b8;
+  letter-spacing: 0.5px;
+}
+
+.meta-item .value {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.score-display {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.score-value {
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.score-value.success { color: #10b981; }
+.score-value.warning { color: #f59e0b; }
+.score-value.danger { color: #ef4444; }
+
+.score-total {
+  font-size: 14px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.analysis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 16px;
+}
+
+.section-header .el-icon {
+  color: #8b5cf6;
+}
+
+.analysis-card {
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.markdown-body {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  font-size: 14px;
+  color: #334155;
+}
+
+.form-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+  border-left: 3px solid #3b82f6;
+  padding-left: 8px;
+}
+
+.form-tip {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.shadow-btn {
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+:deep(.el-form-item__label) {
+  font-weight: 600;
+  color: #475569;
+  font-size: 13px;
+}
+</style>

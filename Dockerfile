@@ -1,12 +1,20 @@
+# --- Stage 1: Build Frontend ---
+FROM node:18-slim AS frontend-builder
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# --- Stage 2: Final Image ---
 FROM python:3.9-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
 # Install system dependencies
-# Check if sources.list exists before trying to modify it (Debian 12/Bookworm uses sources.list.d/debian.sources)
 RUN if [ -f /etc/apt/sources.list ]; then \
         sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
         sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
@@ -23,19 +31,21 @@ RUN if [ -f /etc/apt/sources.list ]; then \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# Copy project files
+# Copy project files (respects .dockerignore)
 COPY . .
+
+# Copy built frontend assets to Django's static directory
+# We assume the frontend builds to 'frontend/dist'
+# And we want them in 'static/dist' for Django to serve
+COPY --from=frontend-builder /frontend/dist ./static/dist
 
 # Create necessary directories
 RUN mkdir -p state logs
 
-# Download static assets
-RUN python -c "from core.cdn_cache import ensure_vendor_assets; ensure_vendor_assets()"
-
-# Set environment variable for collectstatic to ignore missing files
+# Set environment variable for collectstatic
 ENV WHITENOISE_MANIFEST_STRICT=False
 
-# Collect static files (add --clear to clean up)
+# Collect static files
 RUN python manage.py collectstatic --noinput --clear
 
 # Setup entrypoint

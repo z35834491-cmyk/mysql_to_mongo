@@ -1,0 +1,25 @@
+import request from '@/utils/request'
+import type { MonitorConfig, InspectionReport } from '@/types/system'
+
+export const systemApi = {
+  // Monitor
+  getMonitorTasks: () => request.get<any[]>('/monitor/tasks'),
+  saveMonitorTask: (task: any) => request.post('/monitor/tasks', task),
+  updateMonitorTask: (id: number, task: any) => request.put(`/monitor/tasks/${id}`, task),
+  deleteMonitorTask: (id: number) => request.delete(`/monitor/tasks/${id}`),
+  getMonitorLogs: (params: any) => request.get<any[]>('/monitor/logs', { params }),
+  
+  // Inspection
+  getReports: () => request.get<{items: string[]}>('/inspection/reports').then(res => res.items),
+  runInspection: (config?: any) => request.post<any>('/inspection/run', config),
+  getReportDetail: (id: string) => request.get<any>(`/inspection/reports/${id}`),
+  getInspectionConfig: () => request.get<any>('/inspection/config'),
+  saveInspectionConfig: (config: any) => request.post('/inspection/config', config),
+  
+  // Deploy
+  getServers: () => request.get<{servers: any[]}>('/deploy/servers'),
+  saveServer: (server: any) => request.post('/deploy/servers', server),
+  deleteServer: (id: string) => request.delete(`/deploy/servers/${id}`),
+  runDeploy: (plan: any) => request.post<{plan_id: string}>('/deploy/run', plan),
+  getPlan: (id: string) => request.get<any>(`/deploy/plans/${id}`)
+}

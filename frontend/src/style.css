@@ -1,0 +1,46 @@
+:root {
+  --primary-color: #3b82f6;
+  --primary-light: #eff6ff;
+  --bg-color: #f3f4f6;
+  --card-bg: #ffffff;
+  --text-main: #1f2937;
+  --text-secondary: #6b7280;
+  --sidebar-bg: #111827;
+  --sidebar-width: 200px;
+  --header-height: 60px;
+  --border-radius: 12px;
+  --transition-speed: 0.3s;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Element Plus Theme Overrides */
+:root {
+  --el-color-primary: #3b82f6 !important;
+  --el-color-success: #10b981 !important;
+  --el-color-warning: #f59e0b !important;
+  --el-color-danger: #ef4444 !important;
+  --el-border-radius-base: 8px !important;
+}
+
+.el-card {
+  border-radius: var(--border-radius) !important;
+  border: none !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1) !important;
+}
+
+.el-button--primary {
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+}
+
+.el-aside {
+  transition: width var(--transition-speed);
+}
