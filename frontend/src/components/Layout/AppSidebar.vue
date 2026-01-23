@@ -31,6 +31,12 @@
           <el-icon><Link /></el-icon>
           <template #title>Data Sources</template>
         </el-menu-item>
+
+        <div class="menu-group-title" v-if="!isCollapsed">OPERATIONS</div>
+        <el-menu-item index="/schedules">
+          <el-icon><Calendar /></el-icon>
+          <template #title>Schedules</template>
+        </el-menu-item>
         
         <div class="menu-group-title" v-if="!isCollapsed">MAINTENANCE</div>
         <el-menu-item index="/logs">
@@ -63,7 +69,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock } from '@element-plus/icons-vue'
+import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock, Calendar } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
 const route = useRoute()

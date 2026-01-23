@@ -44,6 +44,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Log Monitor', icon: 'Monitor' }
       },
       {
+        path: 'schedules',
+        name: 'Schedules',
+        component: () => import('@/views/Schedules/Index.vue'),
+        meta: { title: 'Schedules', icon: 'Calendar' }
+      },
+      {
         path: 'system',
         name: 'System',
         component: () => import('@/views/System/Index.vue'),
@@ -66,7 +72,7 @@ const routes: Array<RouteRecordRaw> = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 

@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/', include('tasks.urls')), 
     path('api/monitor/', include('monitor.urls')),
     path('api/inspection/', include('inspection.urls')),
+    path('api/', include('schedules.urls')),
 
     # Frontend SPA Support
     re_path(r'^.*$', core_views.index, name='index'),
