@@ -30,28 +30,34 @@
           <el-divider direction="vertical" />
           
           <div class="action-icons">
-            <el-badge :value="3" is-dot class="badge-item">
-              <el-icon class="header-icon"><Bell /></el-icon>
-            </el-badge>
-            <el-icon class="header-icon"><Moon /></el-icon>
+            <el-color-picker 
+              v-model="themeColor" 
+              size="small" 
+              @change="updateThemeColor"
+              :predefine="['#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981']"
+            />
+            <el-icon class="header-icon" @click="toggleDark">
+              <Moon v-if="!isDark" />
+              <Sunny v-else />
+            </el-icon>
           </div>
           
           <el-divider direction="vertical" />
           
           <el-dropdown>
             <div class="user-profile">
-              <el-avatar :size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
+              <el-avatar :size="32" :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${currentUser?.username || 'Admin'}`" />
               <div class="user-info">
-                <span class="username">Administrator</span>
-                <span class="user-role">System Admin</span>
+                <span class="username">{{ currentUser?.username || 'Administrator' }}</span>
+                <span class="user-role">{{ isAdmin ? 'System Admin' : 'User' }}</span>
               </div>
               <el-icon><ArrowDown /></el-icon>
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item><el-icon><User /></el-icon>Profile</el-dropdown-item>
-                <el-dropdown-item><el-icon><Setting /></el-icon>Settings</el-dropdown-item>
-                <el-dropdown-item divided><el-icon><SwitchButton /></el-icon>Logout</el-dropdown-item>
+                <el-dropdown-item @click="handleLogout" divided>
+                  <el-icon><SwitchButton /></el-icon>Logout
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -70,18 +76,42 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
 import { 
-  ArrowDown, Bell, Moon, Cpu, PieChart, 
+  ArrowDown, Bell, Moon, Sunny, Cpu, PieChart, 
   User, Setting, SwitchButton 
 } from '@element-plus/icons-vue'
+import { useDark, useToggle } from '@vueuse/core'
+import { useSystemStore } from '@/stores/system'
+import { storeToRefs } from 'pinia'
 
 const route = useRoute()
+const systemStore = useSystemStore()
+const { currentUser, isAdmin } = storeToRefs(systemStore)
+
 const currentRouteName = computed(() => {
   return route.name as string || 'Dashboard'
 })
+
+// Dark Mode
+const isDark = useDark()
+const toggleDark = useToggle(isDark)
+
+// Theme Color
+const themeColor = ref('#3b82f6')
+const updateThemeColor = (color: string | null) => {
+  if (color) {
+    document.documentElement.style.setProperty('--el-color-primary', color)
+    // You can also add more color variables here
+  }
+}
+
+// Logout
+const handleLogout = () => {
+  window.location.href = '/accounts/logout/'
+}
 </script>
 
 <style scoped>
@@ -173,6 +203,7 @@ const currentRouteName = computed(() => {
 
 .action-icons {
   display: flex;
+  align-items: center;
   gap: 16px;
   color: #64748b;
 }

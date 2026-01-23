@@ -1,11 +1,13 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 import os
 import json
 from .models import InspectionConfig, InspectionReport
 from .engine import inspection_engine
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def inspection_config(request):
     if request.method == 'GET':
         cfg = InspectionConfig.load()
@@ -25,6 +27,7 @@ def inspection_config(request):
         return Response({"msg": "saved"})
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def run_inspection(request):
     # Update config if provided
     data = request.data
@@ -41,6 +44,7 @@ def run_inspection(request):
     return Response(report)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_report(request, report_id):
     # Try DB first
     try:
@@ -55,6 +59,7 @@ def get_report(request, report_id):
         return Response({"error": "Report not found"}, status=404)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def history(request):
     # Get all reports from DB
     reports = InspectionReport.objects.all().order_by('-report_id')

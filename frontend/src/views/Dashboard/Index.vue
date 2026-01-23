@@ -101,8 +101,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, provide } from 'vue'
+import { ref, onMounted, computed, provide, onUnmounted } from 'vue'
 import { useTaskStore } from '@/stores/task'
+import { useSystemStore } from '@/stores/system'
 import { storeToRefs } from 'pinia'
 import { 
   List, VideoPlay, Link, WarnTriangleFilled, 
@@ -131,15 +132,20 @@ use([
 ])
 
 const taskStore = useTaskStore()
+const systemStore = useSystemStore()
 const { taskStats } = storeToRefs(taskStore)
+const { systemStats } = storeToRefs(systemStore)
 const chartTimeRange = ref('1h')
 
-const resourceStats = [
-  { label: 'System Load', value: 'Optimal', percentage: 12, icon: Cpu, type: 'blue', color: '#3b82f6', statusType: 'success', statusText: 'Stable' },
-  { label: 'CPU Usage', value: '58%', percentage: 58, icon: Box, type: 'purple', color: '#8b5cf6', statusType: 'info', statusText: '2 Cores' },
-  { label: 'Memory', value: '2.4 GB', percentage: 30, icon: PieChart, type: 'orange', color: '#f59e0b', statusType: 'info', statusText: 'of 8GB' },
-  { label: 'Storage', value: '45.2 GB', percentage: 45, icon: Box, type: 'red', color: '#ef4444', statusType: 'warning', statusText: '45%' }
-]
+const resourceStats = computed(() => {
+  const stats = systemStats.value?.resources
+  return [
+    { label: 'System Load', value: stats?.load || 'Optimal', percentage: stats?.cpu?.percentage || 0, icon: Cpu, type: 'blue', color: '#3b82f6', statusType: 'success', statusText: 'Stable' },
+    { label: 'CPU Usage', value: stats?.cpu?.value || '0%', percentage: stats?.cpu?.percentage || 0, icon: Box, type: 'purple', color: '#8b5cf6', statusType: 'info', statusText: 'Realtime' },
+    { label: 'Memory', value: stats?.memory?.value || '0 GB', percentage: stats?.memory?.percentage || 0, icon: PieChart, type: 'orange', color: '#f59e0b', statusType: 'info', statusText: `of ${stats?.memory?.total || '8GB'}` },
+    { label: 'Storage', value: stats?.disk?.value || '0 GB', percentage: stats?.disk?.percentage || 0, icon: Box, type: 'red', color: '#ef4444', statusType: 'warning', statusText: `${stats?.disk?.percentage || 0}%` }
+  ]
+})
 
 const pipelineMetrics = computed(() => [
   { label: 'Total Tasks', value: taskStats.value.total, icon: List, colorClass: 'blue' },
@@ -148,12 +154,12 @@ const pipelineMetrics = computed(() => [
   { label: 'Errors', value: taskStats.value.error, icon: WarnTriangleFilled, colorClass: 'red' }
 ])
 
-const healthItems = [
+const healthItems = computed(() => systemStats.value?.health || [
   { name: 'MySQL Master', desc: 'Latency 2ms', status: 'online' },
   { name: 'MongoDB rs0', desc: '3 Nodes Active', status: 'online' },
   { name: 'Worker Node 01', desc: 'Syncing...', status: 'online' },
   { name: 'Worker Node 02', desc: 'High Load', status: 'warning' }
-]
+])
 
 const chartOption = computed(() => ({
   tooltip: {
@@ -205,8 +211,18 @@ const chartOption = computed(() => ({
   ]
 }))
 
+let timer: any = null
+
 onMounted(() => {
   taskStore.fetchTasks()
+  systemStore.fetchSystemStats()
+  timer = setInterval(() => {
+    systemStore.fetchSystemStats()
+  }, 5000)
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
 })
 </script>
 

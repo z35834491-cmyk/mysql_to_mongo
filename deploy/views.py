@@ -1,5 +1,6 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django.http import JsonResponse
 from .models import Server, DeployPlan
 from .schemas import DeployRequestSchema, ServerConfigSchema
@@ -7,6 +8,7 @@ from .engine import deploy_engine
 import json
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def server_list(request):
     if request.method == 'GET':
         servers = Server.objects.all()
@@ -47,6 +49,7 @@ def server_list(request):
             return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def run_deploy(request):
     try:
         # Validate request
@@ -72,11 +75,13 @@ def run_deploy(request):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def execute_plan(request, plan_id):
     deploy_engine.execute_async(plan_id)
     return Response({"status": "ok"})
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_plan(request, plan_id):
     try:
         plan = DeployPlan.objects.get(id=plan_id)

@@ -54,6 +54,12 @@ const routes: Array<RouteRecordRaw> = [
         name: 'Deploy',
         component: () => import('@/views/Deploy/Index.vue'),
         meta: { title: 'Deploy', icon: 'Upload' }
+      },
+      {
+        path: 'permissions',
+        name: 'Permissions',
+        component: () => import('@/views/Permissions/Index.vue'),
+        meta: { title: 'Permissions', icon: 'Lock' }
       }
     ]
   }

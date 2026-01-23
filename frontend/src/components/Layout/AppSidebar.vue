@@ -45,6 +45,10 @@
           <el-icon><Upload /></el-icon>
           <template #title>Server Deploy</template>
         </el-menu-item>
+        <el-menu-item index="/permissions" v-if="isAdmin">
+          <el-icon><Lock /></el-icon>
+          <template #title>Permissions</template>
+        </el-menu-item>
       </el-menu>
     </div>
 
@@ -57,12 +61,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand } from '@element-plus/icons-vue'
+import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock } from '@element-plus/icons-vue'
+import { useSystemStore } from '@/stores/system'
 
 const route = useRoute()
+const systemStore = useSystemStore()
 const isCollapsed = ref(false)
+
+const isAdmin = computed(() => systemStore.isAdmin)
+
+onMounted(() => {
+  systemStore.fetchCurrentUser()
+})
 
 const activeMenu = computed(() => {
   const path = route.path

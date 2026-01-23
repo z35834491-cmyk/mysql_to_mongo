@@ -1,5 +1,6 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django.http import FileResponse, HttpResponseNotFound
 import os
 from .models import MonitorTask
@@ -7,6 +8,7 @@ from .engine import monitor_engine
 from django.forms.models import model_to_dict
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def monitor_tasks(request):
     if request.method == 'GET':
         tasks = MonitorTask.objects.all()
@@ -34,6 +36,7 @@ def monitor_tasks(request):
         return Response(model_to_dict(task))
 
 @api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
 def monitor_task_detail(request, pk):
     try:
         task = MonitorTask.objects.get(pk=pk)
@@ -63,6 +66,7 @@ def monitor_task_detail(request, pk):
         return Response({"msg": "deleted"})
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def monitor_logs(request):
     # Optional task_id filter
     task_id = request.query_params.get('task_id')
@@ -99,6 +103,7 @@ def monitor_logs(request):
     return Response(files)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def monitor_log_view(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
@@ -155,6 +160,7 @@ def monitor_log_view(request):
         return Response({"error": str(e)}, status=500)
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def monitor_log_download(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
@@ -175,6 +181,7 @@ def monitor_log_download(request):
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename)
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def monitor_log_multi_search(request):
     data = request.data
     task_id = data.get('task_id')

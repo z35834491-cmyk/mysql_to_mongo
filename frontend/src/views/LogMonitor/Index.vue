@@ -249,7 +249,18 @@
         </el-input>
       </div>
       <div class="log-content-wrapper" v-loading="logLoading">
-        <pre class="log-content">{{ logContent }}</pre>
+        <pre class="log-content">{{ paginatedLogLines.join('\n') }}</pre>
+      </div>
+      <div class="log-pagination" v-if="logLines.length > logPageSize">
+        <el-pagination
+          small
+          background
+          layout="prev, pager, next"
+          :total="logLines.length"
+          :page-size="logPageSize"
+          v-model:current-page="currentLogPage"
+          @current-change="handleLogPageChange"
+        />
       </div>
       <template #footer>
         <el-button @click="logViewerVisible = false">Close</el-button>
@@ -398,9 +409,30 @@ const fetchCurrentLogContent = async () => {
       viewingLogFile.value,
       logSearchKeyword.value
     )
+    // Reset pagination when loading new content
+    currentLogPage.value = 1
   } finally {
     logLoading.value = false
   }
+}
+
+// Log Content Pagination
+const currentLogPage = ref(1)
+const logPageSize = ref(50) // Lines per page
+
+const logLines = computed(() => {
+  if (!logContent.value) return []
+  return logContent.value.split('\n')
+})
+
+const paginatedLogLines = computed(() => {
+  const start = (currentLogPage.value - 1) * logPageSize.value
+  const end = start + logPageSize.value
+  return logLines.value.slice(start, end)
+})
+
+const handleLogPageChange = (val: number) => {
+  currentLogPage.value = val
 }
 
 const downloadLog = (filename: any) => {
@@ -599,5 +631,11 @@ const downloadLog = (filename: any) => {
 
 .log-search {
   width: 100%;
+}
+
+.log-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
 }
 </style>

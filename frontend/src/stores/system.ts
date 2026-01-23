@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { systemApi } from '@/api/system'
+import request from '@/utils/request'
 import type { MonitorConfig, InspectionReport } from '@/types/system'
 import { ElMessage } from 'element-plus'
 
@@ -126,12 +127,36 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
   
+  const systemStats = ref<any>(null)
+  const currentUser = ref<any>(null)
+  
+  const fetchSystemStats = async () => {
+    try {
+      systemStats.value = await systemApi.getSystemStats()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const fetchCurrentUser = async () => {
+    try {
+      currentUser.value = await request.get('/api/me')
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const isAdmin = computed(() => currentUser.value?.is_staff || currentUser.value?.groups?.includes('Admin'))
+  
   return {
     monitorTasks,
     monitorLogs,
     reports,
     currentReport,
     inspectionConfig,
+    systemStats,
+    currentUser,
+    isAdmin,
     loading,
     fetchMonitorTasks,
     saveMonitorTask,
@@ -142,6 +167,8 @@ export const useSystemStore = defineStore('system', () => {
     runInspection,
     fetchReportDetail,
     fetchInspectionConfig,
-    saveInspectionConfig
+    saveInspectionConfig,
+    fetchSystemStats,
+    fetchCurrentUser
   }
 })

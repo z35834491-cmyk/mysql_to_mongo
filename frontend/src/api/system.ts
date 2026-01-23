@@ -17,6 +17,9 @@ export const systemApi = {
   getInspectionConfig: () => request.get<any>('/inspection/config'),
   saveInspectionConfig: (config: any) => request.post('/inspection/config', config),
   
+  // Stats
+  getSystemStats: () => request.get<any>('/system/stats'),
+  
   // Deploy
   getServers: () => request.get<{servers: any[]}>('/deploy/servers'),
   saveServer: (server: any) => request.post('/deploy/servers', server),

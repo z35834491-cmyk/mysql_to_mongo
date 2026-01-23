@@ -10,6 +10,7 @@ urlpatterns = [
     path('', core_views.index, name='index'),
     
     # API Routes
+    path('api/', include('api.urls')),
     path('api/deploy/', include('deploy.urls')),
     path('api/', include('tasks.urls')), 
     path('api/monitor/', include('monitor.urls')),
