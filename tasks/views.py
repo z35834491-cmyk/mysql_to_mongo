@@ -11,18 +11,47 @@ import datetime
 import json
 import hashlib
 import pymysql
-from kubernetes import client, config
+import tempfile
+from kubernetes import client, config as k8s_config
+from monitor.models import MonitorTask
 
 # --- K8s Helper ---
 def _get_k8s_core_api():
+    # 1. Try to load from MonitorTask (User provided config)
     try:
-        config.load_incluster_config()
+        task = MonitorTask.objects.filter(k8s_kubeconfig__isnull=False).exclude(k8s_kubeconfig__exact='').first()
+        if task and task.k8s_kubeconfig:
+            # Create a temp file for kubeconfig
+            # Note: k8s client needs a file path for kubeconfig
+            # We create a temp file, load it, then delete it.
+            # But wait, load_kube_config sets the global config? 
+            # If we want thread-safety or per-request config, we should use ApiClient with specific config.
+            # For simplicity in this view function scope:
+            
+            with tempfile.NamedTemporaryFile(mode='w', delete=False) as tf:
+                tf.write(task.k8s_kubeconfig)
+                tf.flush()
+                try:
+                    k8s_config.load_kube_config(config_file=tf.name)
+                    return client.CoreV1Api()
+                finally:
+                    os.unlink(tf.name)
+    except Exception as e:
+        print(f"Error loading config from MonitorTask: {e}")
+
+    # 2. Fallback to In-Cluster
+    try:
+        k8s_config.load_incluster_config()
+        return client.CoreV1Api()
     except:
-        try:
-            config.load_kube_config()
-        except:
-            return None
-    return client.CoreV1Api()
+        pass
+
+    # 3. Fallback to Local Default (~/.kube/config)
+    try:
+        k8s_config.load_kube_config()
+        return client.CoreV1Api()
+    except:
+        return None
 
 # --- Connections ---
 
