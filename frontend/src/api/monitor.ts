@@ -30,7 +30,8 @@ export const monitorApi = {
   updateTask: (id: number, data: Partial<MonitorTask>) => request.put<MonitorTask>(`/monitor/tasks/${id}`, data),
   deleteTask: (id: number) => request.delete(`/monitor/tasks/${id}`),
   
-  getLogs: (taskId: number) => request.get<any[]>('/monitor/logs', { params: { task_id: taskId } }),
-  viewLog: (taskId: number, filename: string, keyword?: string) => 
-    request.get<{content: string}>('/monitor/logs/view', { params: { task_id: taskId, filename, keyword } }),
+  getLogs: (taskId: number, params?: any) => request.get<{files: any[], total: number}>('/monitor/logs', { params: { task_id: taskId, ...params } }),
+  viewLog: (taskId: number, filename: string, params?: any) => 
+    request.get<{content: string, total: number}>('/monitor/logs/view', { params: { task_id: taskId, filename, ...params } }),
+  downloadLog: (taskId: number, filename: string) => `/api/monitor/logs/download?task_id=${taskId}&filename=${filename}`,
 }

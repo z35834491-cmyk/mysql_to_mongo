@@ -68,21 +68,18 @@ def monitor_task_detail(request, pk):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def monitor_logs(request):
-    # Optional task_id filter
     task_id = request.query_params.get('task_id')
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
     
     base_dir = monitor_engine.LOG_DIR
     if task_id:
-        # Check if task log dir exists
         log_dir = os.path.join(base_dir, str(task_id))
     else:
-        # If no task_id, maybe list all logs recursively? 
-        # For now let's return empty or require task_id. 
-        # Actually user wants "Click into task -> show logs". So task_id is expected.
-        return Response([])
+        return Response({"files": [], "total": 0})
 
     if not os.path.exists(log_dir):
-        return Response([])
+        return Response({"files": [], "total": 0})
     
     files = []
     try:
@@ -97,22 +94,35 @@ def monitor_logs(request):
                 })
         # Sort by mtime desc
         files.sort(key=lambda x: x['mtime'], reverse=True)
+        
+        # Pagination
+        total = len(files)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paged_files = files[start:end]
+        
     except Exception as e:
         return Response({"error": str(e)}, status=500)
         
-    return Response(files)
+    return Response({
+        "files": paged_files,
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def monitor_log_view(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
-    keyword = request.query_params.get('keyword') # Add search support for single file
+    keyword = request.query_params.get('keyword')
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 1000))
     
     if not filename or not task_id:
         return Response({"error": "filename and task_id required"}, status=400)
     
-    # Security check
     if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
          return Response({"error": "invalid parameters"}, status=400)
          
@@ -123,11 +133,7 @@ def monitor_log_view(request):
         return Response({"error": "File not found"}, status=404)
         
     try:
-        stat = os.stat(file_path)
-        size = stat.st_size
-        max_read = 1 * 1024 * 1024 # 1MB (Requested by user)
-        
-        # If search keyword is provided, we scan the whole file (streaming) regardless of size
+        # If keyword provided, we search (no pagination for search yet, or simple one)
         if keyword:
             results = []
             keywords = keyword.lower().split()
@@ -135,27 +141,33 @@ def monitor_log_view(request):
                 for i, line in enumerate(f, 1):
                     line_lower = line.lower()
                     if all(k in line_lower for k in keywords):
-                        # For search results, we just return matching lines to avoid huge payload
                         results.append(line.rstrip())
-                        if len(results) > 2000: # Limit matches
+                        if len(results) > 2000: 
                              results.append(f"... (Matches truncated, found > 2000 lines) ...")
                              break
-            return Response({"content": "\n".join(results), "is_search_result": True})
+            return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
 
-        # Normal view logic
+        # Pagination logic
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            if size > max_read:
-                # Read only last 1MB if too large
-                f.seek(size - max_read)
-                content = f.read()
-                first_newline = content.find('\n')
-                if first_newline != -1:
-                    content = content[first_newline+1:]
-                content = f"... (File is {size} bytes, showing last 1MB. Use search to find older logs or download full file.) ...\n" + content
-            else:
-                content = f.read()
-                
-        return Response({"content": content})
+            all_lines = f.readlines()
+            
+        total = len(all_lines)
+        
+        if page == -1: # Last page
+            import math
+            page = max(1, math.ceil(total / page_size))
+            
+        start = (page - 1) * page_size
+        end = start + page_size
+        
+        content = "".join(all_lines[start:end])
+        
+        return Response({
+            "content": content, 
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        })
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 

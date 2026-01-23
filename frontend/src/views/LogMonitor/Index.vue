@@ -126,6 +126,95 @@
               </div>
             </el-tab-pane>
 
+            <!-- Tab 3: Saved Logs (Archived) -->
+            <el-tab-pane label="Saved Logs" name="saved">
+              <div class="saved-container">
+                <!-- File List -->
+                <div class="saved-file-list">
+                  <div class="list-header">
+                    <span>Task Logs</span>
+                    <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
+                      <el-option :value="10" label="10" />
+                      <el-option :value="20" label="20" />
+                      <el-option :value="50" label="50" />
+                    </el-select>
+                  </div>
+                  <div v-loading="savedLoading" class="list-content">
+                    <div 
+                      v-for="file in savedLogFiles" 
+                      :key="file.name"
+                      class="file-item"
+                      :class="{ active: savedLogFile === file.name }"
+                      @click="selectSavedFile(file.name)"
+                    >
+                      <div class="file-icon"><el-icon><Document /></el-icon></div>
+                      <div class="file-info">
+                        <div class="file-name" :title="file.name">{{ file.name }}</div>
+                        <div class="file-meta">{{ (file.size / 1024 / 1024).toFixed(2) }} MB • {{ new Date(file.mtime * 1000).toLocaleString() }}</div>
+                      </div>
+                    </div>
+                    <div v-if="savedLogFiles.length === 0" class="empty-list">No saved logs</div>
+                  </div>
+                  <div class="list-pagination">
+                     <el-pagination 
+                       small 
+                       layout="prev, next" 
+                       :total="savedFileTotal" 
+                       :page-size="savedFilePageSize"
+                       v-model:current-page="savedFilePage"
+                       @current-change="fetchSavedLogs"
+                     />
+                  </div>
+                </div>
+
+                <!-- Log Viewer -->
+                <div class="saved-log-viewer" v-loading="savedContentLoading">
+                  <div class="viewer-header">
+                    <div class="header-left">
+                      <span v-if="savedLogFile">{{ savedLogFile }}</span>
+                      <span v-else>Select a log file</span>
+                    </div>
+                    <div class="header-right" v-if="savedLogFile">
+                       <el-select v-model="savedLogPageSize" size="small" style="width: 90px; margin-right: 8px" @change="fetchSavedLogContent(1)">
+                        <el-option :value="500" label="500 lines" />
+                        <el-option :value="1000" label="1k lines" />
+                        <el-option :value="5000" label="5k lines" />
+                      </el-select>
+                      <el-pagination 
+                         small
+                         layout="prev, pager, next"
+                         :total="savedLogTotal"
+                         :page-size="savedLogPageSize"
+                         v-model:current-page="savedLogPage"
+                         @current-change="fetchSavedLogContent"
+                         style="display: inline-flex; margin-right: 12px"
+                      />
+                      <el-button size="small" :icon="Download" circle @click="downloadSavedFile" title="Download" />
+                      <el-button size="small" :icon="Refresh" circle @click="fetchSavedLogContent(savedLogPage)" />
+                    </div>
+                    <div class="header-right" v-else>
+                       <el-input 
+                          v-model="savedSearchQuery" 
+                          placeholder="Search in current file..." 
+                          size="small" 
+                          style="width: 200px"
+                          @keyup.enter="handleSavedSearch"
+                       >
+                          <template #append><el-button :icon="Search" @click="handleSavedSearch"/></template>
+                       </el-input>
+                    </div>
+                  </div>
+
+                  <div class="log-lines" v-if="savedLogFile">
+                    <pre class="log-raw">{{ savedLogContent }}</pre>
+                  </div>
+                  <div v-else class="empty-viewer">
+                    <el-empty description="Select a saved log file to view" />
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
           </el-tabs>
         </div>
 
@@ -260,6 +349,20 @@ const selectedPod = ref('')
 const k8sLogContent = ref('')
 const logLoading = ref(false)
 
+// --- Saved Logs State ---
+const savedLoading = ref(false)
+const savedContentLoading = ref(false)
+const savedLogFiles = ref<any[]>([])
+const savedLogFile = ref('')
+const savedLogContent = ref('')
+const savedFilePage = ref(1)
+const savedFilePageSize = ref(10)
+const savedFileTotal = ref(0)
+const savedLogPage = ref(1)
+const savedLogPageSize = ref(1000)
+const savedLogTotal = ref(0)
+const savedSearchQuery = ref('')
+
 const keywordsStr = computed({
   get: () => form.value.alert_keywords?.join('\n') || '',
   set: (val) => {
@@ -371,6 +474,68 @@ const fetchK8sLogs = async () => {
     logLoading.value = false
   }
 }
+
+// Saved Logs Actions
+const fetchSavedLogs = async (page = 1) => {
+  if (!selectedTaskId.value) return
+  savedFilePage.value = page
+  savedLoading.value = true
+  try {
+    const res = await monitorApi.getLogs(selectedTaskId.value, { page, page_size: savedFilePageSize.value })
+    savedLogFiles.value = res.files
+    savedFileTotal.value = res.total
+  } catch (e) {
+    savedLogFiles.value = []
+    savedFileTotal.value = 0
+  } finally {
+    savedLoading.value = false
+  }
+}
+
+const selectSavedFile = (name: string) => {
+  savedLogFile.value = name
+  savedLogContent.value = ''
+  fetchSavedLogContent(1)
+}
+
+const fetchSavedLogContent = async (page = 1) => {
+  if (!selectedTaskId.value || !savedLogFile.value) return
+  savedLogPage.value = page
+  savedContentLoading.value = true
+  try {
+    const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { page, page_size: savedLogPageSize.value })
+    savedLogContent.value = res.content
+    savedLogTotal.value = res.total
+  } catch (e) {
+    savedLogContent.value = `Error loading file: ${e}`
+  } finally {
+    savedContentLoading.value = false
+  }
+}
+
+const downloadSavedFile = () => {
+  if (!selectedTaskId.value || !savedLogFile.value) return
+  window.open(monitorApi.downloadLog(selectedTaskId.value, savedLogFile.value), '_blank')
+}
+
+const handleSavedSearch = async () => {
+  if (!selectedTaskId.value || !savedLogFile.value || !savedSearchQuery.value) return
+  savedContentLoading.value = true
+  try {
+    const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { keyword: savedSearchQuery.value })
+    savedLogContent.value = res.content
+  } catch (e) {
+    savedLogContent.value = `Search failed: ${e}`
+  } finally {
+    savedContentLoading.value = false
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'saved' && selectedTaskId.value) {
+    fetchSavedLogs(1)
+  }
+})
 
 // Local Logs
 const fetchLocalFiles = async (page = 1) => {
