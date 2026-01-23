@@ -24,19 +24,25 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="Health Score" width="160">
+        <el-table-column label="Health Status" width="160">
           <template #default="{ row }">
             <div class="score-wrapper">
-              <el-progress 
-                type="circle" 
-                :percentage="row.score || 0" 
-                :width="40" 
-                :stroke-width="4"
-                :status="getProgressStatus(row.score)"
-              />
-              <el-tag :type="getScoreType(row.score)" size="small" effect="plain" class="score-tag">
-                {{ row.score || '-' }}
-              </el-tag>
+              <template v-if="row.score !== undefined">
+                <el-progress 
+                  type="circle" 
+                  :percentage="row.score" 
+                  :width="40" 
+                  :stroke-width="4"
+                  :status="getProgressStatus(row.score)"
+                />
+                <el-tag :type="getScoreType(row.score)" size="small" effect="plain" class="score-tag">
+                  {{ row.score }}
+                </el-tag>
+              </template>
+              <template v-else>
+                <el-icon class="status-icon-placeholder"><CircleCheck /></el-icon>
+                <el-tag type="info" size="small" effect="plain" class="score-tag">N/A</el-tag>
+              </template>
             </div>
           </template>
         </el-table-column>
@@ -93,8 +99,33 @@
           </div>
         </div>
 
-        <div class="metrics-grid" v-if="currentReport.metrics">
-          <!-- Placeholder for future metrics display -->
+        <div class="analysis-section" v-if="currentReport.metrics_summary && currentReport.metrics_summary.length > 0">
+          <div class="section-header">
+            <el-icon><Histogram /></el-icon>
+            <span>Resource Utilization Analysis</span>
+          </div>
+          <el-row :gutter="20" class="metrics-row">
+            <el-col :span="12" v-if="getChartOption('cpu').series">
+              <div class="chart-card">
+                <div class="chart-title">CPU Usage Top 5 (%)</div>
+                <v-chart class="report-chart" :option="getChartOption('cpu')" autoresize />
+              </div>
+            </el-col>
+            <el-col :span="12" v-if="getChartOption('memory').series">
+              <div class="chart-card">
+                <div class="chart-title">Memory Usage Top 5 (%)</div>
+                <v-chart class="report-chart" :option="getChartOption('memory')" autoresize />
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20" class="metrics-row" style="margin-top: 20px;">
+            <el-col :span="12" v-if="getChartOption('disk').series">
+              <div class="chart-card">
+                <div class="chart-title">Disk Usage Top 5 (%)</div>
+                <v-chart class="report-chart" :option="getChartOption('disk')" autoresize />
+              </div>
+            </el-col>
+          </el-row>
         </div>
       </div>
     </el-dialog>
@@ -134,21 +165,69 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, provide } from 'vue'
 import { useSystemStore } from '@/stores/system'
 import type { InspectionReport } from '@/types/system'
 import { 
   Setting, Search, Calendar, 
-  MagicStick, Warning, CircleCheck 
+  MagicStick, Warning, CircleCheck,
+  DataLine, Histogram
 } from '@element-plus/icons-vue'
+import VChart from 'vue-echarts'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import {
+  TitleComponent,
+  TooltipComponent,
+  LegendComponent,
+  GridComponent
+} from 'echarts/components'
+
+use([
+  CanvasRenderer,
+  BarChart,
+  LineChart,
+  PieChart,
+  TitleComponent,
+  TooltipComponent,
+  LegendComponent,
+  GridComponent
+])
 
 const systemStore = useSystemStore()
+// ... existing refs and computed ...
+
+const getChartOption = (category: string) => {
+  if (!currentReport.value || !currentReport.value.metrics_summary) return {}
+  
+  const metrics = currentReport.value.metrics_summary.filter((m: any) => m.category === category)
+  if (metrics.length === 0) return {}
+
+  return {
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: metrics.map((m: any) => m.labels.instance || m.display),
+      axisLabel: { interval: 0, rotate: 30 }
+    },
+    yAxis: { type: 'value', name: metrics[0].unit },
+    series: [{
+      data: metrics.map((m: any) => m.value),
+      type: 'bar',
+      itemStyle: {
+        color: category === 'cpu' ? '#3b82f6' : category === 'memory' ? '#8b5cf6' : '#f59e0b'
+      }
+    }]
+  }
+}
 const reports = computed(() => systemStore.reports)
 const loading = computed(() => systemStore.loading)
 const inspectionConfig = computed(() => systemStore.inspectionConfig)
 
 const tableData = computed(() => {
-  return (reports.value || []).map(id => ({ report_id: id }))
+  return reports.value || []
 })
 
 const formatIdToDate = (id: string) => {
@@ -270,6 +349,11 @@ const viewReport = async (row: any) => {
   text-align: center;
 }
 
+.status-icon-placeholder {
+  font-size: 24px;
+  color: #94a3b8;
+}
+
 .summary-text {
   font-size: 13px;
   color: #64748b;
@@ -356,6 +440,29 @@ const viewReport = async (row: any) => {
   line-height: 1.8;
   font-size: 14px;
   color: #334155;
+}
+
+.metrics-row {
+  margin-top: 10px;
+}
+
+.chart-card {
+  background: white;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.chart-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.report-chart {
+  height: 200px;
 }
 
 .form-section {

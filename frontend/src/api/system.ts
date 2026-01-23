@@ -8,6 +8,7 @@ export const systemApi = {
   updateMonitorTask: (id: number, task: any) => request.put(`/monitor/tasks/${id}`, task),
   deleteMonitorTask: (id: number) => request.delete(`/monitor/tasks/${id}`),
   getMonitorLogs: (params: any) => request.get<any[]>('/monitor/logs', { params }),
+  getLogContent: (params: any) => request.get<{content: string}>('/monitor/logs/view', { params }),
   
   // Inspection
   getReports: () => request.get<{items: string[]}>('/inspection/reports').then(res => res.items),

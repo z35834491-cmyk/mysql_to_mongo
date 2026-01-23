@@ -16,40 +16,63 @@
           </div>
         </template>
         
-        <el-card shadow="never" class="content-card">
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <el-select 
-                v-model="selectedTaskId" 
-                placeholder="Select Monitor Task" 
-                @change="refreshLogs" 
-                class="task-select"
-              >
-                <el-option v-for="task in monitorTasks" :key="task.id" :label="task.name" :value="task.id" />
-              </el-select>
-              <el-button :icon="Refresh" @click="refreshLogs">Refresh List</el-button>
-            </div>
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <el-select 
+              v-model="selectedTaskId" 
+              placeholder="Select Monitor Task" 
+              @change="refreshLogs" 
+              class="task-select"
+            >
+              <el-option v-for="task in monitorTasks" :key="task.id" :label="task.name" :value="task.id" />
+            </el-select>
+            <el-input
+              v-model="fileSearchQuery"
+              placeholder="Search by filename..."
+              class="search-input"
+              clearable
+              :prefix-icon="Search"
+            />
+            <el-button :icon="Refresh" @click="refreshLogs">Refresh List</el-button>
           </div>
+        </div>
 
-          <el-table :data="logFiles" v-loading="loading" style="width: 100%">
-            <el-table-column label="Log File Name" min-width="400">
-              <template #default="{ row }">
-                <div class="log-file-cell">
-                  <el-icon class="file-icon"><Document /></el-icon>
-                  <span class="file-name">{{ typeof row === 'string' ? row : row.name }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            
-            <el-table-column label="Actions" width="180" fixed="right">
-              <template #default="{ row }">
-                <el-button type="primary" plain size="small" :icon="Download" @click="downloadLog(row)">
+        <el-table :data="paginatedLogFiles" v-loading="loading" style="width: 100%">
+          <el-table-column label="Log File Name" min-width="400">
+            <template #default="{ row }">
+              <div class="log-file-cell">
+                <el-icon class="file-icon"><Document /></el-icon>
+                <span class="file-name">{{ typeof row === 'string' ? row : row.name }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          
+          <el-table-column label="Actions" width="220" fixed="right">
+            <template #default="{ row }">
+              <div class="action-group">
+                <el-button type="primary" plain size="small" :icon="View" @click="viewLog(row)">
+                  View
+                </el-button>
+                <el-button type="success" plain size="small" :icon="Download" @click="downloadLog(row)">
                   Download
                 </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="pagination-container">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next, jumper"
+            :total="filteredLogFiles.length"
+            @size-change="handleSizeChange"
+            @current-change="handleCurrentChange"
+          />
+        </div>
+      </el-card>
       </el-tab-pane>
       
       <el-tab-pane name="config">
@@ -202,6 +225,36 @@
         </div>
       </template>
     </el-dialog>
+    
+    <!-- Log Viewer Dialog -->
+    <el-dialog
+      v-model="logViewerVisible"
+      :title="`Log Viewer - ${viewingLogFile}`"
+      width="80%"
+      class="log-viewer-dialog"
+      destroy-on-close
+    >
+      <div class="log-viewer-header">
+        <el-input
+          v-model="logSearchKeyword"
+          placeholder="Search within log content..."
+          class="log-search"
+          clearable
+          @keyup.enter="fetchCurrentLogContent"
+        >
+          <template #append>
+            <el-button :icon="Search" @click="fetchCurrentLogContent" />
+          </template>
+        </el-input>
+      </div>
+      <div class="log-content-wrapper" v-loading="logLoading">
+        <pre class="log-content">{{ logContent }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="logViewerVisible = false">Close</el-button>
+        <el-button type="primary" :icon="Refresh" @click="fetchCurrentLogContent">Refresh</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -211,7 +264,7 @@ import { useSystemStore } from '@/stores/system'
 import { 
   Document, Files, Setting, Refresh, 
   Download, Plus, Monitor, Edit, 
-  Delete 
+  Delete, View, Search 
 } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 
@@ -239,6 +292,40 @@ const taskForm = reactive({
   s3_secret_key: '',
   s3_region: ''
 })
+
+const logViewerVisible = ref(false)
+const viewingLogFile = ref('')
+const logContent = ref('')
+const logLoading = ref(false)
+const logSearchKeyword = ref('')
+
+// Pagination & Search
+const fileSearchQuery = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
+
+const filteredLogFiles = computed(() => {
+  if (!logFiles.value) return []
+  return logFiles.value.filter((f: any) => {
+    const name = typeof f === 'string' ? f : f.name
+    return name.toLowerCase().includes(fileSearchQuery.value.toLowerCase())
+  })
+})
+
+const paginatedLogFiles = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredLogFiles.value.slice(start, end)
+})
+
+const handleSizeChange = (val: number) => {
+  pageSize.value = val
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (val: number) => {
+  currentPage.value = val
+}
 
 onMounted(async () => {
   await systemStore.fetchMonitorTasks()
@@ -292,6 +379,27 @@ const deleteTask = (id: number) => {
   }).then(() => {
     systemStore.deleteMonitorTask(id)
   })
+}
+
+const viewLog = (filename: any) => {
+  const name = typeof filename === 'string' ? filename : filename.name
+  viewingLogFile.value = name
+  logViewerVisible.value = true
+  fetchCurrentLogContent()
+}
+
+const fetchCurrentLogContent = async () => {
+  if (!selectedTaskId.value || !viewingLogFile.value) return
+  logLoading.value = true
+  try {
+    logContent.value = await systemStore.getLogContent(
+      String(selectedTaskId.value), 
+      viewingLogFile.value,
+      logSearchKeyword.value
+    )
+  } finally {
+    logLoading.value = false
+  }
 }
 
 const downloadLog = (filename: any) => {
@@ -451,5 +559,44 @@ const downloadLog = (filename: any) => {
 
 :deep(.el-input__inner) {
   font-family: ui-monospace, monospace;
+}
+
+.log-content-wrapper {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.log-content {
+  color: #e2e8f0;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.log-viewer-dialog :deep(.el-dialog__body) {
+  padding-top: 10px;
+}
+
+.pagination-container {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.search-input {
+  width: 240px;
+}
+
+.log-viewer-header {
+  margin-bottom: 16px;
+}
+
+.log-search {
+  width: 100%;
 }
 </style>

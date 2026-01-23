@@ -67,6 +67,16 @@ export const useSystemStore = defineStore('system', () => {
       loading.value = false
     }
   }
+
+  const getLogContent = async (taskId: string, filename: string, keyword?: string) => {
+    try {
+      const res = await systemApi.getLogContent({ task_id: taskId, filename, keyword })
+      return res.content
+    } catch (e) {
+      console.error(e)
+      return ''
+    }
+  }
   
   // Inspection Actions
   const fetchReports = async () => {
@@ -127,6 +137,7 @@ export const useSystemStore = defineStore('system', () => {
     saveMonitorTask,
     deleteMonitorTask,
     fetchMonitorLogs,
+    getLogContent,
     fetchReports,
     runInspection,
     fetchReportDetail,

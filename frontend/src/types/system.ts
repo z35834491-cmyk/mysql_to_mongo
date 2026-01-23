@@ -29,4 +29,5 @@ export interface InspectionReport {
   summary: string
   ai_analysis?: string
   metrics?: any
+  metrics_summary?: any[]
 }

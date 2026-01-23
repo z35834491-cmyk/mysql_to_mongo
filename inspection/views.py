@@ -56,15 +56,39 @@ def get_report(request, report_id):
 
 @api_view(['GET'])
 def history(request):
-    # Get IDs from DB
-    db_items = list(InspectionReport.objects.values_list('report_id', flat=True))
+    # Get all reports from DB
+    reports = InspectionReport.objects.all().order_by('-report_id')
     
-    # Get IDs from file
-    file_items = []
+    results = []
+    for r in reports:
+        content = r.content
+        risk = content.get('risk_summary', {})
+        results.append({
+            "report_id": r.report_id,
+            "score": 100 - risk.get('score', 0), # Convert risk score to health score
+            "summary": content.get('ai_analysis', '')[:100] + '...' if content.get('ai_analysis') else 'No analysis available'
+        })
+    
+    # Handle legacy file items if any
+    db_ids = [r.report_id for r in reports]
     path = 'state/inspection_reports/daily'
     if os.path.exists(path):
-        file_items = [f.replace('.json', '') for f in os.listdir(path) if f.endswith('.json')]
+        for f in os.listdir(path):
+            if f.endswith('.json'):
+                rid = f.replace('.json', '')
+                if rid not in db_ids:
+                    with open(os.path.join(path, f), 'r', encoding='utf-8') as f_in:
+                        try:
+                            content = json.load(f_in)
+                            risk = content.get('risk_summary', {})
+                            results.append({
+                                "report_id": rid,
+                                "score": 100 - risk.get('score', 0),
+                                "summary": content.get('ai_analysis', '')[:100] + '...' if content.get('ai_analysis') else 'No analysis available'
+                            })
+                        except:
+                            pass
     
-    # Merge and sort
-    all_items = sorted(list(set(db_items + file_items)), reverse=True)
-    return Response({"items": all_items})
+    # Sort results by report_id desc
+    results.sort(key=lambda x: x['report_id'], reverse=True)
+    return Response({"items": results})
