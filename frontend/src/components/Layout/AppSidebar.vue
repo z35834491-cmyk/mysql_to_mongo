@@ -155,9 +155,9 @@ const activeMenu = computed(() => {
 }
 
 :deep(.el-menu-item.is-active) {
-  background-color: var(--primary-green) !important;
+  background-color: var(--el-color-primary) !important;
   color: #fff;
-  box-shadow: none;
+  box-shadow: 0 4px 12px rgba(var(--el-color-primary-rgb), 0.3);
 }
 
 :deep(.el-menu-item:hover) {

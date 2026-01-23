@@ -1,98 +1,89 @@
 <template>
   <div class="dashboard-container">
     <!-- Top Stats Row -->
-    <el-row :gutter="16">
+    <el-row :gutter="24">
       <el-col :span="6" v-for="item in topStats" :key="item.name">
-        <el-card shadow="never" class="stat-card">
-          <div class="stat-content">
-            <div class="stat-info">
-              <div class="stat-label">{{ item.label }}</div>
-              <div class="stat-value">{{ item.value }}</div>
-              <div class="stat-desc">{{ item.desc }}</div>
-            </div>
-            <div class="stat-chart">
-              <el-progress 
-                type="circle" 
-                :percentage="item.percentage" 
-                :width="80" 
-                :stroke-width="8"
-                :color="getProgressColor(item.percentage)"
-              />
-            </div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="stat-label">{{ item.label }}</span>
+            <el-icon class="stat-icon" :class="item.name"><component :is="item.icon" /></el-icon>
           </div>
-        </el-card>
+          <div class="stat-value">{{ item.value }}</div>
+          <div class="stat-footer">
+            <el-progress :percentage="item.percentage" :show-text="false" :color="item.color" />
+            <span class="stat-desc">{{ item.desc }}</span>
+          </div>
+        </div>
       </el-col>
     </el-row>
 
-    <!-- Overview Row -->
-    <el-card shadow="never" class="overview-card">
-      <template #header>
-        <div class="card-header">
-          <span>Overview</span>
-          <el-icon class="more-icon"><MoreFilled /></el-icon>
-        </div>
-      </template>
-      <el-row :gutter="20">
-        <el-col :span="6" v-for="stat in overviewStats" :key="stat.name">
-          <div class="overview-item">
-            <div class="overview-label">{{ stat.name }}</div>
-            <div class="overview-val-box">
-              <span class="overview-value" :class="{ 'danger': stat.danger }">{{ stat.value }}</span>
-              <el-icon class="arrow-icon"><ArrowRight /></el-icon>
+    <el-row :gutter="24">
+      <!-- Data Pipeline Performance (ECharts) -->
+      <el-col :span="18">
+        <div class="chart-card">
+          <div class="card-header">
+            <div class="header-title">
+              <el-icon><PieChart /></el-icon>
+              <span>Data Pipeline Performance</span>
+            </div>
+            <div class="header-actions">
+              <el-radio-group v-model="timeRange" size="small">
+                <el-radio-button label="1h">1H</el-radio-button>
+                <el-radio-button label="6h">6H</el-radio-button>
+                <el-radio-button label="24h">24H</el-radio-button>
+              </el-radio-group>
+              <el-button :icon="Refresh" circle size="small" />
             </div>
           </div>
-        </el-col>
-      </el-row>
-    </el-card>
-
-    <el-row :gutter="16">
-      <!-- Traffic Chart -->
-      <el-col :span="16">
-        <el-card shadow="never" class="chart-card">
-          <template #header>
-            <div class="card-header">
-              <div class="header-left">
-                <span class="active">Traffic</span>
-                <span>Disk IO</span>
+          
+          <div class="pipeline-metrics">
+            <div class="metric-item" v-for="m in pipelineMetrics" :key="m.label">
+              <el-icon :style="{ backgroundColor: m.bg, color: m.color }"><component :is="m.icon" /></el-icon>
+              <div class="metric-info">
+                <span class="metric-val">{{ m.value }}</span>
+                <span class="metric-label">{{ m.label }}</span>
               </div>
-              <el-select v-model="networkCard" size="small" style="width: 100px">
-                <el-option label="All" value="all" />
-              </el-select>
             </div>
-          </template>
-          <div class="traffic-toolbar">
-            <div class="toolbar-item">
-              <span class="dot up"></span> Up: 10.8 KB
-            </div>
-            <div class="toolbar-item">
-              <span class="dot down"></span> Down: 4.5 KB
-            </div>
-            <div class="toolbar-item">Total Sent: 133.2 MB</div>
-            <div class="toolbar-item">Total Recv: 20.1 MB</div>
           </div>
+
           <div ref="chartRef" class="main-chart"></div>
-        </el-card>
+        </div>
       </el-col>
 
-      <!-- Software Grid -->
-      <el-col :span="8">
-        <el-card shadow="never" class="software-card">
-          <template #header>
-            <div class="card-header">
-              <span>Software</span>
-              <el-icon class="more-icon"><MoreFilled /></el-icon>
-            </div>
-          </template>
-          <div class="software-grid">
-            <div class="software-item" v-for="s in softwareList" :key="s.name">
-              <div class="sw-icon-box">
-                <el-icon :size="24" :color="s.color"><component :is="s.icon" /></el-icon>
-              </div>
-              <div class="sw-name">{{ s.name }}</div>
-              <div class="sw-ver">{{ s.version }} <el-icon class="play-icon"><CaretRight /></el-icon></div>
+      <!-- System Health -->
+      <el-col :span="6">
+        <div class="health-card">
+          <div class="card-header">
+            <div class="header-title">
+              <el-icon><CircleCheck /></el-icon>
+              <span>System Health</span>
             </div>
           </div>
-        </el-card>
+          
+          <div class="health-list">
+            <div class="health-item" v-for="h in systemHealth" :key="h.name">
+              <div class="health-info">
+                <span class="status-dot" :class="h.status"></span>
+                <div class="health-text">
+                  <div class="health-name">{{ h.name }}</div>
+                  <div class="health-desc">{{ h.desc }}</div>
+                </div>
+              </div>
+              <el-tag :type="h.status === 'online' ? 'success' : 'warning'" size="small" effect="plain">
+                {{ h.status.toUpperCase() }}
+              </el-tag>
+            </div>
+          </div>
+
+          <el-divider />
+          <div class="quick-actions">
+            <div class="action-title">QUICK ACTIONS</div>
+            <div class="action-buttons">
+              <el-button size="small" class="action-btn" plain @click="$router.push('/system')">Run Inspection</el-button>
+              <el-button size="small" class="action-btn" plain @click="$router.push('/tasks')">New Sync Task</el-button>
+            </div>
+          </div>
+        </div>
       </el-col>
     </el-row>
   </div>
@@ -101,90 +92,92 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
-import { MoreFilled, ArrowRight, CaretRight, Monitor, Connection, Cpu, Management, Setting } from '@element-plus/icons-vue'
+import { 
+  Cpu, PieChart, Refresh, CircleCheck, 
+  DataAnalysis, Connection, Link, Warning 
+} from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 import { storeToRefs } from 'pinia'
 
 const systemStore = useSystemStore()
 const { systemStats } = storeToRefs(systemStore)
+
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
-const networkCard = ref('all')
+const timeRange = ref('1h')
 
 const topStats = computed(() => [
   { 
-    label: 'Load', 
-    value: 'Running Smoothly', 
-    desc: 'Load Status', 
-    percentage: 4, 
+    label: 'SYSTEM LOAD', 
+    value: systemStats.value?.resources?.load || 'Optimal', 
+    desc: 'Stable', 
+    percentage: 30, 
+    icon: 'Cpu', 
+    color: 'var(--el-color-primary)',
     name: 'load' 
   },
   { 
-    label: 'CPU', 
-    value: '2 Cores', 
-    desc: systemStats.value?.resources?.cpu?.value || '0%', 
+    label: 'CPU USAGE', 
+    value: systemStats.value?.resources?.cpu?.value || '0%', 
+    desc: 'Realtime', 
     percentage: systemStats.value?.resources?.cpu?.percentage || 0, 
+    icon: 'Cpu', 
+    color: '#8b5cf6',
     name: 'cpu' 
   },
   { 
-    label: 'Memory', 
-    value: systemStats.value?.resources?.memory?.value || '0.0GB / 0.0GB', 
-    desc: 'Total Memory', 
+    label: 'MEMORY', 
+    value: systemStats.value?.resources?.memory?.value || '0.0GB', 
+    desc: `of ${systemStats.value?.resources?.memory?.total || '0.0GB'}`, 
     percentage: systemStats.value?.resources?.memory?.percentage || 0, 
+    icon: 'PieChart', 
+    color: '#f59e0b',
     name: 'memory' 
   },
   { 
-    label: 'Storage', 
-    value: systemStats.value?.resources?.disk?.value || '0.0GB / 0.0GB', 
-    desc: 'Root Partition', 
+    label: 'STORAGE', 
+    value: systemStats.value?.resources?.disk?.value || '0.0GB', 
+    desc: `${systemStats.value?.resources?.disk?.percentage || 0}%`, 
     percentage: systemStats.value?.resources?.disk?.percentage || 0, 
+    icon: 'PieChart', 
+    color: '#ef4444',
     name: 'disk' 
   }
 ])
 
-const overviewStats = [
-  { name: 'Websites', value: 1, danger: false },
-  { name: 'Databases', value: 0, danger: false },
-  { name: 'Security Risks', value: 9, danger: true },
-  { name: 'System Notes', value: 'Click to edit', danger: false }
+const pipelineMetrics = [
+  { label: 'Total Tasks', value: 0, icon: 'DataAnalysis', color: 'var(--el-color-primary)', bg: 'rgba(var(--el-color-primary-rgb), 0.1)' },
+  { label: 'Syncing', value: 0, icon: 'Connection', color: '#10b981', bg: '#ecfdf5' },
+  { label: 'Data Sources', value: 12, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
+  { label: 'Errors', value: 0, icon: 'Warning', color: '#ef4444', bg: '#fef2f2' }
 ]
 
-const softwareList = [
-  { name: 'Nginx Firewall', version: '9.8.1', icon: 'Monitor', color: '#67c23a' },
-  { name: 'Log Monitor', version: '4.1.8', icon: 'Connection', color: '#409eff' },
-  { name: 'Nginx', version: '1.24.0', icon: 'Cpu', color: '#67c23a' },
-  { name: 'MySQL', version: '5.7.44', icon: 'Management', color: '#e6a23c' },
-  { name: 'phpMyAdmin', version: '5.2', icon: 'Setting', color: '#f56c6c' },
-  { name: 'PHP', version: '8.2.28', icon: 'Cpu', color: '#409eff' }
-]
-
-const getProgressColor = (p: number) => {
-  if (p < 70) return '#20a53a'
-  if (p < 90) return '#e6a23c'
-  return '#f56c6c'
-}
+const systemHealth = computed(() => systemStats.value?.health || [])
 
 const initChart = () => {
   if (!chartRef.value) return
   chart = echarts.init(chartRef.value)
   const option = {
+    tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true, top: '10%' },
-    xAxis: { type: 'category', boundaryGap: false, data: ['10:00', '10:10', '10:20', '10:30', '10:40', '10:50', '11:00'], axisLine: { show: false }, axisTick: { show: false } },
+    xAxis: { type: 'category', boundaryGap: false, data: ['10:00', '10:10', '10:20', '10:30', '10:40', '10:50', '11:00'], axisLine: { show: false } },
     yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
     series: [
       {
-        name: 'Traffic',
+        name: 'Performance',
         type: 'line',
         smooth: true,
         data: [120, 132, 101, 134, 90, 230, 210],
-        lineStyle: { color: '#20a53a', width: 2 },
+        lineStyle: { color: 'var(--el-color-primary)', width: 3 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(32, 165, 58, 0.2)' },
-            { offset: 1, color: 'rgba(32, 165, 58, 0)' }
+            { offset: 0, color: 'rgba(var(--el-color-primary-rgb), 0.2)' },
+            { offset: 1, color: 'rgba(var(--el-color-primary-rgb), 0)' }
           ])
         },
-        symbol: 'none'
+        symbol: 'circle',
+        symbolSize: 8,
+        itemStyle: { color: 'var(--el-color-primary)' }
       }
     ]
   }
@@ -207,168 +200,197 @@ onMounted(() => {
 .dashboard-container {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
 }
 
 .stat-card {
-  border-radius: 4px;
-  border: none;
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
+  transition: all 0.3s;
 }
 
-.stat-content {
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.chart-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.health-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.stat-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--app-text-muted);
-  margin-bottom: 8px;
+  letter-spacing: 0.05em;
 }
 
+.stat-icon {
+  font-size: 20px;
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.stat-icon.load { background: rgba(var(--el-color-primary-rgb), 0.1); color: var(--el-color-primary); }
+.stat-icon.cpu { background: #f5f3ff; color: #8b5cf6; }
+.stat-icon.memory { background: #fffbeb; color: #f59e0b; }
+.stat-icon.disk { background: #fef2f2; color: #ef4444; }
+
 .stat-value {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--app-text-main);
-  margin-bottom: 4px;
+  margin-bottom: 16px;
+}
+
+.stat-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .stat-desc {
   font-size: 12px;
-  color: var(--primary-green);
-}
-
-.overview-card {
-  border-radius: 4px;
-  border: none;
+  color: var(--app-text-muted);
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 14px;
-  font-weight: 600;
+  margin-bottom: 24px;
 }
 
-.more-icon {
-  color: var(--app-text-muted);
-  cursor: pointer;
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  color: var(--app-text-main);
 }
 
-.overview-item {
-  padding: 10px 0;
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
-.overview-label {
+.pipeline-metrics {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.metric-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.metric-item .el-icon {
+  font-size: 20px;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.metric-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--app-text-main);
+}
+
+.metric-label {
   font-size: 12px;
   color: var(--app-text-muted);
-  margin-bottom: 8px;
 }
 
-.overview-val-box {
+.main-chart {
+  height: 350px;
+}
+
+.health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.health-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.overview-value {
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.overview-value.danger {
-  color: #f56c6c;
-}
-
-.arrow-icon {
-  color: #ddd;
-  font-size: 14px;
-}
-
-.header-left {
-  display: flex;
-  gap: 20px;
-}
-
-.header-left span {
-  cursor: pointer;
-  color: var(--app-text-muted);
-}
-
-.header-left span.active {
-  color: var(--primary-green);
-  border-bottom: 2px solid var(--primary-green);
-  padding-bottom: 2px;
-}
-
-.traffic-toolbar {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 20px;
-  font-size: 12px;
-  color: var(--app-text-muted);
-}
-
-.toolbar-item {
+.health-info {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
+.status-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 
-.dot.up { background: #20a53a; }
-.dot.down { background: #e6a23c; }
+.status-dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
+.status-dot.warning { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 
-.main-chart {
-  height: 250px;
-}
-
-.software-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-}
-
-.software-item {
-  text-align: center;
-  padding: 10px;
-}
-
-.sw-icon-box {
-  width: 48px;
-  height: 48px;
-  background: #f8fafc;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 10px;
-}
-
-.sw-name {
-  font-size: 12px;
+.health-name {
+  font-weight: 700;
   color: var(--app-text-main);
-  margin-bottom: 4px;
+  font-size: 14px;
 }
 
-.sw-ver {
-  font-size: 11px;
-  color: var(--app-text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.play-icon {
-  color: var(--primary-green);
+.health-desc {
   font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+.quick-actions {
+  padding-top: 8px;
+}
+
+.action-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--app-text-muted);
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.action-btn {
+  justify-content: flex-start;
+  padding: 10px 16px;
+  border-radius: 8px;
 }
 </style>
