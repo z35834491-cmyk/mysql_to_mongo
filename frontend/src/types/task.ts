@@ -11,6 +11,9 @@ export interface Task {
     error?: string
     current_table?: string
     full_insert_count?: number
+    inc_insert_count?: number
+    update_count?: number
+    delete_count?: number
   }
   type?: 'sync' | 'monitor'
 }

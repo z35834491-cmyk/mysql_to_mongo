@@ -12,6 +12,27 @@
       </div>
     </div>
 
+    <!-- Dashboard Charts -->
+    <div class="charts-row">
+      <el-card shadow="never" class="chart-card">
+        <template #header>
+          <div class="card-header">
+            <span>Task Status Distribution</span>
+          </div>
+        </template>
+        <div ref="statusChartRef" class="chart-container"></div>
+      </el-card>
+      
+      <el-card shadow="never" class="chart-card">
+        <template #header>
+          <div class="card-header">
+            <span>Total Events Processed</span>
+          </div>
+        </template>
+        <div ref="eventsChartRef" class="chart-container"></div>
+      </el-card>
+    </div>
+
     <el-card shadow="never" class="table-card">
       <el-table :data="tasks" v-loading="loading" style="width: 100%">
         <el-table-column prop="task_id" label="Task Identifier" min-width="180">
@@ -40,7 +61,7 @@
               <div class="progress-stats">
                 <span class="stat-item">
                   <span class="label">Processed:</span>
-                  <span class="value">{{ row.metrics.processed_count.toLocaleString() }}</span>
+                  <span class="value">{{ row.metrics.processed_count?.toLocaleString() || 0 }}</span>
                 </span>
                 <span class="stat-item" v-if="row.metrics.phase">
                   <span class="label">Phase:</span>
@@ -103,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
 import { 
@@ -112,23 +133,135 @@ import {
 } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts'
 
 const router = useRouter()
 const taskStore = useTaskStore()
-const { tasks, loading } = storeToRefs(taskStore)
+const { tasks, taskStats } = storeToRefs(taskStore)
+const loading = ref(false)
+
+const statusChartRef = ref<HTMLElement>()
+const eventsChartRef = ref<HTMLElement>()
+let statusChart: echarts.ECharts | null = null
+let eventsChart: echarts.ECharts | null = null
 
 let timer: any = null
 
-onMounted(() => {
-  taskStore.fetchTasks()
+onMounted(async () => {
+  loading.value = true
+  await taskStore.fetchTasks()
+  loading.value = false
+  
+  initCharts()
+  
   timer = setInterval(() => {
     taskStore.fetchTasks()
   }, 5000)
+  
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  window.removeEventListener('resize', handleResize)
+  statusChart?.dispose()
+  eventsChart?.dispose()
 })
+
+const handleResize = () => {
+  statusChart?.resize()
+  eventsChart?.resize()
+}
+
+watch(tasks, () => {
+  updateCharts()
+}, { deep: true })
+
+const initCharts = () => {
+  if (statusChartRef.value) {
+    statusChart = echarts.init(statusChartRef.value)
+  }
+  if (eventsChartRef.value) {
+    eventsChart = echarts.init(eventsChartRef.value)
+  }
+  // Ensure DOM is ready and charts are initialized before updating
+  if (statusChart && eventsChart) {
+    updateCharts()
+  }
+}
+
+const updateCharts = () => {
+  if (!statusChart || !eventsChart) return
+
+  // 1. Status Chart
+  const stats = taskStats.value
+  statusChart.setOption({
+    tooltip: { trigger: 'item' },
+    legend: { bottom: '0%', left: 'center' },
+    series: [
+      {
+        name: 'Task Status',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 10,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: { show: false, position: 'center' },
+        emphasis: {
+          label: { show: true, fontSize: 20, fontWeight: 'bold' }
+        },
+        labelLine: { show: false },
+        data: [
+          { value: stats.running, name: 'Running', itemStyle: { color: '#10b981' } },
+          { value: stats.stopped, name: 'Stopped', itemStyle: { color: '#94a3b8' } },
+          { value: stats.error, name: 'Error', itemStyle: { color: '#ef4444' } }
+        ]
+      }
+    ]
+  })
+
+  // 2. Events Chart
+  // Aggregate metrics
+  let totalInsert = 0
+  let totalUpdate = 0
+  let totalDelete = 0
+  
+  tasks.value.forEach(t => {
+    if (t.metrics) {
+      totalInsert += (t.metrics.inc_insert_count || 0) + (t.metrics.full_insert_count || 0)
+      totalUpdate += (t.metrics.update_count || 0)
+      totalDelete += (t.metrics.delete_count || 0)
+    }
+  })
+
+  eventsChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: [
+      {
+        type: 'category',
+        data: ['Insert', 'Update', 'Delete'],
+        axisTick: { alignWithLabel: true }
+      }
+    ],
+    yAxis: [{ type: 'value' }],
+    series: [
+      {
+        name: 'Events',
+        type: 'bar',
+        barWidth: '60%',
+        data: [
+          { value: totalInsert, itemStyle: { color: '#3b82f6' } },
+          { value: totalUpdate, itemStyle: { color: '#f59e0b' } },
+          { value: totalDelete, itemStyle: { color: '#ef4444' } }
+        ]
+      }
+    ]
+  })
+}
 
 const getStatusType = (status: string) => {
   switch (status) {
@@ -201,6 +334,29 @@ const handleLogs = (id: string) => {
   font-size: 14px;
   color: #64748b;
   margin: 0;
+}
+
+/* Charts Area */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.chart-card {
+  border: 1px solid #f1f5f9 !important;
+  border-radius: 12px !important;
+}
+
+.card-header {
+  font-weight: 600;
+  font-size: 14px;
+  color: #475569;
+}
+
+.chart-container {
+  height: 250px;
+  width: 100%;
 }
 
 .table-card {
