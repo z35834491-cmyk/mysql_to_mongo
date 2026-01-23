@@ -86,12 +86,13 @@ const activeMenu = computed(() => {
 <style scoped>
 .sidebar {
   height: 100vh;
-  background-color: #111827;
+  background-color: var(--app-sidebar-bg);
   display: flex;
   flex-direction: column;
   box-shadow: 4px 0 10px rgba(0,0,0,0.1);
   z-index: 1000;
-  border-right: none;
+  border-right: 1px solid var(--app-border-color);
+  transition: width 0.3s;
 }
 
 .logo-container {
@@ -100,7 +101,8 @@ const activeMenu = computed(() => {
   align-items: center;
   padding: 0 16px;
   color: white;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--app-border-color);
+  overflow: hidden;
 }
 
 .logo-wrapper {
@@ -128,6 +130,7 @@ const activeMenu = computed(() => {
   flex: 1;
   padding: 12px 0;
   overflow-y: auto;
+  background-color: transparent;
 }
 
 .menu-group-title {
@@ -138,7 +141,8 @@ const activeMenu = computed(() => {
   letter-spacing: 1px;
 }
 
-.el-menu-vertical {
+:deep(.el-menu) {
+  background-color: transparent;
   border-right: none;
 }
 
@@ -147,15 +151,18 @@ const activeMenu = computed(() => {
   margin: 4px 12px;
   border-radius: 8px;
   line-height: 48px;
+  color: #94a3b8;
 }
 
 :deep(.el-menu-item.is-active) {
-  background-color: #3b82f6 !important;
+  background-color: var(--el-color-primary) !important;
+  color: #fff;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 :deep(.el-menu-item:hover) {
-  background-color: rgba(255,255,255,0.05) !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #fff;
 }
 
 .sidebar-footer {

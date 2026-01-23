@@ -231,9 +231,33 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  background-color: var(--app-content-bg);
-  padding: 20px;
-  border-radius: 8px;
+}
+
+.stat-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
+  transition: all 0.3s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.chart-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.health-card {
+  background-color: var(--app-card-bg);
+  border: 1px solid var(--app-border-color);
+  border-radius: 12px;
+  padding: 24px;
 }
 
 .stat-card {

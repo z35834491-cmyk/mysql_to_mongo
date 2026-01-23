@@ -107,25 +107,17 @@ const updateThemeColor = (color: string | null) => {
     // 1. Set Element Plus Primary Color
     document.documentElement.style.setProperty('--el-color-primary', color)
     
-    // 2. Generate shades for Element Plus components (buttons, etc.)
+    // 2. Generate shades for Element Plus components
     for (let i = 1; i <= 9; i++) {
       const lightColor = mixColor('#ffffff', color, i * 10)
       document.documentElement.style.setProperty(`--el-color-primary-light-${i}`, lightColor)
     }
     const darkColor = mixColor('#000000', color, 20)
     document.documentElement.style.setProperty('--el-color-primary-dark-2', darkColor)
-
-    // 3. Set Application Layout Backgrounds
-    // Use a lighter version of the theme color for the background to keep it professional
-    const bgTint = mixColor('#ffffff', color, 90) 
-    document.documentElement.style.setProperty('--app-main-bg', isDark.value ? mixColor('#000000', color, 80) : bgTint)
-    
-    // 4. Adjust content card background
-    document.documentElement.style.setProperty('--app-content-bg', isDark.value ? 'rgba(255,255,255,0.05)' : '#ffffff')
   }
 }
 
-// Helper to mix colors for theme generation
+// Helper to mix colors
 const mixColor = (color1: string, color2: string, weight: number) => {
   const p = weight / 100
   const w = p * 2 - 1
@@ -148,15 +140,6 @@ const mixColor = (color1: string, color2: string, weight: number) => {
   return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)
 }
 
-const isColorDark = (color: string) => {
-  const hex = color.replace('#', '')
-  const r = parseInt(hex.substr(0, 2), 16)
-  const g = parseInt(hex.substr(2, 2), 16)
-  const b = parseInt(hex.substr(4, 2), 16)
-  const brightness = (r * 299 + g * 587 + b * 114) / 1000
-  return brightness < 128
-}
-
 // Logout
 const handleLogout = () => {
   window.location.href = '/accounts/logout/'
@@ -165,13 +148,23 @@ const handleLogout = () => {
 
 <style>
 :root {
-  --app-main-bg: #f8fafc;
-  --app-content-bg: #ffffff;
+  --app-main-bg: #f1f5f9;
+  --app-sidebar-bg: #0f172a;
+  --app-header-bg: #ffffff;
+  --app-card-bg: #ffffff;
+  --app-text-main: #1e293b;
+  --app-text-muted: #64748b;
+  --app-border-color: #e2e8f0;
 }
 
 html.dark {
-  --app-main-bg: #0f172a;
-  --app-content-bg: #1e293b;
+  --app-main-bg: #020617;
+  --app-sidebar-bg: #0f172a;
+  --app-header-bg: #0f172a;
+  --app-card-bg: #1e293b;
+  --app-text-main: #f8fafc;
+  --app-text-muted: #94a3b8;
+  --app-border-color: #334155;
 }
 </style>
 
