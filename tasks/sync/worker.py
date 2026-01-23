@@ -179,9 +179,17 @@ class SyncWorker:
             self._last_progress_ts = now
 
     def _auto_build_table_map_if_needed(self):
+        # 修复逻辑：如果 table_map 包含 '*'，也应该强制进行自动发现
+        is_wildcard = False
         if self.cfg.table_map:
+            if "*" in self.cfg.table_map:
+                is_wildcard = True
+                log(self.cfg.task_id, "Found wildcard '*' in table_map, triggering auto-discovery...")
+        
+        if self.cfg.table_map and not is_wildcard:
             log(self.cfg.task_id, f"Using provided table_map size={len(self.cfg.table_map)}")
             return
+            
         log(self.cfg.task_id, "Auto-building table map...")
         tables = self.mysql_introspector.list_tables()
         self.cfg.table_map = {t: t + self.cfg.collection_suffix for t in tables}
