@@ -97,10 +97,13 @@ import {
   DataAnalysis, Connection, Link, Warning 
 } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
+import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
 
 const systemStore = useSystemStore()
+const taskStore = useTaskStore()
 const { systemStats } = storeToRefs(systemStore)
+const { tasks, taskStats } = storeToRefs(taskStore)
 
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
@@ -145,39 +148,57 @@ const topStats = computed(() => [
   }
 ])
 
-const pipelineMetrics = [
-  { label: 'Total Tasks', value: 0, icon: 'DataAnalysis', color: 'var(--el-color-primary)', bg: 'rgba(var(--el-color-primary-rgb), 0.1)' },
-  { label: 'Syncing', value: 0, icon: 'Connection', color: '#10b981', bg: '#ecfdf5' },
-  { label: 'Data Sources', value: 12, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
-  { label: 'Errors', value: 0, icon: 'Warning', color: '#ef4444', bg: '#fef2f2' }
-]
+const pipelineMetrics = computed(() => [
+  { label: 'Total Tasks', value: taskStats.value.total, icon: 'DataAnalysis', color: 'var(--el-color-primary)', bg: 'rgba(var(--el-color-primary-rgb), 0.1)' },
+  { label: 'Syncing', value: taskStats.value.running, icon: 'Connection', color: '#10b981', bg: '#ecfdf5' },
+  { label: 'Stopped', value: taskStats.value.stopped, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
+  { label: 'Errors', value: taskStats.value.error, icon: 'Warning', color: '#ef4444', bg: '#fef2f2' }
+])
 
 const systemHealth = computed(() => systemStats.value?.health || [])
 
 const initChart = () => {
   if (!chartRef.value) return
   chart = echarts.init(chartRef.value)
+  updateChart()
+}
+
+const updateChart = () => {
+  if (!chart) return
+  
+  // Aggregate metrics from all tasks
+  let totalInsert = 0
+  let totalUpdate = 0
+  let totalDelete = 0
+  
+  tasks.value.forEach(t => {
+    if (t.metrics) {
+      totalInsert += (t.metrics.inc_insert_count || 0) + (t.metrics.full_insert_count || 0)
+      totalUpdate += (t.metrics.update_count || 0)
+      totalDelete += (t.metrics.delete_count || 0)
+    }
+  })
+
   const option = {
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true, top: '10%' },
-    xAxis: { type: 'category', boundaryGap: false, data: ['10:00', '10:10', '10:20', '10:30', '10:40', '10:50', '11:00'], axisLine: { show: false } },
+    xAxis: { 
+      type: 'category', 
+      data: ['Insert', 'Update', 'Delete'], 
+      axisTick: { alignWithLabel: true }
+    },
     yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
     series: [
       {
-        name: 'Performance',
-        type: 'line',
-        smooth: true,
-        data: [120, 132, 101, 134, 90, 230, 210],
-        lineStyle: { color: '#409EFF', width: 3 },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(64, 158, 255, 0.2)' },
-            { offset: 1, color: 'rgba(64, 158, 255, 0)' }
-          ])
-        },
-        symbol: 'circle',
-        symbolSize: 8,
-        itemStyle: { color: '#409EFF' }
+        name: 'Total Events',
+        type: 'bar',
+        barWidth: '40%',
+        data: [
+          { value: totalInsert, itemStyle: { color: '#3b82f6' } },
+          { value: totalUpdate, itemStyle: { color: '#f59e0b' } },
+          { value: totalDelete, itemStyle: { color: '#ef4444' } }
+        ],
+        itemStyle: { borderRadius: [4, 4, 0, 0] }
       }
     ]
   }
@@ -186,9 +207,16 @@ const initChart = () => {
 
 onMounted(() => {
   systemStore.fetchSystemStats()
+  taskStore.fetchTasks() // Fetch tasks data
   initChart()
   window.addEventListener('resize', () => chart?.resize())
-  const timer = setInterval(() => systemStore.fetchSystemStats(), 5000)
+  const timer = setInterval(() => {
+    systemStore.fetchSystemStats()
+    taskStore.fetchTasks().then(() => {
+        updateChart() // Update chart when data refreshes
+    })
+  }, 5000)
+  
   onUnmounted(() => {
     clearInterval(timer)
     chart?.dispose()
