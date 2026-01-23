@@ -100,7 +100,7 @@ const activeMenu = computed(() => {
   display: flex;
   align-items: center;
   padding: 0 16px;
-  color: white;
+  color: var(--app-text-main);
   border-bottom: 1px solid var(--app-border-color);
   overflow: hidden;
 }
@@ -124,6 +124,7 @@ const activeMenu = computed(() => {
   font-size: 18px;
   letter-spacing: -0.5px;
   white-space: nowrap;
+  color: var(--app-text-main);
 }
 
 .menu-wrapper {
@@ -137,7 +138,8 @@ const activeMenu = computed(() => {
   padding: 24px 20px 8px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255,255,255,0.3);
+  color: var(--app-text-muted);
+  opacity: 0.5;
   letter-spacing: 1px;
 }
 
@@ -151,18 +153,18 @@ const activeMenu = computed(() => {
   margin: 4px 12px;
   border-radius: 8px;
   line-height: 48px;
-  color: #94a3b8;
+  color: var(--app-text-muted);
 }
 
 :deep(.el-menu-item.is-active) {
   background-color: var(--el-color-primary) !important;
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(var(--el-color-primary-rgb), 0.3);
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.3);
 }
 
 :deep(.el-menu-item:hover) {
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  color: #fff;
+  background-color: rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.1) !important;
+  color: var(--el-color-primary) !important;
 }
 
 .sidebar-footer {
@@ -170,14 +172,14 @@ const activeMenu = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,0.5);
+  color: var(--app-text-muted);
   cursor: pointer;
-  border-top: 1px solid rgba(255,255,255,0.05);
-  transition: color 0.3s;
+  border-top: 1px solid var(--app-border-color);
+  transition: all 0.3s;
 }
 
 .sidebar-footer:hover {
-  color: white;
-  background-color: rgba(255,255,255,0.02);
+  color: var(--el-color-primary);
+  background-color: rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.05);
 }
 </style>

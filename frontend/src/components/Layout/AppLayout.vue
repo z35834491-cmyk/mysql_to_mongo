@@ -36,10 +36,12 @@
               @change="updateThemeColor"
               :predefine="['#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981']"
             />
-            <el-icon class="header-icon" @click="toggleDark">
-              <Moon v-if="!isDark" />
-              <Sunny v-else />
-            </el-icon>
+            <div class="header-icon-wrapper" @click="toggleDark()">
+              <el-icon class="header-icon">
+                <Moon v-if="!isDark" />
+                <Sunny v-else />
+              </el-icon>
+            </div>
           </div>
           
           <el-divider direction="vertical" />
@@ -179,14 +181,15 @@ html.dark {
 }
 
 .app-header {
-  background-color: #fff;
+  background-color: var(--app-header-bg);
   height: 70px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 32px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--app-border-color);
   z-index: 9;
+  transition: all 0.3s;
 }
 
 .header-left {
@@ -204,7 +207,7 @@ html.dark {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--app-text-main);
   letter-spacing: -0.5px;
 }
 
@@ -213,12 +216,13 @@ html.dark {
 }
 
 :deep(.el-breadcrumb__inner) {
-  color: #64748b !important;
+  color: var(--app-text-muted) !important;
   font-weight: 400 !important;
 }
 
 :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
-  color: #94a3b8 !important;
+  color: var(--app-text-muted) !important;
+  opacity: 0.7;
 }
 
 .header-right {
@@ -241,7 +245,7 @@ html.dark {
 .status-label {
   font-size: 11px;
   font-weight: 700;
-  color: #94a3b8;
+  color: var(--app-text-muted);
 }
 
 .mini-progress {
@@ -251,7 +255,7 @@ html.dark {
 .status-value {
   font-size: 12px;
   font-weight: 600;
-  color: #475569;
+  color: var(--app-text-main);
   min-width: 60px;
 }
 
@@ -259,18 +263,27 @@ html.dark {
   display: flex;
   align-items: center;
   gap: 16px;
-  color: #64748b;
+  color: var(--app-text-muted);
+}
+
+.header-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.header-icon-wrapper:hover {
+  background-color: rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.1);
+  color: var(--el-color-primary);
 }
 
 .header-icon {
   font-size: 18px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.header-icon:hover {
-  color: #3b82f6;
-  transform: translateY(-1px);
 }
 
 .user-profile {
@@ -284,7 +297,7 @@ html.dark {
 }
 
 .user-profile:hover {
-  background-color: #f8fafc;
+  background-color: var(--app-main-bg);
 }
 
 .user-info {
@@ -295,13 +308,13 @@ html.dark {
 .username {
   font-size: 14px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--app-text-main);
   line-height: 1.2;
 }
 
 .user-role {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--app-text-muted);
 }
 
 .app-main {
