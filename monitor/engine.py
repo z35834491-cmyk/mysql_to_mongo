@@ -279,6 +279,9 @@ class MonitorEngine:
         pass
 
     def _send_slack_alert(self, alerts, task, source, log_dir):
+        if not task.alert_enabled:
+            return
+            
         if not task.slack_webhook_url:
             return
             

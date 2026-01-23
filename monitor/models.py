@@ -19,6 +19,7 @@ class MonitorTask(models.Model):
     retention_days = models.IntegerField(default=3, help_text="Days to keep logs locally before S3 upload")
     
     # Alerting
+    alert_enabled = models.BooleanField(default=True, help_text="Global switch to enable/disable alert sending")
     slack_webhook_url = models.CharField(max_length=1024, blank=True, null=True)
     poll_interval_seconds = models.IntegerField(default=60)
     alert_keywords = models.JSONField(default=list)

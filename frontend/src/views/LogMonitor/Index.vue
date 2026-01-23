@@ -78,6 +78,10 @@
                     <el-input v-model="form.slack_webhook_url" placeholder="https://hooks.slack.com/services/..." />
                   </el-form-item>
 
+                  <el-form-item label="Enable Alerts">
+                     <el-switch v-model="form.alert_enabled" active-text="Send alerts to Slack" />
+                  </el-form-item>
+
                   <el-divider>Archiving & Retention</el-divider>
 
                   <el-row :gutter="20">
@@ -301,7 +305,8 @@ const createNewTask = () => {
     k8s_namespace: 'default',
     alert_keywords: ['ERROR'],
     s3_archive_enabled: false,
-    retention_days: 7
+    retention_days: 7,
+    alert_enabled: true
   } as any
   form.value = { ...selectedTask.value }
   showConfigDialog.value = true
@@ -602,16 +607,8 @@ onMounted(() => {
   background: #f8fafc;
 }
 
-.saved-log-viewer {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  overflow: hidden;
-}
-
 /* Detail / Viewer */
-.task-detail, .log-viewer {
+.task-detail {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -627,7 +624,13 @@ onMounted(() => {
 .form-actions { margin-top: 30px; display: flex; gap: 12px; }
 
 /* Log Viewer Specific */
-.log-viewer { background: #0f172a; } /* Darker background */
+.saved-log-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a; /* Match body background */
+  overflow: hidden;
+}
 .viewer-header {
   padding: 8px 16px;
   background: #0f172a; /* Match body background */

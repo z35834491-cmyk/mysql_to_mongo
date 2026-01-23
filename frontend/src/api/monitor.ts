@@ -13,6 +13,7 @@ export interface MonitorTask {
   s3_secret_key: string
   s3_endpoint: string
   retention_days: number
+  alert_enabled: boolean
   slack_webhook_url: string
   poll_interval_seconds: number
   alert_keywords: string[]
