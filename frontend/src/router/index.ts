@@ -40,7 +40,7 @@ const routes: Array<RouteRecordRaw> = [
       {
         path: 'logs',
         name: 'Logs',
-        component: () => import('@/views/Logs/Index.vue'),
+        component: () => import('@/views/LogMonitor/Index.vue'),
         meta: { title: 'Log Monitor', icon: 'Monitor' }
       },
       {
