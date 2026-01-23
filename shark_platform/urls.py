@@ -8,8 +8,10 @@ urlpatterns = [
     path('accounts/login/', auth_views.LoginView.as_view(template_name='login.html'), name='login'),
     path('accounts/logout/', auth_views.LogoutView.as_view(), name='logout'),
     path('', core_views.index, name='index'),
-    path('deploy/', include('deploy.urls')),
-    path('', include('tasks.urls')), # Tasks and Connections
-    path('monitor/', include('monitor.urls')),
-    path('inspection/', include('inspection.urls')),
+    
+    # API Routes
+    path('api/deploy/', include('deploy.urls')),
+    path('api/', include('tasks.urls')), 
+    path('api/monitor/', include('monitor.urls')),
+    path('api/inspection/', include('inspection.urls')),
 ]
