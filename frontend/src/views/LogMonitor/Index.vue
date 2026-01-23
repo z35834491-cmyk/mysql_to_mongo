@@ -3,37 +3,12 @@
     <div class="page-header">
       <div class="header-info">
         <h2 class="page-title">System Logs</h2>
-        <p class="page-subtitle">Centralized log monitoring and analysis</p>
+        <p class="page-subtitle">Log file viewer and analysis</p>
       </div>
       <div class="header-actions">
-        <el-radio-group v-model="logSource" size="small" style="margin-right: 12px">
-          <el-radio-button label="local">Local Files</el-radio-button>
-          <el-radio-button label="k8s">Kubernetes</el-radio-button>
-        </el-radio-group>
         <el-button @click="fetchData" :icon="Refresh" circle />
       </div>
     </div>
-
-    <!-- Stats Dashboard (Hidden in K8s mode for now) -->
-    <el-row :gutter="20" class="stats-row" v-if="logSource === 'local'">
-      <el-col :span="6">
-        <div class="stat-card error">
-          <div class="stat-label">ERRORS (Today)</div>
-          <div class="stat-value">{{ stats.summary.error }}</div>
-        </div>
-      </el-col>
-      <el-col :span="6">
-        <div class="stat-card warning">
-          <div class="stat-label">WARNINGS</div>
-          <div class="stat-value">{{ stats.summary.warning }}</div>
-        </div>
-      </el-col>
-      <el-col :span="12">
-        <el-card shadow="never" class="chart-card">
-          <div ref="chartRef" class="chart-container"></div>
-        </el-card>
-      </el-col>
-    </el-row>
 
     <!-- Search & Explorer -->
     <el-card shadow="never" class="explorer-card">
@@ -41,7 +16,7 @@
         <div class="explorer-header" v-if="logSource === 'local'">
           <el-input
             v-model="globalSearchQuery"
-            placeholder="Global Search (grep all logs)..."
+            placeholder="Search in logs..."
             class="global-search"
             clearable
             @keyup.enter="handleGlobalSearch"
@@ -54,7 +29,6 @@
             </template>
           </el-input>
         </div>
-        
         <div class="k8s-controls" v-else>
           <el-select v-model="selectedNamespace" placeholder="Namespace" style="width: 150px" @change="fetchPods">
             <el-option v-for="ns in k8sNamespaces" :key="ns" :label="ns" :value="ns" />
@@ -125,6 +99,7 @@
             </div>
           </div>
 
+          <!-- File Content -->
           <div v-else-if="selectedFile" class="file-viewer">
             <div class="viewer-header">
               <span>{{ selectedFile }}</span>
@@ -136,7 +111,7 @@
           </div>
 
           <div v-else class="empty-viewer">
-            <el-empty description="Select a file to view logs or search globally" />
+            <el-empty description="Select a file to view logs" />
           </div>
         </div>
       </div>
@@ -152,7 +127,7 @@ import * as echarts from 'echarts'
 
 const loading = ref(false)
 const contentLoading = ref(false)
-const logSource = ref('local') // 'local' | 'k8s'
+const logSource = ref('k8s') // Default to K8s as requested
 const stats = ref({ summary: { error: 0, warning: 0 }, trend: { hours: [], errors: [] } })
 
 // Local Logs State
@@ -175,20 +150,27 @@ const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 const fetchData = async () => {
+  // Always fetch stats for the dashboard regardless of mode
+  try {
+    const statsRes = await taskApi.getLogStats()
+    stats.value = statsRes
+    updateChart()
+  } catch (e) {
+    console.error(e)
+  }
+
   if (logSource.value === 'k8s') {
     fetchNamespaces()
-    return
+  } else {
+    fetchLocalFiles()
   }
-  
+}
+
+const fetchLocalFiles = async () => {
   loading.value = true
   try {
-    const [statsRes, filesRes] = await Promise.all([
-      taskApi.getLogStats(),
-      taskApi.getLogFiles()
-    ])
-    stats.value = statsRes
+    const filesRes = await taskApi.getLogFiles()
     logFiles.value = filesRes
-    updateChart()
   } finally {
     loading.value = false
   }
@@ -257,7 +239,7 @@ watch(logSource, () => {
 
 const selectFile = (name: string) => {
   selectedFile.value = name
-  searchResults.value = [] // Clear search results to show file content
+  searchResults.value = []
   fetchLogContent()
 }
 
@@ -265,7 +247,6 @@ const fetchLogContent = async () => {
   if (!selectedFile.value) return
   contentLoading.value = true
   try {
-    // Extract task_id from filename (assuming task_id.log)
     const taskId = selectedFile.value.replace('.log', '')
     const res = await taskApi.getTaskLogs(taskId, { page: -1, page_size: 1000 })
     logContent.value = res.lines
@@ -280,7 +261,7 @@ const handleGlobalSearch = async () => {
   try {
     const res = await taskApi.searchLogs(globalSearchQuery.value)
     searchResults.value = res
-    selectedFile.value = '' // Deselect file to show results
+    selectedFile.value = ''
   } finally {
     contentLoading.value = false
   }
@@ -352,41 +333,6 @@ onUnmounted(() => {
   color: #64748b;
   margin: 0;
 }
-
-/* Stats */
-.stat-card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 20px;
-  height: 120px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.stat-card.error { border-left: 4px solid #ef4444; }
-.stat-card.warning { border-left: 4px solid #f59e0b; }
-
-.stat-label {
-  font-size: 12px;
-  color: #64748b;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.stat-value {
-  font-size: 32px;
-  font-weight: 700;
-  color: #1e293b;
-}
-
-.chart-card {
-  height: 120px;
-  padding: 0;
-}
-.chart-card :deep(.el-card__body) { padding: 0; height: 100%; }
-.chart-container { width: 100%; height: 100%; }
 
 /* Explorer */
 .explorer-card {
@@ -495,29 +441,7 @@ onUnmounted(() => {
   background: #f8fafc;
 }
 
-/* K8s Viewer */
-.k8s-controls {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.k8s-viewer {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.log-raw {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: 'Menlo', monospace;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* Local Search Results */
+/* Search Results */
 .search-results {
   flex: 1;
   overflow-y: auto;

@@ -151,7 +151,7 @@ const topStats = computed(() => [
 const pipelineMetrics = computed(() => [
   { label: 'Total Tasks', value: taskStats.value.total, icon: 'DataAnalysis', color: 'var(--el-color-primary)', bg: 'rgba(var(--el-color-primary-rgb), 0.1)' },
   { label: 'Syncing', value: taskStats.value.running, icon: 'Connection', color: '#10b981', bg: '#ecfdf5' },
-  { label: 'Stopped', value: taskStats.value.stopped, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
+  { label: 'Data Sources', value: 12, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
   { label: 'Errors', value: taskStats.value.error, icon: 'Warning', color: '#ef4444', bg: '#fef2f2' }
 ])
 

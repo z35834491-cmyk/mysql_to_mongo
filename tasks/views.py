@@ -21,13 +21,6 @@ def _get_k8s_core_api():
     try:
         task = MonitorTask.objects.filter(k8s_kubeconfig__isnull=False).exclude(k8s_kubeconfig__exact='').first()
         if task and task.k8s_kubeconfig:
-            # Create a temp file for kubeconfig
-            # Note: k8s client needs a file path for kubeconfig
-            # We create a temp file, load it, then delete it.
-            # But wait, load_kube_config sets the global config? 
-            # If we want thread-safety or per-request config, we should use ApiClient with specific config.
-            # For simplicity in this view function scope:
-            
             with tempfile.NamedTemporaryFile(mode='w', delete=False) as tf:
                 tf.write(task.k8s_kubeconfig)
                 tf.flush()
