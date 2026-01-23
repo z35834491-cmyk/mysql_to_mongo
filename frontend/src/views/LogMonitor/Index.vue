@@ -688,6 +688,29 @@ onMounted(() => {
 .task-meta, .file-meta { font-size: 11px; color: #94a3b8; }
 .empty-list { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
 
+/* Saved Logs Specific */
+.saved-container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.saved-file-list {
+  width: 280px;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.saved-log-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  overflow: hidden;
+}
+
 /* Detail / Viewer */
 .task-detail, .log-viewer {
   flex: 1;
