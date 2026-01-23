@@ -119,6 +119,7 @@ def monitor_log_view(request):
     keyword = request.query_params.get('keyword')
     page = int(request.query_params.get('page', 1))
     page_size = int(request.query_params.get('page_size', 1000))
+    reverse = request.query_params.get('reverse', 'false').lower() == 'true'
     
     if not filename or not task_id:
         return Response({"error": "filename and task_id required"}, status=400)
@@ -153,7 +154,16 @@ def monitor_log_view(request):
             
         total = len(all_lines)
         
-        if page == -1: # Last page
+        # If reverse is requested (show latest logs first)
+        if reverse:
+            # For reverse view, page 1 means the last N lines.
+            # But usually users want to scroll down to see older logs?
+            # Or scroll down to see newer logs?
+            # "Reverse display" usually means line N, N-1, N-2...
+            # Let's implement simple reverse: just reverse the list of lines.
+            all_lines.reverse()
+        
+        if page == -1: # Last page (useful for normal order to see tail)
             import math
             page = max(1, math.ceil(total / page_size))
             

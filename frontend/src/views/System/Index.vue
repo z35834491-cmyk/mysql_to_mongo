@@ -6,6 +6,7 @@
         <p class="page-subtitle">AI-powered system health analysis and performance auditing</p>
       </div>
       <div class="header-actions">
+        <el-button @click="showLogs" :icon="Document">Inspection Logs</el-button>
         <el-button @click="configVisible = true" :icon="Setting">Configure AI</el-button>
         <el-button type="primary" size="large" @click="handleRun" :loading="loading" class="action-btn shadow-btn">
           <el-icon><Search /></el-icon> Run New Inspection
@@ -161,6 +162,29 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- Logs Dialog -->
+    <el-dialog v-model="logDialogVisible" title="System Inspection Logs" width="900px" top="5vh">
+      <div class="log-viewer-container">
+        <div class="log-header">
+           <span class="log-filename">inspection.log</span>
+           <div class="log-controls">
+             <el-pagination 
+               small
+               layout="prev, pager, next"
+               :total="logTotal"
+               :page-size="logPageSize"
+               v-model:current-page="logPage"
+               @current-change="fetchLogs"
+             />
+             <el-button size="small" :icon="Refresh" circle @click="fetchLogs(logPage)" />
+           </div>
+        </div>
+        <div class="log-content" v-loading="logLoading">
+          <pre>{{ logContent || 'No logs available.' }}</pre>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -171,8 +195,9 @@ import type { InspectionReport } from '@/types/system'
 import { 
   Setting, Search, Calendar, 
   MagicStick, Warning, CircleCheck,
-  DataLine, Histogram
+  DataLine, Histogram, Document, Refresh, Download
 } from '@element-plus/icons-vue'
+import { taskApi } from '@/api/task'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -290,9 +315,91 @@ const viewReport = async (row: any) => {
   currentReport.value = systemStore.currentReport
   dialogVisible.value = true
 }
+
+// Log Viewer Logic
+const logDialogVisible = ref(false)
+const logLoading = ref(false)
+const logContent = ref('')
+const logPage = ref(1)
+const logPageSize = ref(1000)
+const logTotal = ref(0)
+
+const showLogs = () => {
+  logDialogVisible.value = true
+  fetchLogs(1)
+}
+
+const fetchLogs = async (page = 1) => {
+  logPage.value = page
+  logLoading.value = true
+  try {
+    // Assuming inspection.log exists in logs/inspection.log or just inspection
+    // taskApi.getTaskLogs takes a task_id and appends .log
+    // So 'inspection' -> 'logs/inspection.log'
+    const res = await taskApi.getTaskLogs('inspection', { 
+      page, 
+      page_size: logPageSize.value,
+      reverse: true 
+    })
+    logContent.value = res.lines.join('')
+    logTotal.value = res.total
+  } catch (e) {
+    logContent.value = `Error loading logs: ${e}`
+  } finally {
+    logLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
+/* Log Viewer Styles */
+.log-viewer-container {
+  display: flex;
+  flex-direction: column;
+  height: 600px;
+  background: #0f172a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  color: #e2e8f0;
+}
+
+.log-filename {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.log-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  color: #cbd5e1;
+  font-family: 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.log-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Existing Styles */
 .inspection-container {
   display: flex;
   flex-direction: column;

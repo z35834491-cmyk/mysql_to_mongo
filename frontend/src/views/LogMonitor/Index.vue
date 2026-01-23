@@ -6,17 +6,13 @@
         <p class="page-subtitle">K8s Log Monitoring & Local Logs</p>
       </div>
       <div class="header-actions">
-        <el-radio-group v-model="viewMode" size="small" style="margin-right: 12px">
-          <el-radio-button label="k8s">Monitor Tasks (K8s)</el-radio-button>
-          <el-radio-button label="local">Local Log Files</el-radio-button>
-        </el-radio-group>
-        <el-button v-if="viewMode === 'k8s'" type="primary" :icon="Plus" @click="createNewTask">New Task</el-button>
+        <el-button type="primary" :icon="Plus" @click="createNewTask">New Task</el-button>
         <el-button @click="handleRefresh" :icon="Refresh" circle />
       </div>
     </div>
 
     <!-- Mode: K8s Monitor Tasks -->
-    <el-card shadow="never" class="main-card" v-if="viewMode === 'k8s'">
+    <el-card shadow="never" class="main-card">
       <div class="main-body">
         <!-- Task List (Left) -->
         <div class="task-list">
@@ -208,107 +204,6 @@
       </div>
     </el-card>
 
-    <!-- Mode: Local Log Explorer -->
-    <el-card shadow="never" class="main-card" v-else>
-      <div class="main-body">
-        <!-- File List (Left) -->
-        <div class="file-list">
-          <div class="list-header">
-            <span>Local Files</span>
-            <el-select v-model="filePageSize" size="small" style="width: 70px" @change="fetchLocalFiles(1)">
-              <el-option :value="10" label="10" />
-              <el-option :value="20" label="20" />
-              <el-option :value="50" label="50" />
-            </el-select>
-          </div>
-          <div v-loading="loading" class="list-content">
-            <div 
-              v-for="file in logFiles" 
-              :key="file.name"
-              class="file-item"
-              :class="{ active: selectedFile === file.name }"
-              @click="selectFile(file.name)"
-            >
-              <div class="file-icon"><el-icon><Document /></el-icon></div>
-              <div class="file-info">
-                <div class="file-name" :title="file.name">{{ file.name }}</div>
-                <div class="file-meta">{{ file.size }} • {{ file.mtime }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="list-pagination">
-             <el-pagination 
-               small 
-               layout="prev, next" 
-               :total="fileTotal" 
-               :page-size="filePageSize"
-               v-model:current-page="filePage"
-               @current-change="fetchLocalFiles"
-             />
-          </div>
-        </div>
-
-        <!-- Log Content (Right) -->
-        <div class="log-viewer" v-loading="contentLoading">
-          <div class="viewer-header">
-            <div class="header-left">
-              <span v-if="selectedFile">{{ selectedFile }}</span>
-              <span v-else>No File Selected</span>
-            </div>
-            <div class="header-right" v-if="selectedFile">
-               <el-select v-model="logPageSize" size="small" style="width: 90px; margin-right: 8px" @change="fetchLogContent(1)">
-                <el-option :value="500" label="500 lines" />
-                <el-option :value="1000" label="1k lines" />
-                <el-option :value="5000" label="5k lines" />
-              </el-select>
-              <el-pagination 
-                 small
-                 layout="prev, pager, next"
-                 :total="logTotal"
-                 :page-size="logPageSize"
-                 v-model:current-page="logPage"
-                 @current-change="fetchLogContent"
-                 style="display: inline-flex; margin-right: 12px"
-              />
-              <el-button size="small" :icon="Download" circle @click="downloadFile" title="Download" />
-              <el-button size="small" :icon="Refresh" circle @click="fetchLogContent(logPage)" />
-            </div>
-            <div class="header-right" v-else>
-               <el-input 
-                  v-model="globalSearchQuery" 
-                  placeholder="Global Search..." 
-                  size="small" 
-                  style="width: 200px"
-                  @keyup.enter="handleGlobalSearch"
-               >
-                  <template #append><el-button :icon="Search" @click="handleGlobalSearch"/></template>
-               </el-input>
-            </div>
-          </div>
-
-          <div class="log-lines" v-if="selectedFile">
-            <div v-for="(line, i) in logContent" :key="i" class="log-line">{{ line }}</div>
-          </div>
-          
-          <div class="search-results" v-else-if="searchResults.length > 0">
-             <div class="results-header">Found {{ searchResults.length }} matches</div>
-             <div class="results-list">
-              <div v-for="(match, idx) in searchResults" :key="idx" class="result-item" @click="jumpToLog(match.file)">
-                <div class="result-meta">
-                  <span class="res-file">{{ match.file }}</span>
-                  <span class="res-line">L{{ match.line }}</span>
-                </div>
-                <div class="result-content">{{ match.content }}</div>
-              </div>
-            </div>
-          </div>
-
-          <div v-else class="empty-viewer">
-            <el-empty description="Select a file or use Global Search" />
-          </div>
-        </div>
-      </div>
-    </el-card>
   </div>
 </template>
 
@@ -493,7 +388,11 @@ const fetchSavedLogContent = async (page = 1) => {
   savedLogPage.value = page
   savedContentLoading.value = true
   try {
-    const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { page, page_size: savedLogPageSize.value })
+    const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { 
+      page, 
+      page_size: savedLogPageSize.value,
+      reverse: true 
+    })
     savedLogContent.value = res.content
     savedLogTotal.value = res.total
   } catch (e) {
@@ -728,16 +627,16 @@ onMounted(() => {
 .form-actions { margin-top: 30px; display: flex; gap: 12px; }
 
 /* Log Viewer Specific */
-.log-viewer { background: #1e293b; }
+.log-viewer { background: #0f172a; } /* Darker background */
 .viewer-header {
   padding: 8px 16px;
-  background: #0f172a;
+  background: #0f172a; /* Match body background */
   color: #e2e8f0;
   font-size: 13px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid #1e293b; /* Subtle border */
   height: 50px;
 }
 .log-lines {

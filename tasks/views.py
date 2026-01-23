@@ -262,6 +262,7 @@ def delete_task(request, task_id):
 def task_logs(request, task_id):
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 100))
+    reverse = request.GET.get('reverse', 'false').lower() == 'true'
     
     p = os.path.join("logs", f"{task_id}.log")
     if not os.path.exists(p):
@@ -273,6 +274,10 @@ def task_logs(request, task_id):
         
         total = len(all_lines)
         page_size = max(1, min(page_size, 2000))
+        
+        # Reverse if requested
+        if reverse:
+            all_lines.reverse()
         
         if page == -1:
             import math
