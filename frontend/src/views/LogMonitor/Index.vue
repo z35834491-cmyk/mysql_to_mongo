@@ -107,27 +107,8 @@
               </div>
             </el-tab-pane>
 
-            <!-- Tab 2: Live Logs -->
-            <el-tab-pane label="Live Logs" name="live">
-              <div class="live-container">
-                <div class="live-controls">
-                  <el-select v-model="selectedPod" placeholder="Select Pod" style="width: 300px" @change="fetchK8sLogs">
-                    <el-option v-for="pod in k8sPods" :key="pod.name" :label="pod.name" :value="pod.name">
-                      <span style="float: left">{{ pod.name }}</span>
-                      <span style="float: right; color: #8492a6; font-size: 12px">{{ pod.status }}</span>
-                    </el-option>
-                  </el-select>
-                  <el-button :icon="Refresh" @click="fetchPods">Refresh Pods</el-button>
-                  <el-button type="primary" :icon="VideoPlay" @click="fetchK8sLogs">Tail Logs</el-button>
-                </div>
-                <div class="log-viewer" v-loading="logLoading">
-                  <pre class="log-raw">{{ k8sLogContent || 'Select a pod to start streaming logs...' }}</pre>
-                </div>
-              </div>
-            </el-tab-pane>
-
-            <!-- Tab 3: Saved Logs (Archived) -->
-            <el-tab-pane label="Saved Logs" name="saved">
+            <!-- Tab 2: Saved Logs (Archived) -->
+            <el-tab-pane label="Log Files" name="saved">
               <div class="saved-container">
                 <!-- File List -->
                 <div class="saved-file-list">
@@ -175,7 +156,7 @@
                       <span v-else>Select a log file</span>
                     </div>
                     <div class="header-right" v-if="savedLogFile">
-                       <el-select v-model="savedLogPageSize" size="small" style="width: 90px; margin-right: 8px" @change="fetchSavedLogContent(1)">
+                       <el-select v-model="savedLogPageSize" size="small" style="width: 100px; margin-right: 8px" @change="fetchSavedLogContent(1)">
                         <el-option :value="500" label="500 lines" />
                         <el-option :value="1000" label="1k lines" />
                         <el-option :value="5000" label="5k lines" />
