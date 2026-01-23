@@ -204,7 +204,7 @@ def monitor_log_download(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def monitor_log_multi_search(request):
+def monitor_log_batch_search(request):
     data = request.data
     task_id = data.get('task_id')
     filenames = data.get('filenames', [])
@@ -215,8 +215,8 @@ def monitor_log_multi_search(request):
         
     log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
     results = []
+    MAX_TOTAL_RESULTS = 2000
     
-    # Simple AND logic for keywords (space separated)
     keywords = keyword.lower().split()
     
     for fname in filenames:
@@ -237,14 +237,13 @@ def monitor_log_multi_search(request):
                             "line": i,
                             "content": line.strip()
                         })
-                        # Limit results per file to avoid explosion
-                        if len(results) > 5000: 
+                        if len(results) >= MAX_TOTAL_RESULTS:
                             break
-        except Exception as e:
-            continue
+        except Exception:
+            pass
             
-        if len(results) > 5000:
+        if len(results) >= MAX_TOTAL_RESULTS:
             break
             
-    return Response(results)
+    return Response({"results": results})
 

@@ -34,5 +34,7 @@ export const monitorApi = {
   getLogs: (taskId: number, params?: any) => request.get<{files: any[], total: number}>('/monitor/logs', { params: { task_id: taskId, ...params } }),
   viewLog: (taskId: number, filename: string, params?: any) => 
     request.get<{content: string, total: number}>('/monitor/logs/view', { params: { task_id: taskId, filename, ...params } }),
+  batchViewLogs: (taskId: number, filenames: string[], keyword: string) => 
+    request.post<{results: any[]}>('/monitor/logs/batch_search', { task_id: taskId, filenames, keyword }),
   downloadLog: (taskId: number, filename: string) => `/api/monitor/logs/download?task_id=${taskId}&filename=${filename}`,
 }

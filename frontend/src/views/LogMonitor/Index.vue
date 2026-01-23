@@ -134,6 +134,12 @@
                       :class="{ active: savedLogFile === file.name }"
                       @click="selectSavedFile(file.name)"
                     >
+                      <div class="file-checkbox" @click.stop>
+                        <el-checkbox 
+                          :model-value="selectedFiles.includes(file.name)"
+                          @change="toggleFileSelection(file.name)"
+                        />
+                      </div>
                       <div class="file-icon"><el-icon><Document /></el-icon></div>
                       <div class="file-info">
                         <div class="file-name" :title="file.name">{{ file.name }}</div>
@@ -154,14 +160,15 @@
                   </div>
                 </div>
 
-                <!-- Log Viewer -->
+                <!-- Log Viewer / Search Results -->
                 <div class="saved-log-viewer" v-loading="savedContentLoading">
                   <div class="viewer-header">
                     <div class="header-left">
-                      <span v-if="savedLogFile">{{ savedLogFile }}</span>
+                      <span v-if="isBatchSearch">Batch Search Results ({{ batchSearchResults.length }})</span>
+                      <span v-else-if="savedLogFile">{{ savedLogFile }}</span>
                       <span v-else>No File Selected</span>
                     </div>
-                    <div class="header-right" v-if="savedLogFile">
+                    <div class="header-right" v-if="savedLogFile && !isBatchSearch">
                        <el-select v-model="savedLogPageSize" size="small" style="width: 100px; margin-right: 8px" @change="fetchSavedLogContent(1)">
                         <el-option :value="500" label="500 lines" />
                         <el-option :value="1000" label="1k lines" />
@@ -179,12 +186,12 @@
                       <el-button size="small" :icon="Download" circle @click="downloadSavedFile" title="Download" />
                       <el-button size="small" :icon="Refresh" circle @click="fetchSavedLogContent(savedLogPage)" />
                     </div>
-                    <div class="header-right" v-else>
+                    <div class="header-right" v-if="!isBatchSearch || isBatchSearch">
                        <el-input 
                           v-model="savedSearchQuery" 
-                          placeholder="Search in current file..." 
+                          :placeholder="selectedFiles.length > 0 ? 'Search in selected files...' : 'Search in current file...'" 
                           size="small" 
-                          style="width: 200px"
+                          style="width: 250px"
                           @keyup.enter="handleSavedSearch"
                        >
                           <template #append><el-button :icon="Search" @click="handleSavedSearch"/></template>
@@ -192,7 +199,27 @@
                     </div>
                   </div>
 
-                  <div class="log-lines" v-if="savedLogFile">
+                  <div class="search-results-panel" v-if="isBatchSearch">
+                    <div v-if="batchSearchResults.length === 0" class="empty-viewer">
+                      <el-empty description="No matches found" />
+                    </div>
+                    <div v-else>
+                      <div v-for="(group, file) in _.groupBy(batchSearchResults, 'file')" :key="file" class="search-result-group">
+                        <div class="group-header">
+                          <span>{{ file }}</span>
+                          <el-button link size="small" @click="jumpToBatchResult(file)">View File</el-button>
+                        </div>
+                        <div class="group-matches">
+                          <div v-for="(match, idx) in group" :key="idx" class="match-item" @click="jumpToBatchResult(file)">
+                            <span class="match-line-num">{{ match.line + 1 }}</span>
+                            <span class="match-content">{{ match.content }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="log-lines" v-else-if="savedLogFile">
                     <pre class="log-raw">{{ savedLogContent }}</pre>
                   </div>
                   <div v-else class="empty-viewer">
@@ -212,6 +239,7 @@
 </template>
 
 <script setup lang="ts">
+import _ from 'lodash'
 import { ref, onMounted, computed, watch } from 'vue'
 import { monitorApi, type MonitorTask } from '@/api/monitor'
 import { taskApi } from '@/api/task'
@@ -245,6 +273,9 @@ const savedLogPage = ref(1)
 const savedLogPageSize = ref(1000)
 const savedLogTotal = ref(0)
 const savedSearchQuery = ref('')
+const selectedFiles = ref<string[]>([])
+const batchSearchResults = ref<any[]>([])
+const isBatchSearch = ref(false)
 
 const keywordsStr = computed({
   get: () => form.value.alert_keywords?.join('\n') || '',
@@ -385,6 +416,7 @@ const fetchSavedLogs = async (page = 1) => {
 const selectSavedFile = (name: string) => {
   savedLogFile.value = name
   savedLogContent.value = ''
+  isBatchSearch.value = false // Reset batch search view
   fetchSavedLogContent(1)
 }
 
@@ -413,16 +445,48 @@ const downloadSavedFile = () => {
 }
 
 const handleSavedSearch = async () => {
-  if (!selectedTaskId.value || !savedLogFile.value || !savedSearchQuery.value) return
+  if (!selectedTaskId.value || !savedSearchQuery.value) return
+  
   savedContentLoading.value = true
+  batchSearchResults.value = []
+  
   try {
-    const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { keyword: savedSearchQuery.value })
-    savedLogContent.value = res.content
+    // If files selected, perform batch search
+    if (selectedFiles.value.length > 0) {
+      isBatchSearch.value = true
+      const res = await monitorApi.batchViewLogs(selectedTaskId.value, selectedFiles.value, savedSearchQuery.value)
+      batchSearchResults.value = res.results
+    } else if (savedLogFile.value) {
+      // Single file search
+      isBatchSearch.value = false
+      const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { keyword: savedSearchQuery.value })
+      savedLogContent.value = res.content
+    }
   } catch (e) {
-    savedLogContent.value = `Search failed: ${e}`
+    if (!isBatchSearch.value) {
+       savedLogContent.value = `Search failed: ${e}`
+    } else {
+       ElMessage.error(`Batch search failed: ${e}`)
+    }
   } finally {
     savedContentLoading.value = false
   }
+}
+
+const toggleFileSelection = (filename: string) => {
+  const idx = selectedFiles.value.indexOf(filename)
+  if (idx > -1) {
+    selectedFiles.value.splice(idx, 1)
+  } else {
+    selectedFiles.value.push(filename)
+  }
+}
+
+const jumpToBatchResult = (filename: string) => {
+  // Switch to single file view
+  isBatchSearch.value = false
+  selectSavedFile(filename)
+  // Optional: Highlight logic could be added here
 }
 
 // watch(activeTab, (tab) => {
@@ -600,12 +664,63 @@ onMounted(() => {
 }
 
 .saved-file-list {
-  width: 280px;
+  width: 320px; /* Widen for checkbox */
   border-right: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   background: #f8fafc;
 }
+
+.file-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  transition: all 0.2s;
+  align-items: flex-start;
+}
+
+.file-checkbox {
+  margin-top: 2px;
+}
+
+/* Search Results Panel */
+.search-results-panel {
+  flex: 1;
+  background: #fff;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.search-result-group {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.group-header {
+  padding: 8px 16px;
+  background: #f8fafc;
+  font-weight: 600;
+  font-size: 13px;
+  color: #475569;
+  display: flex;
+  justify-content: space-between;
+}
+
+.group-matches {
+  padding: 0;
+}
+
+.match-item {
+  padding: 8px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  font-family: monospace;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+}
+.match-item:hover { background: #f1f5f9; }
+.match-line-num { color: #94a3b8; margin-right: 8px; user-select: none; }
 
 /* Detail / Viewer */
 .task-detail {
