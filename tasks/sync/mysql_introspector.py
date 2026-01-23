@@ -43,10 +43,15 @@ class MySQLIntrospector:
                 if self.auto_discover_only_base_table:
                     c.execute("SHOW FULL TABLES WHERE Table_type='BASE TABLE'")
                     rows = c.fetchall()
+                    log(self.task_id, f"Introspector list_tables(BASE): found {len(rows)} tables")
                     return [r[0] for r in rows]
                 c.execute("SHOW TABLES")
                 rows = c.fetchall()
+                log(self.task_id, f"Introspector list_tables(ALL): found {len(rows)} tables")
                 return [r[0] for r in rows]
+        except Exception as e:
+            log(self.task_id, f"Introspector list_tables failed: {e}")
+            raise
         finally:
             conn.close()
 

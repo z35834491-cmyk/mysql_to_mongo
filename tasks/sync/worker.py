@@ -180,10 +180,12 @@ class SyncWorker:
 
     def _auto_build_table_map_if_needed(self):
         if self.cfg.table_map:
+            log(self.cfg.task_id, f"Using provided table_map size={len(self.cfg.table_map)}")
             return
+        log(self.cfg.task_id, "Auto-building table map...")
         tables = self.mysql_introspector.list_tables()
         self.cfg.table_map = {t: t + self.cfg.collection_suffix for t in tables}
-        log(self.cfg.task_id, f"Auto table_map built size={len(self.cfg.table_map)}")
+        log(self.cfg.task_id, f"Auto table_map built size={len(self.cfg.table_map)} tables={list(self.cfg.table_map.keys())[:5]}...")
 
     def _maybe_refresh_table_map(self, reason: str = ""):
         self.mysql_introspector.refresh_table_map_if_needed(
@@ -235,6 +237,10 @@ class SyncWorker:
         mongo_batch = int(self.cfg.mongo_bulk_batch or 2000)
         pk = self.cfg.pk_field
         write_concern = WriteConcern(w=int(self.cfg.mongo_write_w or 1), j=bool(self.cfg.mongo_write_j))
+
+        if not self.cfg.table_map:
+            log(self.cfg.task_id, "FullSync: table_map is empty, nothing to sync.")
+            return
 
         conn = pymysql.connect(**self.mysql_settings)
         try:

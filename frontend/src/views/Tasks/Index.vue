@@ -185,9 +185,11 @@ const initCharts = () => {
     eventsChart = echarts.init(eventsChartRef.value)
   }
   // Ensure DOM is ready and charts are initialized before updating
-  if (statusChart && eventsChart) {
-    updateCharts()
-  }
+  nextTick(() => {
+    if (statusChart && eventsChart) {
+      updateCharts()
+    }
+  })
 }
 
 const updateCharts = () => {

@@ -168,16 +168,16 @@ const initChart = () => {
         type: 'line',
         smooth: true,
         data: [120, 132, 101, 134, 90, 230, 210],
-        lineStyle: { color: 'var(--el-color-primary)', width: 3 },
+        lineStyle: { color: '#409EFF', width: 3 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(var(--el-color-primary-rgb), 0.2)' },
-            { offset: 1, color: 'rgba(var(--el-color-primary-rgb), 0)' }
+            { offset: 0, color: 'rgba(64, 158, 255, 0.2)' },
+            { offset: 1, color: 'rgba(64, 158, 255, 0)' }
           ])
         },
         symbol: 'circle',
         symbolSize: 8,
-        itemStyle: { color: 'var(--el-color-primary)' }
+        itemStyle: { color: '#409EFF' }
       }
     ]
   }
