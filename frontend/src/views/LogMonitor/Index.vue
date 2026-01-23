@@ -37,42 +37,43 @@
           </div>
         </div>
 
-        <el-table :data="paginatedLogFiles" v-loading="loading" style="width: 100%">
-          <el-table-column label="Log File Name" min-width="400">
-            <template #default="{ row }">
-              <div class="log-file-cell">
-                <el-icon class="file-icon"><Document /></el-icon>
-                <span class="file-name">{{ typeof row === 'string' ? row : row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          
-          <el-table-column label="Actions" width="220" fixed="right">
-            <template #default="{ row }">
-              <div class="action-group">
-                <el-button type="primary" plain size="small" :icon="View" @click="viewLog(row)">
-                  View
-                </el-button>
-                <el-button type="success" plain size="small" :icon="Download" @click="downloadLog(row)">
-                  Download
-                </el-button>
-              </div>
-            </template>
-          </el-table-column>
-        </el-table>
+        <el-card shadow="never" class="content-card">
+          <el-table :data="paginatedLogFiles" v-loading="loading" style="width: 100%">
+            <el-table-column label="Log File Name" min-width="400">
+              <template #default="{ row }">
+                <div class="log-file-cell">
+                  <el-icon class="file-icon"><Document /></el-icon>
+                  <span class="file-name">{{ typeof row === 'string' ? row : row.name }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            
+            <el-table-column label="Actions" width="220" fixed="right">
+              <template #default="{ row }">
+                <div class="action-group">
+                  <el-button type="primary" plain size="small" :icon="View" @click="viewLog(row)">
+                    View
+                  </el-button>
+                  <el-button type="success" plain size="small" :icon="Download" @click="downloadLog(row)">
+                    Download
+                  </el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
 
-        <div class="pagination-container">
-          <el-pagination
-            v-model:current-page="currentPage"
-            v-model:page-size="pageSize"
-            :page-sizes="[10, 20, 50, 100]"
-            layout="total, sizes, prev, pager, next, jumper"
-            :total="filteredLogFiles.length"
-            @size-change="handleSizeChange"
-            @current-change="handleCurrentChange"
-          />
-        </div>
-      </el-card>
+          <div class="pagination-container">
+            <el-pagination
+              v-model:current-page="currentPage"
+              v-model:page-size="pageSize"
+              :page-sizes="[10, 20, 50, 100]"
+              layout="total, sizes, prev, pager, next, jumper"
+              :total="filteredLogFiles.length"
+              @size-change="handleSizeChange"
+              @current-change="handleCurrentChange"
+            />
+          </div>
+        </el-card>
       </el-tab-pane>
       
       <el-tab-pane name="config">
