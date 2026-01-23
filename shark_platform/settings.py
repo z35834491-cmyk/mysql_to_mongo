@@ -157,6 +157,14 @@ LOGIN_URL = '/accounts/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
 
+# Session Security
+SESSION_COOKIE_AGE = 1800  # 30 minutes in seconds
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_SAVE_EVERY_REQUEST = True  # Rolling session timeout
+# Using database sessions, but they will expire in 30 mins. 
+# For "re-login on service restart", we could use 'cache' backend with locmem,
+# but database is safer for production. 30 mins age is the primary requirement.
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

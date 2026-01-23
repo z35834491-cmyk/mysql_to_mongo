@@ -90,8 +90,8 @@
           <div class="quick-actions">
             <div class="action-title">QUICK ACTIONS</div>
             <div class="action-buttons">
-              <el-button size="small" class="action-btn" plain>Run Inspection</el-button>
-              <el-button size="small" class="action-btn" plain>New Task</el-button>
+              <el-button size="small" class="action-btn" plain @click="$router.push('/system')">Run Inspection</el-button>
+              <el-button size="small" class="action-btn" plain @click="$router.push('/tasks')">New Sync Task</el-button>
             </div>
           </div>
         </el-card>
@@ -231,6 +231,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  background-color: var(--app-content-bg);
+  padding: 20px;
+  border-radius: 8px;
 }
 
 .stat-card {

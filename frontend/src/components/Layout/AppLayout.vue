@@ -101,12 +101,23 @@ const isDark = useDark()
 const toggleDark = useToggle(isDark)
 
 // Theme Color
-const themeColor = ref('#3b82f6')
+const themeColor = ref('#ffffff')
 const updateThemeColor = (color: string | null) => {
   if (color) {
-    document.documentElement.style.setProperty('--el-color-primary', color)
-    // You can also add more color variables here
+    document.documentElement.style.setProperty('--app-main-bg', color)
+    // Calculate if the background is dark to adjust text color
+    const isDarkBg = isColorDark(color)
+    document.documentElement.style.setProperty('--app-content-bg', isDarkBg ? 'rgba(255,255,255,0.05)' : '#ffffff')
   }
+}
+
+const isColorDark = (color: string) => {
+  const hex = color.replace('#', '')
+  const r = parseInt(hex.substr(0, 2), 16)
+  const g = parseInt(hex.substr(2, 2), 16)
+  const b = parseInt(hex.substr(4, 2), 16)
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000
+  return brightness < 128
 }
 
 // Logout
@@ -114,6 +125,18 @@ const handleLogout = () => {
   window.location.href = '/accounts/logout/'
 }
 </script>
+
+<style>
+:root {
+  --app-main-bg: #f8fafc;
+  --app-content-bg: #ffffff;
+}
+
+html.dark {
+  --app-main-bg: #0f172a;
+  --app-content-bg: #1e293b;
+}
+</style>
 
 <style scoped>
 .app-wrapper {
@@ -252,9 +275,11 @@ const handleLogout = () => {
 }
 
 .app-main {
-  padding: 32px;
-  background-color: #f8fafc;
+  flex: 1;
+  padding: 24px;
+  background-color: var(--app-main-bg);
   overflow-y: auto;
+  transition: background-color 0.3s;
 }
 
 .fade-transform-enter-active,
