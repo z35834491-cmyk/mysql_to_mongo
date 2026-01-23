@@ -20,7 +20,10 @@
       <div class="main-body">
         <!-- Task List (Left) -->
         <div class="task-list">
-          <div class="list-header">Monitor Tasks</div>
+          <div class="list-header">
+            <span>Monitor Tasks</span>
+            <el-button type="primary" link :icon="Plus" @click="createNewTask" />
+          </div>
           <div v-loading="loading" class="list-content">
             <div 
               v-for="task in tasks" 
@@ -37,6 +40,9 @@
                 <div class="task-name">{{ task.name }}</div>
                 <div class="task-meta">{{ task.k8s_namespace }} • {{ task.alert_keywords?.length || 0 }} Keywords</div>
               </div>
+              <div class="task-actions" v-if="selectedTaskId === task.id">
+                 <el-button type="primary" link :icon="Setting" @click.stop="openConfig(task)" />
+              </div>
             </div>
             <div v-if="tasks.length === 0" class="empty-list">
               No tasks found
@@ -46,12 +52,9 @@
 
         <!-- Task Detail (Right) -->
         <div class="task-detail" v-if="selectedTask">
-          <el-tabs v-model="activeTab" class="detail-tabs">
-            
-            <!-- Tab 1: Configuration -->
-            <el-tab-pane label="Configuration" name="config">
-              <div class="config-form">
-                <el-form :model="form" label-position="top">
+          <!-- Config Drawer/Dialog for Editing -->
+          <el-dialog v-model="showConfigDialog" title="Task Configuration" width="600px">
+              <el-form :model="form" label-position="top">
                   <el-row :gutter="20">
                     <el-col :span="12">
                       <el-form-item label="Task Name">
@@ -98,27 +101,30 @@
                       </el-form-item>
                     </el-col>
                   </el-row>
+              </el-form>
+              <template #footer>
+                <div class="dialog-footer">
+                  <el-button type="danger" plain @click="deleteTask" v-if="form.id">Delete</el-button>
+                  <el-button @click="showConfigDialog = false">Cancel</el-button>
+                  <el-button type="primary" @click="saveTask">Save</el-button>
+                </div>
+              </template>
+          </el-dialog>
 
-                  <div class="form-actions">
-                    <el-button type="primary" @click="saveTask">Save Changes</el-button>
-                    <el-button type="danger" plain @click="deleteTask">Delete Task</el-button>
-                  </div>
-                </el-form>
-              </div>
-            </el-tab-pane>
-
-            <!-- Tab 2: Saved Logs (Archived) -->
-            <el-tab-pane label="Log Files" name="saved">
-              <div class="saved-container">
+          <!-- Main Log Explorer for Task -->
+          <div class="saved-container">
                 <!-- File List -->
                 <div class="saved-file-list">
                   <div class="list-header">
-                    <span>Task Logs</span>
-                    <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
-                      <el-option :value="10" label="10" />
-                      <el-option :value="20" label="20" />
-                      <el-option :value="50" label="50" />
-                    </el-select>
+                    <span>{{ selectedTask.name }} Logs</span>
+                    <div style="display:flex; align-items:center; gap:8px">
+                       <el-button link :icon="Setting" @click="openConfig(selectedTask)">Config</el-button>
+                       <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
+                        <el-option :value="10" label="10" />
+                        <el-option :value="20" label="20" />
+                        <el-option :value="50" label="50" />
+                      </el-select>
+                    </div>
                   </div>
                   <div v-loading="savedLoading" class="list-content">
                     <div 
@@ -134,7 +140,7 @@
                         <div class="file-meta">{{ (file.size / 1024 / 1024).toFixed(2) }} MB • {{ new Date(file.mtime * 1000).toLocaleString() }}</div>
                       </div>
                     </div>
-                    <div v-if="savedLogFiles.length === 0" class="empty-list">No saved logs</div>
+                    <div v-if="savedLogFiles.length === 0" class="empty-list">No logs found</div>
                   </div>
                   <div class="list-pagination">
                      <el-pagination 
@@ -153,7 +159,7 @@
                   <div class="viewer-header">
                     <div class="header-left">
                       <span v-if="savedLogFile">{{ savedLogFile }}</span>
-                      <span v-else>Select a log file</span>
+                      <span v-else>No File Selected</span>
                     </div>
                     <div class="header-right" v-if="savedLogFile">
                        <el-select v-model="savedLogPageSize" size="small" style="width: 100px; margin-right: 8px" @change="fetchSavedLogContent(1)">
@@ -190,17 +196,14 @@
                     <pre class="log-raw">{{ savedLogContent }}</pre>
                   </div>
                   <div v-else class="empty-viewer">
-                    <el-empty description="Select a saved log file to view" />
+                    <el-empty description="Select a log file to view" />
                   </div>
                 </div>
               </div>
-            </el-tab-pane>
-
-          </el-tabs>
         </div>
 
         <div class="empty-detail" v-else>
-          <el-empty description="Select a task or create a new one" />
+          <el-empty description="Select a task to view logs" />
         </div>
       </div>
     </el-card>
@@ -313,7 +316,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { monitorApi, type MonitorTask } from '@/api/monitor'
 import { taskApi } from '@/api/task'
-import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download } from '@element-plus/icons-vue'
+import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
@@ -323,7 +326,7 @@ const viewMode = ref('k8s') // 'k8s' | 'local'
 const tasks = ref<MonitorTask[]>([])
 const selectedTaskId = ref<number | null>(null)
 const selectedTask = ref<MonitorTask | null>(null)
-const activeTab = ref('config')
+const showConfigDialog = ref(false)
 const form = ref<Partial<MonitorTask>>({})
 const k8sPods = ref<any[]>([])
 const selectedPod = ref('')
@@ -386,8 +389,13 @@ const selectTask = (task: MonitorTask) => {
   selectedTaskId.value = task.id!
   selectedTask.value = { ...task }
   form.value = { ...task }
-  activeTab.value = 'config'
-  if (task.k8s_namespace) fetchPods()
+  fetchSavedLogs(1)
+  // if (task.k8s_namespace) fetchPods() // Removed
+}
+
+const openConfig = (task: MonitorTask) => {
+    form.value = { ...task }
+    showConfigDialog.value = true
 }
 
 const createNewTask = () => {
@@ -401,18 +409,19 @@ const createNewTask = () => {
     retention_days: 7
   } as any
   form.value = { ...selectedTask.value }
-  activeTab.value = 'config'
+  showConfigDialog.value = true
 }
 
 const saveTask = async () => {
   try {
-    if (selectedTaskId.value) {
-      await monitorApi.updateTask(selectedTaskId.value, form.value)
+    if (form.value.id) {
+      await monitorApi.updateTask(form.value.id, form.value)
       ElMessage.success('Task updated')
     } else {
       await monitorApi.createTask(form.value)
       ElMessage.success('Task created')
     }
+    showConfigDialog.value = false
     fetchTasks()
   } catch (e) {
     ElMessage.error('Failed to save task')
@@ -512,11 +521,11 @@ const handleSavedSearch = async () => {
   }
 }
 
-watch(activeTab, (tab) => {
-  if (tab === 'saved' && selectedTaskId.value) {
-    fetchSavedLogs(1)
-  }
-})
+// watch(activeTab, (tab) => {
+//   if (tab === 'saved' && selectedTaskId.value) {
+//     fetchSavedLogs(1)
+//   }
+// })
 
 // Local Logs
 const fetchLocalFiles = async (page = 1) => {
