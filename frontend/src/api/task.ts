@@ -27,9 +27,10 @@ export const taskApi = {
   downloadLogs: (id: string) => `/api/tasks/logs/${id}/download`,
 
   // Global Log Monitoring
-  getLogFiles: () => request.get<{files: any[]}>('/logs/files').then(res => res.files),
+  getLogFiles: (params?: any) => request.get<{files: any[], total: number}>('/logs/files', { params }).then(res => res),
   getLogStats: () => request.get<any>('/logs/stats'),
   searchLogs: (q: string) => request.get<{matches: any[]}>('/logs/search', { params: { q } }).then(res => res.matches),
+  downloadLog: (filename: string) => `/api/logs/download/${filename}`,
 
   // K8s Logs
   getK8sNamespaces: () => request.get<{namespaces: string[], error?: string}>('/k8s/namespaces'),

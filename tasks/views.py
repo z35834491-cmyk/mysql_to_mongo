@@ -297,8 +297,11 @@ def task_logs(request, task_id):
 def log_files_list(request):
     log_dir = "logs"
     if not os.path.exists(log_dir):
-        return Response({"files": []})
+        return Response({"files": [], "total": 0, "page": 1, "page_size": 10})
         
+    page = int(request.GET.get('page', 1))
+    page_size = int(request.GET.get('page_size', 10))
+    
     files = []
     try:
         for f in os.listdir(log_dir):
@@ -315,10 +318,48 @@ def log_files_list(request):
                 })
         # Sort by mtime desc
         files.sort(key=lambda x: x['mtime'], reverse=True)
+        
+        # Pagination
+        total = len(files)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paged_files = files[start:end]
+        
     except Exception as e:
         return Response({"detail": str(e)}, status=500)
         
-    return Response({"files": files})
+    return Response({
+        "files": paged_files,
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def download_log_file(request, filename):
+    log_dir = "logs"
+    p = os.path.join(log_dir, filename)
+    
+    # Security check: prevent path traversal
+    if not os.path.abspath(p).startswith(os.path.abspath(log_dir)):
+        return Response({"detail": "Invalid filename"}, status=400)
+        
+    if not os.path.exists(p):
+        return Response({"detail": "File not found"}, status=404)
+        
+    def file_iterator(file_path, chunk_size=8192):
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    response = StreamingHttpResponse(file_iterator(p))
+    response['Content-Type'] = 'application/octet-stream'
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

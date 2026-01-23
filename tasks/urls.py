@@ -20,6 +20,7 @@ urlpatterns = [
     
     # Global Log APIs
     path('logs/files', views.log_files_list),
+    path('logs/download/<str:filename>', views.download_log_file),
     path('logs/stats', views.log_stats),
     path('logs/search', views.log_global_search),
     
