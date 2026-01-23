@@ -6,12 +6,16 @@
         <p class="page-subtitle">Centralized log monitoring and analysis</p>
       </div>
       <div class="header-actions">
+        <el-radio-group v-model="logSource" size="small" style="margin-right: 12px">
+          <el-radio-button label="local">Local Files</el-radio-button>
+          <el-radio-button label="k8s">Kubernetes</el-radio-button>
+        </el-radio-group>
         <el-button @click="fetchData" :icon="Refresh" circle />
       </div>
     </div>
 
-    <!-- Stats Dashboard -->
-    <el-row :gutter="20" class="stats-row">
+    <!-- Stats Dashboard (Hidden in K8s mode for now) -->
+    <el-row :gutter="20" class="stats-row" v-if="logSource === 'local'">
       <el-col :span="6">
         <div class="stat-card error">
           <div class="stat-label">ERRORS (Today)</div>
@@ -34,7 +38,7 @@
     <!-- Search & Explorer -->
     <el-card shadow="never" class="explorer-card">
       <template #header>
-        <div class="explorer-header">
+        <div class="explorer-header" v-if="logSource === 'local'">
           <el-input
             v-model="globalSearchQuery"
             placeholder="Global Search (grep all logs)..."
@@ -50,11 +54,24 @@
             </template>
           </el-input>
         </div>
+        
+        <div class="k8s-controls" v-else>
+          <el-select v-model="selectedNamespace" placeholder="Namespace" style="width: 150px" @change="fetchPods">
+            <el-option v-for="ns in k8sNamespaces" :key="ns" :label="ns" :value="ns" />
+          </el-select>
+          <el-select v-model="selectedPod" placeholder="Select Pod" style="width: 250px" @change="fetchK8sLogs">
+            <el-option v-for="pod in k8sPods" :key="pod.name" :label="pod.name" :value="pod.name">
+              <span style="float: left">{{ pod.name }}</span>
+              <span style="float: right; color: #8492a6; font-size: 12px">{{ pod.status }}</span>
+            </el-option>
+          </el-select>
+          <el-button type="primary" :icon="Refresh" @click="fetchK8sLogs">Tail Logs</el-button>
+        </div>
       </template>
 
       <div class="explorer-body">
-        <!-- File List (Left) -->
-        <div class="file-list">
+        <!-- Local File List (Left) -->
+        <div class="file-list" v-if="logSource === 'local'">
           <div class="list-header">Log Files</div>
           <div v-loading="loading" class="list-content">
             <div 
@@ -75,7 +92,19 @@
 
         <!-- Log Content (Right) -->
         <div class="log-viewer" v-loading="contentLoading">
-          <div v-if="searchResults.length > 0" class="search-results">
+          <!-- K8s Viewer -->
+          <div v-if="logSource === 'k8s'" class="k8s-viewer">
+             <div class="viewer-header" v-if="selectedPod">
+              <span>{{ selectedNamespace }} / {{ selectedPod }}</span>
+              <el-tag size="small" effect="dark" type="info">tail -n 100</el-tag>
+            </div>
+            <div class="log-lines">
+              <pre class="log-raw">{{ k8sLogContent || 'Select a pod to view logs...' }}</pre>
+            </div>
+          </div>
+          
+          <!-- Local Search Results -->
+          <div v-else-if="searchResults.length > 0" class="search-results">
             <div class="results-header">
               Found {{ searchResults.length }} matches for "{{ globalSearchQuery }}"
               <el-button link size="small" @click="clearSearch">Clear</el-button>
@@ -123,9 +152,21 @@ import * as echarts from 'echarts'
 
 const loading = ref(false)
 const contentLoading = ref(false)
+const logSource = ref('local') // 'local' | 'k8s'
 const stats = ref({ summary: { error: 0, warning: 0 }, trend: { hours: [], errors: [] } })
+
+// Local Logs State
 const logFiles = ref<any[]>([])
 const selectedFile = ref('')
+
+// K8s Logs State
+const k8sNamespaces = ref<string[]>([])
+const k8sPods = ref<any[]>([])
+const selectedNamespace = ref('default')
+const selectedPod = ref('')
+const selectedContainer = ref('') // Optional, defaults to first
+const k8sLogContent = ref('')
+
 const logContent = ref<string[]>([])
 const globalSearchQuery = ref('')
 const searchResults = ref<any[]>([])
@@ -134,6 +175,11 @@ const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 const fetchData = async () => {
+  if (logSource.value === 'k8s') {
+    fetchNamespaces()
+    return
+  }
+  
   loading.value = true
   try {
     const [statsRes, filesRes] = await Promise.all([
@@ -147,6 +193,67 @@ const fetchData = async () => {
     loading.value = false
   }
 }
+
+// K8s Actions
+const fetchNamespaces = async () => {
+  loading.value = true
+  try {
+    const res = await taskApi.getK8sNamespaces()
+    if (res.error) {
+       k8sLogContent.value = `Error connecting to K8s: ${res.error}\n\nMake sure the backend has access to kubeconfig.`
+       return
+    }
+    k8sNamespaces.value = res.namespaces || ['default']
+    if (k8sNamespaces.value.length > 0) {
+      selectedNamespace.value = 'default'
+      fetchPods()
+    }
+  } catch (e) {
+    console.error(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+const fetchPods = async () => {
+  if (!selectedNamespace.value) return
+  try {
+    const res = await taskApi.getK8sPods(selectedNamespace.value)
+    k8sPods.value = res.pods || []
+    if (k8sPods.value.length > 0) {
+      selectedPod.value = k8sPods.value[0].name
+      fetchK8sLogs()
+    } else {
+      selectedPod.value = ''
+      k8sLogContent.value = 'No pods found in this namespace.'
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const fetchK8sLogs = async () => {
+  if (!selectedPod.value) return
+  contentLoading.value = true
+  try {
+    const logs = await taskApi.getK8sLogs({
+      namespace: selectedNamespace.value,
+      pod_name: selectedPod.value,
+      tail_lines: 100
+    })
+    k8sLogContent.value = logs
+  } catch (e) {
+    k8sLogContent.value = `Failed to fetch logs: ${e}`
+  } finally {
+    contentLoading.value = false
+  }
+}
+
+// Watch source change
+import { watch } from 'vue'
+watch(logSource, () => {
+  fetchData()
+})
 
 const selectFile = (name: string) => {
   selectedFile.value = name
@@ -388,7 +495,29 @@ onUnmounted(() => {
   background: #f8fafc;
 }
 
-/* Search Results */
+/* K8s Viewer */
+.k8s-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.k8s-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.log-raw {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Local Search Results */
 .search-results {
   flex: 1;
   overflow-y: auto;

@@ -11,6 +11,18 @@ import datetime
 import json
 import hashlib
 import pymysql
+from kubernetes import client, config
+
+# --- K8s Helper ---
+def _get_k8s_core_api():
+    try:
+        config.load_incluster_config()
+    except:
+        try:
+            config.load_kube_config()
+        except:
+            return None
+    return client.CoreV1Api()
 
 # --- Connections ---
 
@@ -400,6 +412,69 @@ def log_global_search(request):
         return Response({"detail": str(e)}, status=500)
         
     return Response({"matches": matches})
+
+# --- K8s Logs ---
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def k8s_namespaces(request):
+    api = _get_k8s_core_api()
+    if not api:
+        return Response({"namespaces": ["default"], "error": "K8s config not found"})
+    
+    try:
+        ns_list = api.list_namespace()
+        names = [ns.metadata.name for ns in ns_list.items]
+        return Response({"namespaces": names})
+    except Exception as e:
+        return Response({"namespaces": [], "error": str(e)})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def k8s_pods(request):
+    ns = request.GET.get('namespace', 'default')
+    api = _get_k8s_core_api()
+    if not api:
+        return Response({"pods": [], "error": "K8s config not found"})
+        
+    try:
+        pod_list = api.list_namespaced_pod(ns)
+        pods = []
+        for p in pod_list.items:
+            pods.append({
+                "name": p.metadata.name,
+                "status": p.status.phase,
+                "containers": [c.name for c in p.spec.containers]
+            })
+        return Response({"pods": pods})
+    except Exception as e:
+        return Response({"pods": [], "error": str(e)})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def k8s_pod_logs(request):
+    ns = request.GET.get('namespace', 'default')
+    pod_name = request.GET.get('pod_name')
+    container = request.GET.get('container')
+    tail_lines = int(request.GET.get('tail_lines', 100))
+    
+    if not pod_name:
+        return Response({"logs": ""})
+        
+    api = _get_k8s_core_api()
+    if not api:
+        return Response({"logs": "Error: K8s config not found"})
+        
+    try:
+        logs = api.read_namespaced_pod_log(
+            name=pod_name,
+            namespace=ns,
+            container=container,
+            tail_lines=tail_lines
+        )
+        return Response({"logs": logs})
+    except Exception as e:
+        return Response({"logs": f"Error reading logs: {str(e)}"})
 
 # --- MySQL Introspection ---
 

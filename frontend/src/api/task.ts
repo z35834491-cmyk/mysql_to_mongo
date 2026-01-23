@@ -29,5 +29,10 @@ export const taskApi = {
   // Global Log Monitoring
   getLogFiles: () => request.get<{files: any[]}>('/logs/files').then(res => res.files),
   getLogStats: () => request.get<any>('/logs/stats'),
-  searchLogs: (q: string) => request.get<{matches: any[]}>('/logs/search', { params: { q } }).then(res => res.matches)
+  searchLogs: (q: string) => request.get<{matches: any[]}>('/logs/search', { params: { q } }).then(res => res.matches),
+
+  // K8s Logs
+  getK8sNamespaces: () => request.get<{namespaces: string[], error?: string}>('/k8s/namespaces'),
+  getK8sPods: (namespace: string) => request.get<{pods: any[], error?: string}>('/k8s/pods', { params: { namespace } }),
+  getK8sLogs: (params: any) => request.get<{logs: string}>('/k8s/logs', { params }).then(res => res.logs)
 }
