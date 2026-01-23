@@ -2,117 +2,125 @@
   <div class="monitor-container">
     <div class="page-header">
       <div class="header-info">
-        <h2 class="page-title">System Logs</h2>
-        <p class="page-subtitle">Log file viewer and analysis</p>
+        <h2 class="page-title">Log Monitor</h2>
+        <p class="page-subtitle">K8s Log Monitoring & Alerting</p>
       </div>
       <div class="header-actions">
-        <el-button @click="fetchData" :icon="Refresh" circle />
+        <el-button type="primary" :icon="Plus" @click="createNewTask">New Monitor Task</el-button>
+        <el-button @click="fetchTasks" :icon="Refresh" circle />
       </div>
     </div>
 
-    <!-- Search & Explorer -->
-    <el-card shadow="never" class="explorer-card">
-      <template #header>
-        <div class="explorer-header" v-if="logSource === 'local'">
-          <el-input
-            v-model="globalSearchQuery"
-            placeholder="Search in logs..."
-            class="global-search"
-            clearable
-            @keyup.enter="handleGlobalSearch"
-          >
-            <template #prepend>
-              <el-icon><Search /></el-icon>
-            </template>
-            <template #append>
-              <el-button @click="handleGlobalSearch">Search</el-button>
-            </template>
-          </el-input>
-        </div>
-        <div class="k8s-controls" v-else>
-          <el-select v-model="selectedNamespace" placeholder="Namespace" style="width: 150px" @change="fetchPods">
-            <el-option v-for="ns in k8sNamespaces" :key="ns" :label="ns" :value="ns" />
-          </el-select>
-          <el-select v-model="selectedPod" placeholder="Select Pod" style="width: 250px" @change="fetchK8sLogs">
-            <el-option v-for="pod in k8sPods" :key="pod.name" :label="pod.name" :value="pod.name">
-              <span style="float: left">{{ pod.name }}</span>
-              <span style="float: right; color: #8492a6; font-size: 12px">{{ pod.status }}</span>
-            </el-option>
-          </el-select>
-          <el-button type="primary" :icon="Refresh" @click="fetchK8sLogs">Tail Logs</el-button>
-        </div>
-      </template>
-
-      <div class="explorer-body">
-        <!-- Local File List (Left) -->
-        <div class="file-list" v-if="logSource === 'local'">
-          <div class="list-header">Log Files</div>
+    <el-card shadow="never" class="main-card">
+      <div class="main-body">
+        <!-- Task List (Left) -->
+        <div class="task-list">
+          <div class="list-header">Monitor Tasks</div>
           <div v-loading="loading" class="list-content">
             <div 
-              v-for="file in logFiles" 
-              :key="file.name"
-              class="file-item"
-              :class="{ active: selectedFile === file.name }"
-              @click="selectFile(file.name)"
+              v-for="task in tasks" 
+              :key="task.id"
+              class="task-item"
+              :class="{ active: selectedTaskId === task.id }"
+              @click="selectTask(task)"
             >
-              <div class="file-icon"><el-icon><Document /></el-icon></div>
-              <div class="file-info">
-                <div class="file-name" :title="file.name">{{ file.name }}</div>
-                <div class="file-meta">{{ file.size }} • {{ file.mtime }}</div>
+              <div class="task-icon">
+                <el-icon v-if="task.enabled" color="#10b981"><VideoPlay /></el-icon>
+                <el-icon v-else color="#94a3b8"><VideoPause /></el-icon>
               </div>
+              <div class="task-info">
+                <div class="task-name">{{ task.name }}</div>
+                <div class="task-meta">{{ task.k8s_namespace }} • {{ task.alert_keywords?.length || 0 }} Keywords</div>
+              </div>
+            </div>
+            <div v-if="tasks.length === 0" class="empty-list">
+              No tasks found
             </div>
           </div>
         </div>
 
-        <!-- Log Content (Right) -->
-        <div class="log-viewer" v-loading="contentLoading">
-          <!-- K8s Viewer -->
-          <div v-if="logSource === 'k8s'" class="k8s-viewer">
-             <div class="viewer-header" v-if="selectedPod">
-              <span>{{ selectedNamespace }} / {{ selectedPod }}</span>
-              <el-tag size="small" effect="dark" type="info">tail -n 100</el-tag>
-            </div>
-            <div class="log-lines">
-              <pre class="log-raw">{{ k8sLogContent || 'Select a pod to view logs...' }}</pre>
-            </div>
-          </div>
-          
-          <!-- Local Search Results -->
-          <div v-else-if="searchResults.length > 0" class="search-results">
-            <div class="results-header">
-              Found {{ searchResults.length }} matches for "{{ globalSearchQuery }}"
-              <el-button link size="small" @click="clearSearch">Clear</el-button>
-            </div>
-            <div class="results-list">
-              <div 
-                v-for="(match, idx) in searchResults" 
-                :key="idx" 
-                class="result-item"
-                @click="jumpToLog(match.file)"
-              >
-                <div class="result-meta">
-                  <span class="res-file">{{ match.file }}</span>
-                  <span class="res-line">L{{ match.line }}</span>
-                </div>
-                <div class="result-content">{{ match.content }}</div>
+        <!-- Task Detail (Right) -->
+        <div class="task-detail" v-if="selectedTask">
+          <el-tabs v-model="activeTab" class="detail-tabs">
+            
+            <!-- Tab 1: Configuration -->
+            <el-tab-pane label="Configuration" name="config">
+              <div class="config-form">
+                <el-form :model="form" label-position="top">
+                  <el-row :gutter="20">
+                    <el-col :span="12">
+                      <el-form-item label="Task Name">
+                        <el-input v-model="form.name" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="K8s Namespace">
+                        <el-input v-model="form.k8s_namespace" placeholder="default" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <el-form-item label="Kubeconfig (YAML)">
+                    <el-input v-model="form.k8s_kubeconfig" type="textarea" :rows="4" placeholder="Leave empty to use in-cluster config" />
+                  </el-form-item>
+
+                  <el-divider>Alerting</el-divider>
+                  
+                  <el-form-item label="Alert Keywords (One per line)">
+                    <el-input v-model="keywordsStr" type="textarea" :rows="3" placeholder="ERROR&#10;Exception&#10;Critical" />
+                  </el-form-item>
+
+                  <el-form-item label="Slack Webhook URL">
+                    <el-input v-model="form.slack_webhook_url" placeholder="https://hooks.slack.com/services/..." />
+                  </el-form-item>
+
+                  <el-divider>Archiving (S3)</el-divider>
+
+                  <el-row :gutter="20">
+                    <el-col :span="6">
+                      <el-form-item label="Enable Archive">
+                         <el-switch v-model="form.s3_archive_enabled" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="18">
+                      <el-form-item label="S3 Bucket">
+                        <el-input v-model="form.s3_bucket" :disabled="!form.s3_archive_enabled" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <div class="form-actions">
+                    <el-button type="primary" @click="saveTask">Save Changes</el-button>
+                    <el-button type="danger" plain @click="deleteTask">Delete Task</el-button>
+                  </div>
+                </el-form>
               </div>
-            </div>
-          </div>
+            </el-tab-pane>
 
-          <!-- File Content -->
-          <div v-else-if="selectedFile" class="file-viewer">
-            <div class="viewer-header">
-              <span>{{ selectedFile }}</span>
-              <el-button size="small" :icon="Refresh" circle @click="fetchLogContent" />
-            </div>
-            <div class="log-lines">
-              <div v-for="(line, i) in logContent" :key="i" class="log-line">{{ line }}</div>
-            </div>
-          </div>
+            <!-- Tab 2: Live Logs -->
+            <el-tab-pane label="Live Logs" name="live">
+              <div class="live-container">
+                <div class="live-controls">
+                  <el-select v-model="selectedPod" placeholder="Select Pod" style="width: 300px" @change="fetchK8sLogs">
+                    <el-option v-for="pod in k8sPods" :key="pod.name" :label="pod.name" :value="pod.name">
+                      <span style="float: left">{{ pod.name }}</span>
+                      <span style="float: right; color: #8492a6; font-size: 12px">{{ pod.status }}</span>
+                    </el-option>
+                  </el-select>
+                  <el-button :icon="Refresh" @click="fetchPods">Refresh Pods</el-button>
+                  <el-button type="primary" :icon="VideoPlay" @click="fetchK8sLogs">Tail Logs</el-button>
+                </div>
+                <div class="log-viewer" v-loading="logLoading">
+                  <pre class="log-raw">{{ k8sLogContent || 'Select a pod to start streaming logs...' }}</pre>
+                </div>
+              </div>
+            </el-tab-pane>
 
-          <div v-else class="empty-viewer">
-            <el-empty description="Select a file to view logs" />
-          </div>
+          </el-tabs>
+        </div>
+
+        <div class="empty-detail" v-else>
+          <el-empty description="Select a task or create a new one" />
         </div>
       </div>
     </el-card>
@@ -120,95 +128,106 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, onUnmounted } from 'vue'
-import { taskApi } from '@/api/task'
-import { Refresh, Search, Document } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
+import { ref, onMounted, computed } from 'vue'
+import { monitorApi, type MonitorTask } from '@/api/monitor'
+import { taskApi } from '@/api/task' // Reuse K8s API
+import { Refresh, Plus, VideoPlay, VideoPause, Delete, Search } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
-const contentLoading = ref(false)
-const logSource = ref('k8s') // Default to K8s as requested
-const stats = ref({ summary: { error: 0, warning: 0 }, trend: { hours: [], errors: [] } })
+const tasks = ref<MonitorTask[]>([])
+const selectedTaskId = ref<number | null>(null)
+const selectedTask = ref<MonitorTask | null>(null)
+const activeTab = ref('config')
 
-// Local Logs State
-const logFiles = ref<any[]>([])
-const selectedFile = ref('')
+// Form State
+const form = ref<Partial<MonitorTask>>({})
+const keywordsStr = computed({
+  get: () => form.value.alert_keywords?.join('\n') || '',
+  set: (val) => {
+    form.value.alert_keywords = val.split('\n').filter(k => k.trim())
+  }
+})
 
-// K8s Logs State
-const k8sNamespaces = ref<string[]>([])
+// Live Logs State
 const k8sPods = ref<any[]>([])
-const selectedNamespace = ref('default')
 const selectedPod = ref('')
-const selectedContainer = ref('') // Optional, defaults to first
 const k8sLogContent = ref('')
+const logLoading = ref(false)
 
-const logContent = ref<string[]>([])
-const globalSearchQuery = ref('')
-const searchResults = ref<any[]>([])
-
-const chartRef = ref<HTMLElement>()
-let chart: echarts.ECharts | null = null
-
-const fetchData = async () => {
-  // Always fetch stats for the dashboard regardless of mode
-  try {
-    const statsRes = await taskApi.getLogStats()
-    stats.value = statsRes
-    updateChart()
-  } catch (e) {
-    console.error(e)
-  }
-
-  if (logSource.value === 'k8s') {
-    fetchNamespaces()
-  } else {
-    fetchLocalFiles()
-  }
-}
-
-const fetchLocalFiles = async () => {
+const fetchTasks = async () => {
   loading.value = true
   try {
-    const filesRes = await taskApi.getLogFiles()
-    logFiles.value = filesRes
+    tasks.value = await monitorApi.getTasks()
   } finally {
     loading.value = false
   }
 }
 
-// K8s Actions
-const fetchNamespaces = async () => {
-  loading.value = true
-  try {
-    const res = await taskApi.getK8sNamespaces()
-    if (res.error) {
-       k8sLogContent.value = `Error connecting to K8s: ${res.error}\n\nMake sure the backend has access to kubeconfig.`
-       return
-    }
-    k8sNamespaces.value = res.namespaces || ['default']
-    if (k8sNamespaces.value.length > 0) {
-      selectedNamespace.value = 'default'
-      fetchPods()
-    }
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
+const selectTask = (task: MonitorTask) => {
+  selectedTaskId.value = task.id!
+  selectedTask.value = { ...task } // Clone
+  form.value = { ...task } // Clone to form
+  activeTab.value = 'config'
+  
+  // Pre-load pods if K8s info is present
+  if (task.k8s_namespace) {
+    fetchPods()
   }
 }
 
-const fetchPods = async () => {
-  if (!selectedNamespace.value) return
+const createNewTask = () => {
+  selectedTaskId.value = null
+  selectedTask.value = { 
+    name: 'New Monitor Task', 
+    enabled: true,
+    k8s_namespace: 'default',
+    alert_keywords: ['ERROR'],
+    s3_archive_enabled: false
+  } as any
+  form.value = { ...selectedTask.value }
+  activeTab.value = 'config'
+}
+
+const saveTask = async () => {
   try {
-    const res = await taskApi.getK8sPods(selectedNamespace.value)
-    k8sPods.value = res.pods || []
-    if (k8sPods.value.length > 0) {
-      selectedPod.value = k8sPods.value[0].name
-      fetchK8sLogs()
+    if (selectedTaskId.value) {
+      await monitorApi.updateTask(selectedTaskId.value, form.value)
+      ElMessage.success('Task updated')
     } else {
-      selectedPod.value = ''
-      k8sLogContent.value = 'No pods found in this namespace.'
+      await monitorApi.createTask(form.value)
+      ElMessage.success('Task created')
     }
+    fetchTasks()
+  } catch (e) {
+    ElMessage.error('Failed to save task')
+  }
+}
+
+const deleteTask = async () => {
+  if (!selectedTaskId.value) return
+  try {
+    await ElMessageBox.confirm('Are you sure you want to delete this task?', 'Warning', { type: 'warning' })
+    await monitorApi.deleteTask(selectedTaskId.value)
+    ElMessage.success('Task deleted')
+    selectedTaskId.value = null
+    selectedTask.value = null
+    fetchTasks()
+  } catch (e) {
+    // Cancelled
+  }
+}
+
+// Live Logs Logic
+const fetchPods = async () => {
+  const ns = form.value.k8s_namespace || 'default'
+  try {
+    // Note: This relies on backend using the kubeconfig from the DB or fallback
+    // Since we haven't saved the form yet, this might use old config if we use backend's "getPods".
+    // Ideal: backend getPods should accept kubeconfig override, OR we save first.
+    // For now, let's assume user saves config first.
+    const res = await taskApi.getK8sPods(ns)
+    k8sPods.value = res.pods || []
   } catch (e) {
     console.error(e)
   }
@@ -216,94 +235,23 @@ const fetchPods = async () => {
 
 const fetchK8sLogs = async () => {
   if (!selectedPod.value) return
-  contentLoading.value = true
+  logLoading.value = true
   try {
     const logs = await taskApi.getK8sLogs({
-      namespace: selectedNamespace.value,
+      namespace: form.value.k8s_namespace || 'default',
       pod_name: selectedPod.value,
       tail_lines: 100
     })
     k8sLogContent.value = logs
   } catch (e) {
-    k8sLogContent.value = `Failed to fetch logs: ${e}`
+    k8sLogContent.value = `Error: ${e}`
   } finally {
-    contentLoading.value = false
+    logLoading.value = false
   }
-}
-
-// Watch source change
-import { watch } from 'vue'
-watch(logSource, () => {
-  fetchData()
-})
-
-const selectFile = (name: string) => {
-  selectedFile.value = name
-  searchResults.value = []
-  fetchLogContent()
-}
-
-const fetchLogContent = async () => {
-  if (!selectedFile.value) return
-  contentLoading.value = true
-  try {
-    const taskId = selectedFile.value.replace('.log', '')
-    const res = await taskApi.getTaskLogs(taskId, { page: -1, page_size: 1000 })
-    logContent.value = res.lines
-  } finally {
-    contentLoading.value = false
-  }
-}
-
-const handleGlobalSearch = async () => {
-  if (!globalSearchQuery.value) return
-  contentLoading.value = true
-  try {
-    const res = await taskApi.searchLogs(globalSearchQuery.value)
-    searchResults.value = res
-    selectedFile.value = ''
-  } finally {
-    contentLoading.value = false
-  }
-}
-
-const clearSearch = () => {
-  searchResults.value = []
-  globalSearchQuery.value = ''
-}
-
-const jumpToLog = (filename: string) => {
-  selectFile(filename)
-}
-
-// Chart
-const updateChart = () => {
-  if (!chartRef.value) return
-  if (!chart) chart = echarts.init(chartRef.value)
-  
-  chart.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { top: '10%', bottom: '10%', left: '3%', right: '4%', containLabel: true },
-    xAxis: { type: 'category', data: stats.value.trend.hours },
-    yAxis: { type: 'value' },
-    series: [{
-      data: stats.value.trend.errors,
-      type: 'line',
-      smooth: true,
-      areaStyle: { color: 'rgba(239, 68, 68, 0.1)' },
-      lineStyle: { color: '#ef4444' },
-      itemStyle: { color: '#ef4444' }
-    }]
-  })
 }
 
 onMounted(() => {
-  fetchData()
-  window.addEventListener('resize', () => chart?.resize())
-})
-
-onUnmounted(() => {
-  chart?.dispose()
+  fetchTasks()
 })
 </script>
 
@@ -334,34 +282,28 @@ onUnmounted(() => {
   margin: 0;
 }
 
-/* Explorer */
-.explorer-card {
+.main-card {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.explorer-card :deep(.el-card__body) {
+.main-card :deep(.el-card__body) {
   flex: 1;
   padding: 0;
   display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 
-.explorer-header {
-  padding: 0;
-}
-
-.explorer-body {
+.main-body {
   display: flex;
-  flex: 1;
-  overflow: hidden;
+  width: 100%;
+  height: 100%;
 }
 
-/* File List */
-.file-list {
+/* Task List */
+.task-list {
   width: 280px;
   border-right: 1px solid #e2e8f0;
   display: flex;
@@ -370,11 +312,10 @@ onUnmounted(() => {
 }
 
 .list-header {
-  padding: 12px 16px;
+  padding: 16px;
   font-weight: 600;
   color: #475569;
   border-bottom: 1px solid #e2e8f0;
-  font-size: 13px;
 }
 
 .list-content {
@@ -382,106 +323,81 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.file-item {
+.task-item {
   padding: 12px 16px;
   cursor: pointer;
   display: flex;
   gap: 12px;
   border-bottom: 1px solid #f1f5f9;
   transition: all 0.2s;
+  align-items: center;
 }
 
-.file-item:hover { background: #fff; }
-.file-item.active { background: #fff; border-left: 3px solid #3b82f6; }
+.task-item:hover { background: #fff; }
+.task-item.active { background: #fff; border-left: 3px solid #3b82f6; }
 
-.file-icon { color: #64748b; margin-top: 2px; }
-.file-name { font-weight: 500; font-size: 13px; color: #334155; margin-bottom: 2px; word-break: break-all; }
-.file-meta { font-size: 11px; color: #94a3b8; }
+.task-info { flex: 1; overflow: hidden; }
+.task-name { font-weight: 500; color: #334155; margin-bottom: 2px; }
+.task-meta { font-size: 11px; color: #94a3b8; }
+.empty-list { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
 
-/* Log Viewer */
-.log-viewer {
+/* Detail */
+.task-detail {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #1e293b;
+  background: #fff;
   overflow: hidden;
 }
 
-.viewer-header {
-  padding: 8px 16px;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-size: 13px;
+.detail-tabs {
+  height: 100%;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #334155;
+  flex-direction: column;
 }
 
-.log-lines {
+.detail-tabs :deep(.el-tabs__header) { margin: 0; padding: 0 20px; border-bottom: 1px solid #e2e8f0; }
+.detail-tabs :deep(.el-tabs__content) { flex: 1; overflow-y: auto; padding: 20px; }
+
+.config-form { max-width: 800px; }
+.form-actions { margin-top: 30px; display: flex; gap: 12px; }
+
+/* Live Logs */
+.live-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.live-controls {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.log-viewer {
   flex: 1;
-  overflow-y: auto;
+  background: #1e293b;
+  border-radius: 6px;
   padding: 16px;
-  font-family: 'Menlo', monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #cbd5e1;
+  overflow-y: auto;
 }
 
-.log-line {
+.log-raw {
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
+  font-family: 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e2e8f0;
 }
 
-.empty-viewer {
-  height: 100%;
+.empty-detail {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #f8fafc;
-}
-
-/* Search Results */
-.search-results {
-  flex: 1;
-  overflow-y: auto;
-  background: #fff;
-}
-
-.results-header {
-  padding: 12px 16px;
-  background: #f1f5f9;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 13px;
-  color: #475569;
-  display: flex;
-  justify-content: space-between;
-}
-
-.result-item {
-  padding: 12px 16px;
-  border-bottom: 1px solid #f1f5f9;
-  cursor: pointer;
-}
-.result-item:hover { background: #f8fafc; }
-
-.result-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: #64748b;
-  margin-bottom: 4px;
-}
-
-.res-file { font-weight: 600; color: #3b82f6; }
-.result-content {
-  font-family: monospace;
-  font-size: 12px;
-  color: #334155;
-  white-space: pre-wrap;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 </style>

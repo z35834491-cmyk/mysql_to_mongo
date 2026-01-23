@@ -1,0 +1,36 @@
+import request from '@/utils/request'
+
+export interface MonitorTask {
+  id?: number
+  name: string
+  enabled: boolean
+  k8s_namespace: string
+  k8s_kubeconfig: string
+  s3_archive_enabled: boolean
+  s3_bucket: string
+  s3_region: string
+  s3_access_key: string
+  s3_secret_key: string
+  s3_endpoint: string
+  retention_days: number
+  slack_webhook_url: string
+  poll_interval_seconds: number
+  alert_keywords: string[]
+  ignore_keywords: string[]
+  record_only_keywords: string[]
+  last_run?: string
+  last_error?: string
+  alerts_sent_count?: number
+}
+
+export const monitorApi = {
+  getTasks: () => request.get<MonitorTask[]>('/monitor/tasks'),
+  getTask: (id: number) => request.get<MonitorTask>(`/monitor/tasks/${id}`),
+  createTask: (data: Partial<MonitorTask>) => request.post<MonitorTask>('/monitor/tasks', data),
+  updateTask: (id: number, data: Partial<MonitorTask>) => request.put<MonitorTask>(`/monitor/tasks/${id}`, data),
+  deleteTask: (id: number) => request.delete(`/monitor/tasks/${id}`),
+  
+  getLogs: (taskId: number) => request.get<any[]>('/monitor/logs', { params: { task_id: taskId } }),
+  viewLog: (taskId: number, filename: string, keyword?: string) => 
+    request.get<{content: string}>('/monitor/logs/view', { params: { task_id: taskId, filename, keyword } }),
+}
