@@ -31,6 +31,12 @@ class Request {
         return response.data
       },
       (error) => {
+        // Silently ignore 401/404 for /api/me during initial load
+        const isMeError = error.config?.url?.includes('/me')
+        if (isMeError && (error.response?.status === 401 || error.response?.status === 404)) {
+          return Promise.reject(error)
+        }
+
         const msg = error.response?.data?.detail || error.message || 'Request failed'
         ElMessage.error(msg)
         return Promise.reject(error)

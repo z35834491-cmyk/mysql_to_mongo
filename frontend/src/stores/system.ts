@@ -140,7 +140,8 @@ export const useSystemStore = defineStore('system', () => {
 
   const fetchCurrentUser = async () => {
     try {
-      currentUser.value = await request.get('/api/me')
+      // Use relative path, axios baseURL will prepend /api
+      currentUser.value = await request.get('/me')
     } catch (e) {
       console.error(e)
     }
