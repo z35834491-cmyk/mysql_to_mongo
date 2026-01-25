@@ -165,7 +165,7 @@
                   <div class="viewer-header">
                     <div class="header-left">
                       <span v-if="isBatchSearch">Batch Search Results ({{ batchSearchResults.length }})</span>
-                      <span v-else-if="savedLogFile">{{ savedLogFile }}</span>
+                      <span v-else-if="savedLogFile">{{ savedLogFile.length > 50 ? '...' + savedLogFile.slice(-47) : savedLogFile }}</span>
                       <span v-else>No File Selected</span>
                     </div>
                     <div class="header-right" v-if="savedLogFile && !isBatchSearch">
@@ -687,6 +687,15 @@ onMounted(() => {
   margin-top: 2px;
 }
 
+/* Log Viewer Specific */
+.saved-log-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a; /* Match body background */
+  overflow: hidden;
+}
+
 /* Search Results Panel */
 .search-results-panel {
   flex: 1;
@@ -733,21 +742,6 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.detail-tabs { height: 100%; display: flex; flex-direction: column; }
-.detail-tabs :deep(.el-tabs__header) { margin: 0; padding: 0 20px; border-bottom: 1px solid #e2e8f0; }
-.detail-tabs :deep(.el-tabs__content) { flex: 1; overflow-y: auto; padding: 20px; }
-
-.config-form { max-width: 800px; }
-.form-actions { margin-top: 30px; display: flex; gap: 12px; }
-
-/* Log Viewer Specific */
-.saved-log-viewer {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #0f172a; /* Match body background */
-  overflow: hidden;
-}
 .viewer-header {
   padding: 8px 16px;
   background: #0f172a; /* Match body background */
@@ -758,6 +752,22 @@ onMounted(() => {
   align-items: center;
   border-bottom: 1px solid #1e293b; /* Subtle border */
   height: 50px;
+}
+
+.header-left {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 16px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 .log-lines {
   flex: 1;
