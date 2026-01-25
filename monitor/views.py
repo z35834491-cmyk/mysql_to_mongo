@@ -170,7 +170,20 @@ def monitor_log_view(request):
         start = (page - 1) * page_size
         end = start + page_size
         
+        # If reverse=True, we should return the *latest* N lines (first page)
+        # The frontend logic for reverse is to show latest logs first.
+        # So page 1 should be the *end* of the file if we were reading normally?
+        # No, we already reversed `all_lines` if reverse=True.
+        # So page 1 of reversed lines = the last N lines of the original file.
+        # This is correct.
+        
         content = "".join(all_lines[start:end])
+        
+        # Add warning if file is truncated (though we read all lines currently)
+        # Optimization: We should probably use `seek` for huge files instead of readlines()
+        # But user asked for "default 1m" display limit?
+        # Actually user said "display 1m" maybe meaning file size limit or just default page size.
+        # "默认分页 500" -> page_size=500 default.
         
         return Response({
             "content": content, 

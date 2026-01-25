@@ -270,7 +270,7 @@ const savedFilePage = ref(1)
 const savedFilePageSize = ref(10)
 const savedFileTotal = ref(0)
 const savedLogPage = ref(1)
-const savedLogPageSize = ref(1000)
+const savedLogPageSize = ref(500) // Default to 500 lines as requested
 const savedLogTotal = ref(0)
 const savedSearchQuery = ref('')
 const selectedFiles = ref<string[]>([])
@@ -416,7 +416,9 @@ const fetchSavedLogs = async (page = 1) => {
 const selectSavedFile = (name: string) => {
   savedLogFile.value = name
   savedLogContent.value = ''
-  isBatchSearch.value = false // Reset batch search view
+  isBatchSearch.value = false
+  // Reset pagination to first page (latest logs)
+  savedLogPage.value = 1
   fetchSavedLogContent(1)
 }
 
@@ -428,7 +430,7 @@ const fetchSavedLogContent = async (page = 1) => {
     const res = await monitorApi.viewLog(selectedTaskId.value, savedLogFile.value, { 
       page, 
       page_size: savedLogPageSize.value,
-      reverse: true 
+      reverse: true // Always default to reverse (latest first)
     })
     savedLogContent.value = res.content
     savedLogTotal.value = res.total
