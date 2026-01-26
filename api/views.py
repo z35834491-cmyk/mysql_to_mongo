@@ -1,7 +1,8 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser, BasePermission
+from rest_framework.permissions import IsAuthenticated, IsAdminUser, BasePermission, AllowAny
 from django.contrib.auth.models import User, Group, Permission
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.contenttypes.models import ContentType
 import psutil
 from inspection.models import InspectionConfig, InspectionReport
@@ -9,6 +10,25 @@ from tasks.models import SyncTask
 from monitor.models import MonitorTask
 import requests
 import datetime
+
+# --- Auth ---
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_view(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+    user = authenticate(request, username=username, password=password)
+    if user is not None:
+        login(request, user)
+        return Response({"msg": "Login successful", "username": user.username})
+    else:
+        return Response({"error": "Invalid credentials"}, status=401)
+
+@api_view(['POST'])
+def logout_view(request):
+    logout(request)
+    return Response({"msg": "Logged out"})
 
 # Custom Permission Class
 class HasRolePermission(BasePermission):

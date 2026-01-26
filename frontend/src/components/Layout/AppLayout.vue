@@ -79,7 +79,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
 import sharkAvatar from '@/assets/images/brand.png'
 import { 
@@ -89,8 +89,11 @@ import {
 import { useDark, useToggle } from '@vueuse/core'
 import { useSystemStore } from '@/stores/system'
 import { storeToRefs } from 'pinia'
+import request from '@/utils/request'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
+const router = useRouter()
 const systemStore = useSystemStore()
 const { currentUser, isAdmin } = storeToRefs(systemStore)
 
@@ -143,8 +146,16 @@ const mixColor = (color1: string, color2: string, weight: number) => {
 }
 
 // Logout
-const handleLogout = () => {
-  window.location.href = '/accounts/logout/'
+const handleLogout = async () => {
+  try {
+    await request.post('/auth/logout')
+    ElMessage.success('Logged out')
+    router.push('/login')
+  } catch (e) {
+    console.error(e)
+    // Even if api fails, redirect to login
+    router.push('/login')
+  }
 }
 </script>
 

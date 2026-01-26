@@ -164,9 +164,9 @@ REST_FRAMEWORK = {
 }
 
 # Auth
-LOGIN_URL = '/accounts/login/'
+LOGIN_URL = '/login'
 LOGIN_REDIRECT_URL = '/'
-LOGOUT_REDIRECT_URL = '/accounts/login/'
+LOGOUT_REDIRECT_URL = '/login'
 
 # Session Security
 SESSION_COOKIE_AGE = 1800  # 30 minutes in seconds

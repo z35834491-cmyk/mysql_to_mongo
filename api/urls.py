@@ -8,4 +8,6 @@ urlpatterns = [
     path('roles', views.role_list, name='role_list'),
     path('permissions', views.permission_list, name='permission_list'),
     path('me', views.me, name='me'),
+    path('auth/login', views.login_view, name='api_login'),
+    path('auth/logout', views.logout_view, name='api_logout'),
 ]

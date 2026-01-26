@@ -3,6 +3,12 @@ import AppLayout from '@/components/Layout/AppLayout.vue'
 
 const routes: Array<RouteRecordRaw> = [
   {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/Login.vue'),
+    meta: { title: 'Login', hidden: true }
+  },
+  {
     path: '/',
     component: AppLayout,
     redirect: '/dashboard',
