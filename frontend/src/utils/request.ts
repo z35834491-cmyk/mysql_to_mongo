@@ -37,7 +37,12 @@ class Request {
       },
       (error) => {
         // Handle Session Timeout (401 or 403 when session expired)
-        if (error.response?.status === 401 || (error.response?.status === 403 && error.response?.data?.detail?.includes('authentication'))) {
+        // Check for "Authentication credentials were not provided." (case sensitive in DRF)
+        const detail = error.response?.data?.detail
+        if (
+            error.response?.status === 401 || 
+            (error.response?.status === 403 && (typeof detail === 'string' && detail.toLowerCase().includes('authentication')))
+        ) {
           // Prevent multiple redirects or alerts if many requests fail at once
           if (!window.location.pathname.startsWith('/login')) {
               ElMessage.error('Session expired. Please login again.')
