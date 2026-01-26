@@ -34,13 +34,9 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 # Copy project files (respects .dockerignore)
 COPY . .
 
-# Copy built frontend assets to Django
-# 1. Copy all assets to static directory
-COPY --from=frontend-builder /frontend/dist/assets ./static/assets
-# 2. Copy index.html to templates so Django can render it
-COPY --from=frontend-builder /frontend/dist/index.html ./templates/index.html
-# 3. Copy other root files (like vite.svg, favicon.ico) to static
-COPY --from=frontend-builder /frontend/dist/vite.svg ./static/
+# Copy built frontend assets
+# We copy the whole dist folder to /app/frontend/dist to align with local dev structure
+COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 
 # Create necessary directories
 RUN mkdir -p state logs

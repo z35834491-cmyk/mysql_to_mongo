@@ -1,12 +1,45 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
-from django.contrib.auth import views as auth_views
-# from core import views as core_views
+from django.views.static import serve
+from django.conf import settings
+from django.http import HttpResponse
+import os
+
+def serve_spa(request):
+    try:
+        # Check potential locations (Local vs Docker)
+        possible_paths = [
+            os.path.join(settings.BASE_DIR, 'frontend/dist/index.html'),
+            os.path.join(settings.BASE_DIR, 'templates/index.html'), # Legacy/Docker backup
+        ]
+        for p in possible_paths:
+            if os.path.exists(p):
+                with open(p, 'r') as f:
+                    return HttpResponse(f.read())
+        
+        return HttpResponse("Frontend index.html not found. Run 'npm run build' in frontend directory.", status=501)
+    except Exception as e:
+        return HttpResponse(f"Error serving SPA: {str(e)}", status=500)
+
+def serve_static_from_root(request, path):
+    """
+    Serve static files from frontend/dist if they exist,
+    otherwise fallback to index.html for SPA routing.
+    """
+    # Define root for frontend static files
+    # Try frontend/dist first (new standard)
+    doc_root = os.path.join(settings.BASE_DIR, 'frontend/dist')
+    
+    # Check if file exists
+    fullpath = os.path.join(doc_root, path)
+    if os.path.isfile(fullpath):
+        return serve(request, path, document_root=doc_root)
+        
+    # Fallback to index.html for SPA routing
+    return serve_spa(request)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # path('accounts/login/', auth_views.LoginView.as_view(template_name='login.html'), name='login'),
-    # path('accounts/logout/', auth_views.LogoutView.as_view(), name='logout'),
     
     # API Routes
     path('api/', include('api.urls')),
@@ -16,14 +49,9 @@ urlpatterns = [
     path('api/inspection/', include('inspection.urls')),
     path('api/', include('schedules.urls')),
 
-    # Frontend SPA Support - Serve index.html from static or similar
-    # Since we removed templates, we should serve the Vue built index.html if it exists,
-    # OR if in dev mode, we might not need this catch-all if running separately.
-    # But usually for production we serve static.
+    # Serve assets folder directly (Optimization)
+    re_path(r'^assets/(?P<path>.*)$', serve, {'document_root': os.path.join(settings.BASE_DIR, 'frontend/dist/assets')}),
     
-    # For now, let's remove the catch-all re_path to core_views.index as it fails.
-    # We can rely on Django serving static files or Nginx.
-    # If we want to support history mode routing, we need a view that serves index.html from STATIC_ROOT.
-    
-    # re_path(r'^.*$', core_views.index, name='index'),
+    # Catch-all for everything else (root files like brand.png + SPA routes)
+    re_path(r'^(?P<path>.*)$', serve_static_from_root),
 ]
