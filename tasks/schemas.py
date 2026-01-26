@@ -111,6 +111,10 @@ class SyncTaskRequest(BaseModel):
     update_insert_new_doc: bool = True
     delete_mark_only_base_doc: bool = True
 
+    # Binlog Position (Optional)
+    binlog_filename: Optional[str] = None
+    binlog_position: Optional[int] = None
+
     # Debug
     debug_binlog_events: bool = False
     # 性能优化

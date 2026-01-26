@@ -217,10 +217,16 @@ class SyncWorker:
             state = load_state(self.cfg.task_id)
 
             if not state:
-                self._metrics["phase"] = "full_sync"
-                self.do_full_sync()
-                self._metrics["phase"] = "inc_sync"
-                self.do_inc_sync_with_reconnect(None, None)
+                # Check if specific binlog position provided in config
+                if self.cfg.binlog_filename:
+                    log(self.cfg.task_id, f"Starting IncSync from config: {self.cfg.binlog_filename}:{self.cfg.binlog_position}")
+                    self._metrics["phase"] = "inc_sync"
+                    self.do_inc_sync_with_reconnect(self.cfg.binlog_filename, self.cfg.binlog_position)
+                else:
+                    self._metrics["phase"] = "full_sync"
+                    self.do_full_sync()
+                    self._metrics["phase"] = "inc_sync"
+                    self.do_inc_sync_with_reconnect(None, None)
             else:
                 # Restore metrics if available
                 if "metrics" in state and isinstance(state["metrics"], dict):

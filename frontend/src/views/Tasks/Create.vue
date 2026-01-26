@@ -71,6 +71,20 @@
           <el-checkbox v-model="form.update_insert_new_doc">Update Inserts New Doc (Versioning)</el-checkbox>
           <el-checkbox v-model="form.use_pk_as_mongo_id">Use MySQL PK as Mongo _id</el-checkbox>
         </el-form-item>
+
+        <el-divider content-position="left">Binlog Start Position (Optional)</el-divider>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="Filename" prop="binlog_filename">
+              <el-input v-model="form.binlog_filename" placeholder="e.g. mysql-bin.000001" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Position" prop="binlog_position">
+               <el-input-number v-model="form.binlog_position" :min="4" placeholder="e.g. 154" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
         
         <el-form-item>
           <el-button type="primary" @click="onSubmit">Create & Start</el-button>
@@ -109,7 +123,9 @@ const form = reactive({
   auto_discover_new_tables: true,
   update_insert_new_doc: true,
   use_pk_as_mongo_id: true,
-  pk_field: 'id'
+  pk_field: 'id',
+  binlog_filename: '',
+  binlog_position: undefined as number | undefined
 })
 
 const rules = {
