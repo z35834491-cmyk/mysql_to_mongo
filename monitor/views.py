@@ -162,7 +162,42 @@ def monitor_log_view(request):
                              break
             return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
 
-        # Pagination logic
+        # Pagination logic - Optimized for large files
+        # Instead of readlines(), we use a more memory efficient approach.
+        # However, for reverse=True (show latest lines), we need to read from the end.
+        
+        # Simple optimization:
+        # If file size is small (< 10MB), readlines() is fine.
+        # If large, use 'tail' logic for reverse=True page=1.
+        # Implementing full seek-based line pagination is complex due to variable line lengths.
+        # We will stick to readlines for now but add a safety check for file size.
+        
+        file_size = os.path.getsize(file_path)
+        MAX_SIZE_MB = 50
+        
+        if file_size > MAX_SIZE_MB * 1024 * 1024 and not keyword:
+            # File too big, just read the last N bytes approx?
+            # Or just fail?
+            # Let's try to read only the last 20000 lines if it's too big?
+            # Or just return a warning?
+            # Implementing a safe "tail"
+            if reverse and page == 1:
+                # Read last N lines using a deque
+                from collections import deque
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    # Read last page_size lines
+                    all_lines = list(deque(f, page_size))
+                    all_lines.reverse() # Latest first
+                    total = page_size + 1 # Fake total to show there might be more
+                    content = "".join(all_lines)
+                    return Response({
+                        "content": content,
+                        "total": total, # Inaccurate but allows viewing
+                        "page": 1,
+                        "page_size": page_size,
+                        "warning": "File too large, showing last lines only."
+                    })
+        
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             all_lines = f.readlines()
             

@@ -1,5 +1,5 @@
 <template>
-  <el-aside :width="isCollapsed ? '64px' : '220px'" class="sidebar">
+  <el-aside :width="isCollapsed ? '80px' : '260px'" class="sidebar">
     <div class="logo-container">
       <div class="logo-wrapper">
         <img src="@/assets/images/brand.png" alt="Logo" class="logo" />
@@ -13,7 +13,7 @@
         class="el-menu-vertical"
         :collapse="isCollapsed"
         background-color="transparent"
-        text-color="rgba(255,255,255,0.7)"
+        text-color="#94a3b8"
         active-text-color="#ffffff"
         router
       >
@@ -59,7 +59,7 @@
     </div>
 
     <div class="sidebar-footer" @click="isCollapsed = !isCollapsed">
-      <el-icon>
+      <el-icon :size="20">
         <component :is="isCollapsed ? 'Expand' : 'Fold'" />
       </el-icon>
     </div>
@@ -92,100 +92,101 @@ const activeMenu = computed(() => {
 <style scoped>
 .sidebar {
   height: 100vh;
-  background-color: var(--app-sidebar-bg);
+  background-color: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
-  box-shadow: 4px 0 10px rgba(0,0,0,0.1);
+  box-shadow: 4px 0 24px rgba(0,0,0,0.2);
   z-index: 1000;
-  border-right: 1px solid var(--app-border-color);
-  transition: width 0.3s;
+  border-right: 1px solid rgba(255,255,255,0.05);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .logo-container {
-  height: 70px;
+  height: 80px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  color: var(--app-text-main);
-  border-bottom: 1px solid var(--app-border-color);
-  overflow: hidden;
+  padding: 0 24px;
+  color: #fff;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
 .logo-wrapper {
-  min-width: 32px;
+  width: 32px;
   height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 8px;
 }
 
 .logo {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
 .title {
-  margin-left: 12px;
+  margin-left: 16px;
   font-weight: 700;
   font-size: 18px;
   letter-spacing: -0.5px;
   white-space: nowrap;
-  color: var(--app-text-main);
+  background: linear-gradient(to right, #fff, #94a3b8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .menu-wrapper {
   flex: 1;
-  padding: 12px 0;
+  padding: 20px 0;
   overflow-y: auto;
-  background-color: transparent;
 }
 
 .menu-group-title {
-  padding: 24px 20px 8px;
+  padding: 24px 24px 12px;
   font-size: 11px;
-  font-weight: 600;
-  color: var(--app-text-muted);
-  opacity: 0.5;
-  letter-spacing: 1px;
+  font-weight: 700;
+  color: #475569;
+  letter-spacing: 1.2px;
 }
 
 :deep(.el-menu) {
-  background-color: transparent;
   border-right: none;
 }
 
 :deep(.el-menu-item) {
-  height: 48px;
-  margin: 4px 12px;
-  border-radius: 8px;
-  line-height: 48px;
-  color: var(--app-text-muted);
+  height: 50px;
+  margin: 4px 16px;
+  border-radius: 12px;
+  line-height: 50px;
+  font-weight: 500;
+  font-size: 14px;
 }
 
 :deep(.el-menu-item.is-active) {
-  background-color: var(--el-color-primary) !important;
+  background: linear-gradient(90deg, var(--primary-color), var(--primary-dark)) !important;
   color: #fff !important;
-  box-shadow: 0 4px 12px rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.3);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
 :deep(.el-menu-item:hover) {
-  background-color: rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.1) !important;
-  color: var(--el-color-primary) !important;
+  background-color: rgba(255,255,255,0.05) !important;
+  color: #fff !important;
 }
 
 .sidebar-footer {
-  height: 50px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--app-text-muted);
+  color: #64748b;
   cursor: pointer;
-  border-top: 1px solid var(--app-border-color);
-  transition: all 0.3s;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  transition: all 0.2s;
 }
 
 .sidebar-footer:hover {
-  color: var(--el-color-primary);
-  background-color: rgba(var(--el-color-primary-rgb, 59, 130, 246), 0.05);
+  color: #fff;
+  background-color: rgba(255,255,255,0.05);
 }
 </style>

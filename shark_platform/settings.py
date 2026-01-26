@@ -77,7 +77,7 @@ ROOT_URLCONF = 'shark_platform.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'], # Add templates dir
+        'DIRS': [], # No local templates dir
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
