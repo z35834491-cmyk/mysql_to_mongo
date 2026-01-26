@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shark-platform-config
+  namespace: default
+data:
+  DEBUG: "False"
+  ALLOWED_HOSTS: "*"
+  CSRF_TRUSTED_ORIGINS: "http://localhost,http://127.0.0.1"
+  # Database configuration could be here or in secrets
+  # This example assumes external DB or separate deployment
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shark-platform-secrets
+  namespace: default
+type: Opaque
+data:
+  # echo -n "your-secret-key" | base64
+  DJANGO_SECRET_KEY: ZGphbmdvLWluc2VjdXJlLTY9MWdvKGsjKnAtKTdyZyluNip0aD13djFza2g9M280K14yXiFtPTU2ZHJvOGorM28x
+  # echo -n "root" | base64
+  MYSQL_PASSWORD: cm9vdA== 
+  # echo -n "root" | base64
+  MONGO_PASSWORD: cm9vdA==

@@ -112,9 +112,28 @@ flowchart TD
     *   **默认账号**：`admin`
     *   **默认密码**：`admin` (首次启动自动创建)
 
-### 方式二：本地开发运行
+### 方式三：Kubernetes 部署
 
-1.  **环境准备**
+项目提供了标准的 K8s 部署配置文件，位于 `k8s/` 目录下。
+
+1.  **构建并推送镜像**
+    ```bash
+    docker build -t your-registry/shark-platform:v1 .
+    docker push your-registry/shark-platform:v1
+    ```
+
+2.  **应用配置**
+    修改 `k8s/shark-platform.yaml` 中的镜像地址，并根据需要更新 `k8s/configmap.yaml` 和 `k8s/secrets.yaml`。
+
+3.  **部署到集群**
+    ```bash
+    kubectl apply -f k8s/configmap.yaml
+    kubectl apply -f k8s/secrets.yaml
+    kubectl apply -f k8s/pvc.yaml
+    kubectl apply -f k8s/shark-platform.yaml
+    ```
+
+### 方式二：本地开发运行
     *   Python 3.9+
     *   Node.js 16+ (前端构建)
     *   MySQL 5.7+ (开启 Binlog ROW 模式)
@@ -165,6 +184,8 @@ mysql_to_mongo/
 *   **Feature**: 日志监控新增「高级告警策略」，支持阈值、去重、静默期配置。
 *   **Feature**: 系统巡检新增「动态评分」与「AI 趋势预测」。
 *   **Feature**: 新增排班管理 (Schedules) 模块。
+*   **Fix**: 修复前端 SPA 路由与后端集成的 404 问题，支持 Django 直接托管构建后的 Vue 应用。
+*   **Fix**: 优化 Docker 构建流程，确保前端静态资源正确打包至镜像。
 *   **Refactor**: 移除过时的 Django Template 目录，全面转向前后端分离。
 
 ---

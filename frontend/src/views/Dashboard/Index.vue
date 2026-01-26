@@ -214,16 +214,35 @@ onMounted(() => {
   connectionStore.fetchConnections() // Fetch connections
   initChart()
   window.addEventListener('resize', () => chart?.resize())
-  const timer = setInterval(() => {
-    systemStore.fetchSystemStats()
-    taskStore.fetchTasks().then(() => {
-        updateChart() // Update chart when data refreshes
-    })
-    connectionStore.fetchConnections()
-  }, 5000)
+  
+  // Use recursive setTimeout instead of setInterval to prevent request stacking
+  let timer: any = null
+  const pollInterval = 15000 // 15 seconds
+
+  const pollData = async () => {
+    try {
+        await Promise.all([
+            systemStore.fetchSystemStats(),
+            taskStore.fetchTasks(),
+            connectionStore.fetchConnections()
+        ])
+        updateChart()
+    } catch (e) {
+        console.error("Poll failed", e)
+    } finally {
+        // Schedule next poll only after current one finishes
+        if (timer !== null) { // Check if component still mounted
+            timer = setTimeout(pollData, pollInterval)
+        }
+    }
+  }
+
+  // Start polling
+  timer = setTimeout(pollData, pollInterval)
   
   onUnmounted(() => {
-    clearInterval(timer)
+    if (timer) clearTimeout(timer)
+    timer = null
     chart?.dispose()
   })
 })
