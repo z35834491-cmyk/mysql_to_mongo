@@ -72,12 +72,23 @@ def system_stats(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def me(request):
+    # Collect all permissions from user's groups
+    perms = set()
+    if request.user.is_superuser:
+        perms.add('all')
+    else:
+        for group in request.user.groups.all().prefetch_related('permissions'):
+            for p in group.permissions.all():
+                perms.add(p.codename)
+                
     return Response({
         "id": request.user.id,
         "username": request.user.username,
         "email": request.user.email,
         "is_staff": request.user.is_staff,
-        "groups": [g.name for g in request.user.groups.all()]
+        "is_superuser": request.user.is_superuser,
+        "groups": [g.name for g in request.user.groups.all()],
+        "permissions": list(perms)
     })
 
 @api_view(['GET', 'POST'])

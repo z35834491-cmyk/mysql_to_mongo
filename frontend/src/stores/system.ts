@@ -147,7 +147,14 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
 
-  const isAdmin = computed(() => currentUser.value?.is_staff || currentUser.value?.groups?.includes('Admin'))
+  const isAdmin = computed(() => currentUser.value?.is_superuser || currentUser.value?.groups?.includes('Admin'))
+  
+  const hasPermission = (perm: string) => {
+    if (!currentUser.value) return false
+    if (currentUser.value.is_superuser) return true
+    if (currentUser.value.permissions?.includes(perm)) return true
+    return false
+  }
   
   return {
     monitorTasks,
@@ -158,6 +165,7 @@ export const useSystemStore = defineStore('system', () => {
     systemStats,
     currentUser,
     isAdmin,
+    hasPermission,
     loading,
     fetchMonitorTasks,
     saveMonitorTask,

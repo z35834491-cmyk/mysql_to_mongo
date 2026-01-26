@@ -6,7 +6,7 @@
         <p class="page-subtitle">Monitor and control your data synchronization pipelines</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" size="large" @click="handleCreate" class="action-btn shadow-btn">
+        <el-button type="primary" size="large" @click="handleCreate" class="action-btn shadow-btn" v-if="canManage">
           <el-icon><Plus /></el-icon> New Pipeline Task
         </el-button>
       </div>
@@ -85,13 +85,13 @@
         <el-table-column label="Operations" width="320" fixed="right">
           <template #default="{ row }">
             <div class="action-group">
-              <el-tooltip content="Start Task" v-if="row.status === 'stopped' || row.status === 'error'">
+              <el-tooltip content="Start Task" v-if="(row.status === 'stopped' || row.status === 'error') && canManage">
                 <el-button circle size="small" type="success" @click="handleStart(row.task_id)">
                   <el-icon><VideoPlay /></el-icon>
                 </el-button>
               </el-tooltip>
               
-              <el-tooltip content="Stop Task" v-if="row.status === 'running'">
+              <el-tooltip content="Stop Task" v-if="row.status === 'running' && canManage">
                 <el-button circle size="small" type="warning" @click="handleStop(row.task_id)">
                   <el-icon><VideoPause /></el-icon>
                 </el-button>
@@ -103,15 +103,15 @@
                 </el-button>
               </el-tooltip>
 
-              <el-tooltip content="Reset Task State" v-if="row.status === 'stopped' || row.status === 'error'">
+              <el-tooltip content="Reset Task State" v-if="(row.status === 'stopped' || row.status === 'error') && canManage">
                 <el-button circle size="small" type="danger" plain @click="handleReset(row.task_id)">
                   <el-icon><RefreshRight /></el-icon>
                 </el-button>
               </el-tooltip>
 
-              <el-divider direction="vertical" />
+              <el-divider direction="vertical" v-if="canManage" />
 
-              <el-button size="small" type="danger" text @click="handleDelete(row.task_id)">
+              <el-button size="small" type="danger" text @click="handleDelete(row.task_id)" v-if="canManage">
                 Delete
               </el-button>
             </div>
@@ -123,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
+import { onMounted, onUnmounted, ref, watch, nextTick, computed } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
 import { 
@@ -133,11 +133,14 @@ import {
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
+import { useSystemStore } from '@/stores/system'
 
 const router = useRouter()
 const taskStore = useTaskStore()
+const systemStore = useSystemStore()
 const { tasks, taskStats } = storeToRefs(taskStore)
 const loading = ref(false)
+const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_tasks'))
 
 const eventsChartRef = ref<HTMLElement>()
 let eventsChart: echarts.ECharts | null = null

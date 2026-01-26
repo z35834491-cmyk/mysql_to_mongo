@@ -6,7 +6,7 @@
         <p class="page-subtitle">K8s Log Monitoring & Local Logs</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" :icon="Plus" @click="createNewTask">New Task</el-button>
+        <el-button type="primary" :icon="Plus" @click="createNewTask" v-if="canManage">New Task</el-button>
         <el-button @click="handleRefresh" :icon="Refresh" circle />
       </div>
     </div>
@@ -18,7 +18,7 @@
         <div class="task-list">
           <div class="list-header">
             <span>Monitor Tasks</span>
-            <el-button type="primary" link :icon="Plus" @click="createNewTask" />
+            <el-button type="primary" link :icon="Plus" @click="createNewTask" v-if="canManage" />
           </div>
           <div v-loading="loading" class="list-content">
             <div 
@@ -36,7 +36,7 @@
                 <div class="task-name">{{ task.name }}</div>
                 <div class="task-meta">{{ task.k8s_namespace }} • {{ task.alert_keywords?.length || 0 }} Keywords</div>
               </div>
-              <div class="task-actions" v-if="selectedTaskId === task.id">
+              <div class="task-actions" v-if="selectedTaskId === task.id && canManage">
                  <el-button type="primary" link :icon="Setting" @click.stop="openConfig(task)" />
               </div>
             </div>
@@ -170,7 +170,7 @@
                   <div class="list-toolbar">
                      <span class="file-count">{{ filteredSavedLogFiles.length }} Files</span>
                      <div class="toolbar-actions">
-                       <el-tooltip content="Task Config" placement="top">
+                       <el-tooltip content="Task Config" placement="top" v-if="canManage">
                           <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
                        </el-tooltip>
                        
@@ -314,6 +314,10 @@ import { monitorApi, type MonitorTask } from '@/api/monitor'
 import { taskApi } from '@/api/task'
 import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download, Setting, Sort } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useSystemStore } from '@/stores/system'
+
+const systemStore = useSystemStore()
+const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_tasks'))
 
 const loading = ref(false)
 const viewMode = ref('k8s') // 'k8s' | 'local'
