@@ -79,14 +79,21 @@
                     <el-tab-pane label="Threshold Alert">
                       <div class="tab-tip">Alert when error count exceeds threshold in time window</div>
                       <el-row :gutter="20">
-                        <el-col :span="12">
+                        <el-col :span="8">
                           <el-form-item label="Threshold Count">
                             <el-input-number v-model="form.alert_threshold_count" :min="1" />
                           </el-form-item>
                         </el-col>
-                        <el-col :span="12">
+                        <el-col :span="8">
                           <el-form-item label="Time Window (sec)">
                             <el-input-number v-model="form.alert_threshold_window" :min="10" />
+                          </el-form-item>
+                        </el-col>
+                        <el-col :span="8">
+                          <el-form-item label="Silence (min)">
+                             <el-tooltip content="Silence duplicate alerts for N minutes" placement="top">
+                                <el-input-number v-model="form.alert_silence_minutes" :min="0" />
+                             </el-tooltip>
                           </el-form-item>
                         </el-col>
                       </el-row>
@@ -248,7 +255,7 @@
                       <el-button size="small" :icon="Download" circle @click="downloadSavedFile" title="Download" />
                       <el-button size="small" :icon="Refresh" circle @click="fetchSavedLogContent(savedLogPage)" />
                     </div>
-                    <div class="header-right" v-if="!isBatchSearch || isBatchSearch">
+                    <div class="header-right" v-if="savedLogFile || selectedFiles.length > 0">
                        <el-input 
                           v-model="savedSearchQuery" 
                           :placeholder="selectedFiles.length > 0 ? 'Search in selected files...' : 'Search in current file...'" 
@@ -431,6 +438,7 @@ const createNewTask = () => {
     record_only_keywords: [],
     alert_threshold_count: 5,
     alert_threshold_window: 60,
+    alert_silence_minutes: 60,
     s3_archive_enabled: false,
     retention_days: 7,
     alert_enabled: true

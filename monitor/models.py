@@ -32,11 +32,13 @@ class MonitorTask(models.Model):
     # Threshold Config
     alert_threshold_count = models.IntegerField(default=5, help_text="Count of errors to trigger alert")
     alert_threshold_window = models.IntegerField(default=60, help_text="Window in seconds for threshold counting")
+    alert_silence_minutes = models.IntegerField(default=60, help_text="Silence duplicate alerts for N minutes")
 
     # Runtime State
     last_run = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(null=True, blank=True)
     alerts_sent_count = models.IntegerField(default=0)
+    alert_state = models.JSONField(default=dict, blank=True, help_text="Runtime state for alert silencing")
 
     def __str__(self):
         return self.name

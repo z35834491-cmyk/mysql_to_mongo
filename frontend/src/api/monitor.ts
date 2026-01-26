@@ -23,6 +23,7 @@ export interface MonitorTask {
   record_only_keywords?: string[]
   alert_threshold_count?: number
   alert_threshold_window?: number
+  alert_silence_minutes?: number
   alert_keywords?: string[]
   
   last_run?: string

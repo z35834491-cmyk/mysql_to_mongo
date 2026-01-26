@@ -171,7 +171,7 @@ class MonitorEngine:
                 pass
 
     def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
-        alerts = []
+        alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }
         
         # Context Management
         # Keep last N lines for context
@@ -254,9 +254,15 @@ class MonitorEngine:
                     # 1. Immediate Alerts
                     is_alert = False
                     if clean_immediate_keywords:
-                        if any(k.lower() in line_lower for k in clean_immediate_keywords):
-                            alerts.append(f"[IMMEDIATE] {line}")
-                            is_alert = True
+                        for k in clean_immediate_keywords:
+                            if k.lower() in line_lower:
+                                alerts.append({
+                                    'type': 'IMMEDIATE',
+                                    'keyword': k,
+                                    'msg': f"[IMMEDIATE] {line}"
+                                })
+                                is_alert = True
+                                break # Match first keyword only per line to avoid dupes
                     
                     # 2. Threshold Alerts
                     current_ts = time.time()
@@ -276,7 +282,11 @@ class MonitorEngine:
                                 threshold_state[k] = [t for t in threshold_state[k] if current_ts - t <= threshold_window]
                                 
                                 if len(threshold_state[k]) >= threshold_count:
-                                    alerts.append(f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}")
+                                    alerts.append({
+                                        'type': 'THRESHOLD',
+                                        'keyword': k,
+                                        'msg': f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}"
+                                    })
                                     is_alert = True
                                     threshold_state[k] = []
                     
@@ -379,10 +389,55 @@ class MonitorEngine:
         if not task.slack_webhook_url:
             return
             
+        # Deduplication Logic
+        # alert_state structure: { "keyword": last_sent_ts }
+        # silence_minutes = task.alert_silence_minutes (default 60)
+        
+        now = time.time()
+        silence_seconds = task.alert_silence_minutes * 60
+        alert_state = task.alert_state or {}
+        
+        filtered_alerts = []
+        
+        # We group alerts by keyword to avoid spamming the same error
+        # If we have 10 alerts for "NullPointer", we send 1 notification with count or snippet?
+        # Current logic collects all lines.
+        # But for deduplication, we should check if this keyword was sent recently.
+        
+        # Group by keyword first
+        grouped_alerts = {}
+        for a in alerts:
+            k = a['keyword']
+            if k not in grouped_alerts:
+                grouped_alerts[k] = []
+            grouped_alerts[k].append(a)
+            
+        final_msgs = []
+        
+        for keyword, group in grouped_alerts.items():
+            last_sent = alert_state.get(keyword, 0)
+            
+            # If silenced, skip
+            if now - last_sent < silence_seconds:
+                logger.info(f"Silencing alert for '{keyword}' (Last sent: {datetime.datetime.fromtimestamp(last_sent)})")
+                continue
+            
+            # Not silenced, add to final list and update state
+            alert_state[keyword] = now
+            for a in group:
+                final_msgs.append(a['msg'])
+                
+        # Update task state in DB
+        if final_msgs:
+            task.alert_state = alert_state
+            task.save(update_fields=['alert_state'])
+        else:
+            return # All silenced
+            
         msg = f"🚨 *Alert in {source} (Task: {task.name})*\n"
-        snippet = "\n".join(alerts[:10])
-        if len(alerts) > 10:
-            snippet += f"\n... and {len(alerts)-10} more lines"
+        snippet = "\n".join(final_msgs[:10])
+        if len(final_msgs) > 10:
+            snippet += f"\n... and {len(final_msgs)-10} more lines"
             
         payload = {
             "text": msg + "```" + snippet + "```"
@@ -395,6 +450,7 @@ class MonitorEngine:
         try:
             requests.post(task.slack_webhook_url, json=payload, timeout=5)
             task.alerts_sent_count += 1
+            task.save(update_fields=['alerts_sent_count'])
             # Log success
             with open(alert_history_path, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] [SUCCESS] Sent alert to Slack for {source}. Snippet: {snippet[:50]}...\n")
