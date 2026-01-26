@@ -96,14 +96,17 @@ import {
   Cpu, PieChart, Refresh, CircleCheck, 
   DataAnalysis, Connection, Link, Warning 
 } from '@element-plus/icons-vue'
+import { useConnectionStore } from '@/stores/connection'
 import { useSystemStore } from '@/stores/system'
 import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
 
+const connectionStore = useConnectionStore()
 const systemStore = useSystemStore()
 const taskStore = useTaskStore()
 const { systemStats } = storeToRefs(systemStore)
 const { tasks, taskStats } = storeToRefs(taskStore)
+const { connections } = storeToRefs(connectionStore)
 
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
@@ -151,7 +154,7 @@ const topStats = computed(() => [
 const pipelineMetrics = computed(() => [
   { label: 'Total Tasks', value: taskStats.value.total, icon: 'DataAnalysis', color: 'var(--el-color-primary)', bg: 'rgba(var(--el-color-primary-rgb), 0.1)' },
   { label: 'Syncing', value: taskStats.value.running, icon: 'Connection', color: '#10b981', bg: '#ecfdf5' },
-  { label: 'Data Sources', value: 12, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
+  { label: 'Data Sources', value: connections.value.length, icon: 'Link', color: '#f59e0b', bg: '#fffbeb' },
   { label: 'Errors', value: taskStats.value.error, icon: 'Warning', color: '#ef4444', bg: '#fef2f2' }
 ])
 
@@ -208,6 +211,7 @@ const updateChart = () => {
 onMounted(() => {
   systemStore.fetchSystemStats()
   taskStore.fetchTasks() // Fetch tasks data
+  connectionStore.fetchConnections() // Fetch connections
   initChart()
   window.addEventListener('resize', () => chart?.resize())
   const timer = setInterval(() => {
@@ -215,6 +219,7 @@ onMounted(() => {
     taskStore.fetchTasks().then(() => {
         updateChart() // Update chart when data refreshes
     })
+    connectionStore.fetchConnections()
   }, 5000)
   
   onUnmounted(() => {

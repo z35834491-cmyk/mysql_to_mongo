@@ -183,9 +183,17 @@ class MonitorEngine:
         # Default error keywords
         default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
         
-        # Clean keywords once
+        # Configs
         clean_alert_keywords = [k.strip() for k in task.alert_keywords if k.strip()] if task.alert_keywords else []
+        clean_immediate_keywords = [k.strip() for k in task.immediate_keywords if k.strip()] if task.immediate_keywords else []
+        clean_ignore_keywords = [k.strip() for k in task.ignore_keywords if k.strip()] if task.ignore_keywords else []
         clean_record_keywords = [k.strip() for k in task.record_only_keywords if k.strip()] if task.record_only_keywords else []
+        
+        # Threshold Logic State
+        # { keyword: [timestamp1, timestamp2, ...] }
+        threshold_state = {} 
+        threshold_count = getattr(task, 'alert_threshold_count', 5)
+        threshold_window = getattr(task, 'alert_threshold_window', 60)
         
         # Open file in append mode. Buffering is default.
         with open(log_file_path, "a", encoding="utf-8") as f:
@@ -202,7 +210,7 @@ class MonitorEngine:
                     f.write('\n')
                 
                 # --- Analysis Logic Per Line ---
-                if any(k in line for k in task.ignore_keywords):
+                if any(k in line for k in clean_ignore_keywords):
                     continue
 
                 line_lower = line.lower()
@@ -217,17 +225,51 @@ class MonitorEngine:
                 else:
                     count_other += 1
 
-                # Check for alerts (Case Insensitive)
+                # 1. Immediate Alerts
                 is_alert = False
-                if clean_alert_keywords:
-                    if any(k.lower() in line_lower for k in clean_alert_keywords):
-                        alerts.append(line)
+                if clean_immediate_keywords:
+                    if any(k.lower() in line_lower for k in clean_immediate_keywords):
+                        alerts.append(f"[IMMEDIATE] {line}")
                         is_alert = True
                 
-                # Check for generic errors
+                # 2. Threshold Alerts (General)
+                # If no specific alert keywords, use default error keywords for thresholding?
+                # Usually users configure specific keywords for thresholding.
+                # If alert_keywords is set, use it.
+                current_ts = time.time()
+                # Try parse ISO timestamp from line beginning (K8s format: 2023-01-01T...)
+                try:
+                    # Simple check: first 19 chars
+                    # 2026-01-26T10:00:00
+                    ts_str = line[:19]
+                    dt = datetime.datetime.fromisoformat(ts_str)
+                    current_ts = dt.timestamp()
+                except:
+                    pass
+
+                if clean_alert_keywords:
+                    for k in clean_alert_keywords:
+                        if k.lower() in line_lower:
+                            if k not in threshold_state:
+                                threshold_state[k] = []
+                            threshold_state[k].append(current_ts)
+                            # Cleanup old
+                            threshold_state[k] = [t for t in threshold_state[k] if current_ts - t <= threshold_window]
+                            
+                            # Check threshold
+                            if len(threshold_state[k]) >= threshold_count:
+                                # Trigger Alert
+                                # To avoid spamming 5, 6, 7... only alert on exact multiples or just once per window?
+                                # Let's alert once when crossing threshold, then clear or debounce.
+                                # Simple strategy: Alert and clear history to reset count.
+                                alerts.append(f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}")
+                                is_alert = True
+                                threshold_state[k] = [] # Reset after alert
+                
+                # 3. Check for generic errors (for stats/highlighting only, unless empty config)
                 is_error = any(k in line_lower for k in default_error_keywords)
                 
-                # Check for record only
+                # 4. Check for record only
                 is_record = False
                 if clean_record_keywords:
                      if any(k in line for k in clean_record_keywords):

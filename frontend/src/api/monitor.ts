@@ -16,9 +16,15 @@ export interface MonitorTask {
   alert_enabled: boolean
   slack_webhook_url: string
   poll_interval_seconds: number
-  alert_keywords: string[]
-  ignore_keywords: string[]
-  record_only_keywords: string[]
+  
+  // New Fields
+  immediate_keywords?: string[]
+  ignore_keywords?: string[]
+  record_only_keywords?: string[]
+  alert_threshold_count?: number
+  alert_threshold_window?: number
+  alert_keywords?: string[]
+  
   last_run?: string
   last_error?: string
   alerts_sent_count?: number

@@ -68,19 +68,54 @@
                     <el-input v-model="form.k8s_kubeconfig" type="textarea" :rows="4" placeholder="Leave empty to use in-cluster config" />
                   </el-form-item>
 
-                  <el-divider>Alerting</el-divider>
-                  
-                  <el-form-item label="Alert Keywords (One per line)">
-                    <el-input v-model="keywordsStr" type="textarea" :rows="3" placeholder="ERROR&#10;Exception&#10;Critical" />
+                  <el-divider>Alert Rules</el-divider>
+
+                  <el-form-item label="Global Settings">
+                     <el-switch v-model="form.alert_enabled" active-text="Enable Alert Sending" style="margin-right: 20px" />
+                     <el-input v-model="form.slack_webhook_url" placeholder="Slack Webhook URL" style="width: 300px" />
                   </el-form-item>
 
-                  <el-form-item label="Slack Webhook URL">
-                    <el-input v-model="form.slack_webhook_url" placeholder="https://hooks.slack.com/services/..." />
-                  </el-form-item>
+                  <el-tabs type="border-card" class="alert-tabs">
+                    <el-tab-pane label="Threshold Alert">
+                      <div class="tab-tip">Alert when error count exceeds threshold in time window</div>
+                      <el-row :gutter="20">
+                        <el-col :span="12">
+                          <el-form-item label="Threshold Count">
+                            <el-input-number v-model="form.alert_threshold_count" :min="1" />
+                          </el-form-item>
+                        </el-col>
+                        <el-col :span="12">
+                          <el-form-item label="Time Window (sec)">
+                            <el-input-number v-model="form.alert_threshold_window" :min="10" />
+                          </el-form-item>
+                        </el-col>
+                      </el-row>
+                      <el-form-item label="Keywords (One per line)">
+                        <el-input v-model="keywordsStr" type="textarea" :rows="4" placeholder="ERROR&#10;Exception" />
+                      </el-form-item>
+                    </el-tab-pane>
 
-                  <el-form-item label="Enable Alerts">
-                     <el-switch v-model="form.alert_enabled" active-text="Send alerts to Slack" />
-                  </el-form-item>
+                    <el-tab-pane label="Immediate Alert">
+                      <div class="tab-tip">Alert immediately on first occurrence</div>
+                      <el-form-item label="Keywords (One per line)">
+                        <el-input v-model="immediateStr" type="textarea" :rows="6" placeholder="Critical&#10;Fatal" />
+                      </el-form-item>
+                    </el-tab-pane>
+
+                    <el-tab-pane label="Ignore">
+                      <div class="tab-tip">Completely ignore logs containing these keywords</div>
+                      <el-form-item label="Keywords (One per line)">
+                        <el-input v-model="ignoreStr" type="textarea" :rows="6" placeholder="HealthCheck&#10;Debug" />
+                      </el-form-item>
+                    </el-tab-pane>
+
+                    <el-tab-pane label="Record Only">
+                      <div class="tab-tip">Record to file but DO NOT send alert</div>
+                      <el-form-item label="Keywords (One per line)">
+                        <el-input v-model="recordStr" type="textarea" :rows="6" placeholder="Warning&#10;Deprecated" />
+                      </el-form-item>
+                    </el-tab-pane>
+                  </el-tabs>
 
                   <el-divider>Archiving & Retention</el-divider>
 
@@ -284,6 +319,27 @@ const keywordsStr = computed({
   }
 })
 
+const immediateStr = computed({
+  get: () => form.value.immediate_keywords?.join('\n') || '',
+  set: (val) => {
+    form.value.immediate_keywords = val.split('\n').filter(k => k.trim())
+  }
+})
+
+const ignoreStr = computed({
+  get: () => form.value.ignore_keywords?.join('\n') || '',
+  set: (val) => {
+    form.value.ignore_keywords = val.split('\n').filter(k => k.trim())
+  }
+})
+
+const recordStr = computed({
+  get: () => form.value.record_only_keywords?.join('\n') || '',
+  set: (val) => {
+    form.value.record_only_keywords = val.split('\n').filter(k => k.trim())
+  }
+})
+
 // --- Local Mode State ---
 const logFiles = ref<any[]>([])
 const selectedFile = ref('')
@@ -335,6 +391,11 @@ const createNewTask = () => {
     enabled: true,
     k8s_namespace: 'default',
     alert_keywords: ['ERROR'],
+    immediate_keywords: [],
+    ignore_keywords: [],
+    record_only_keywords: [],
+    alert_threshold_count: 5,
+    alert_threshold_window: 60,
     s3_archive_enabled: false,
     retention_days: 7,
     alert_enabled: true

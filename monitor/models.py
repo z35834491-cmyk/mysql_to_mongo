@@ -22,9 +22,16 @@ class MonitorTask(models.Model):
     alert_enabled = models.BooleanField(default=True, help_text="Global switch to enable/disable alert sending")
     slack_webhook_url = models.CharField(max_length=1024, blank=True, null=True)
     poll_interval_seconds = models.IntegerField(default=60)
-    alert_keywords = models.JSONField(default=list)
-    ignore_keywords = models.JSONField(default=list)
-    record_only_keywords = models.JSONField(default=list)
+    
+    # Keyword Configs
+    alert_keywords = models.JSONField(default=list, help_text="Threshold Alert: Error > Threshold in Window")
+    immediate_keywords = models.JSONField(default=list, help_text="Immediate Alert: Alert on first occurrence")
+    ignore_keywords = models.JSONField(default=list, help_text="Ignore: Do not process or alert")
+    record_only_keywords = models.JSONField(default=list, help_text="Record Only: Log but do not alert")
+    
+    # Threshold Config
+    alert_threshold_count = models.IntegerField(default=5, help_text="Count of errors to trigger alert")
+    alert_threshold_window = models.IntegerField(default=60, help_text="Window in seconds for threshold counting")
 
     # Runtime State
     last_run = models.DateTimeField(null=True, blank=True)
