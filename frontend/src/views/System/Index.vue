@@ -128,6 +128,27 @@
             </el-col>
           </el-row>
         </div>
+
+        <div class="analysis-section" v-if="currentReport.forecast_7_15_30">
+          <div class="section-header">
+            <el-icon><DataLine /></el-icon>
+            <span>Health Trend Forecast</span>
+          </div>
+          <div class="forecast-card">
+            <div class="forecast-item">
+              <span class="label">7 Days</span>
+              <span class="value">{{ currentReport.forecast_7_15_30.predictions['7d'].risk_score }}</span>
+            </div>
+            <div class="forecast-item">
+              <span class="label">15 Days</span>
+              <span class="value">{{ currentReport.forecast_7_15_30.predictions['15d'].risk_score }}</span>
+            </div>
+            <div class="forecast-item">
+              <span class="label">30 Days</span>
+              <span class="value">{{ currentReport.forecast_7_15_30.predictions['30d'].risk_score }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </el-dialog>
 
@@ -570,6 +591,35 @@ const fetchLogs = async (page = 1) => {
 
 .report-chart {
   height: 200px;
+}
+
+.forecast-card {
+  display: flex;
+  justify-content: space-around;
+  background: white;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.forecast-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.forecast-item .label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.forecast-item .value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #3b82f6;
 }
 
 .form-section {

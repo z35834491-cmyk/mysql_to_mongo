@@ -158,6 +158,126 @@ class InspectionEngine:
         except Exception as e:
             return f"AI analysis error: {e}"
 
+    def _calculate_health_score(self, down_targets, firing_alerts, metrics_summary):
+        """
+        Calculate dynamic health score (0-100) based on current metrics.
+        Base score: 100
+        Deductions:
+          - Down Target: -20 each
+          - Critical Alert: -15 each
+          - Warning Alert: -5 each
+          - Resource Usage (CPU/Mem): >90% -> -10, >80% -> -5
+          - Disk Usage: >95% -> -15, >85% -> -5
+        """
+        score = 100.0
+        reasons = []
+
+        # 1. Down Targets
+        if down_targets:
+            deduction = len(down_targets) * 20
+            score -= deduction
+            reasons.append(f"Down Targets ({len(down_targets)}): -{deduction}")
+
+        # 2. Alerts
+        for alert in firing_alerts:
+            severity = alert.get('severity', 'warning').lower()
+            if severity in ['critical', 'high']:
+                score -= 15
+                reasons.append(f"Critical Alert ({alert.get('name')}): -15")
+            else:
+                score -= 5
+                reasons.append(f"Warning Alert ({alert.get('name')}): -5")
+
+        # 3. Resource Usage
+        for m in metrics_summary:
+            val = m.get('value', 0)
+            category = m.get('category', '')
+            
+            if category in ['cpu', 'memory']:
+                if val > 90:
+                    score -= 10
+                    reasons.append(f"High {m.get('display')} ({val}%): -10")
+                elif val > 80:
+                    score -= 5
+                    reasons.append(f"Elevated {m.get('display')} ({val}%): -5")
+            elif category == 'disk':
+                if val > 95:
+                    score -= 15
+                    reasons.append(f"Critical Disk ({val}%): -15")
+                elif val > 85:
+                    score -= 5
+                    reasons.append(f"High Disk ({val}%): -5")
+
+        score = max(0.0, score)
+        level = "ok"
+        if score < 60:
+            level = "critical"
+        elif score < 85:
+            level = "warning"
+            
+        if not reasons:
+            reasons.append("System Healthy")
+            
+        return round(score, 1), level, reasons
+
+    def _predict_future_scores(self, current_score):
+        """
+        Simple prediction based on last 7 days history.
+        Uses simple linear trend or moving average.
+        """
+        # Get last 7 reports
+        today = datetime.now().date()
+        history_scores = []
+        
+        try:
+            # We want reports before today
+            for i in range(1, 8):
+                d = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+                report = InspectionReport.objects.filter(report_id=d).first()
+                if report and report.content:
+                    s = report.content.get('risk_summary', {}).get('score')
+                    if s is not None:
+                        history_scores.append(float(s))
+        except Exception:
+            pass
+            
+        # Add current score as the latest data point
+        history_scores.insert(0, current_score)
+        
+        # Simple Logic: 
+        # If we have enough history, calculate trend.
+        # Otherwise assume stable.
+        
+        predictions = {}
+        
+        if len(history_scores) < 3:
+            # Not enough data, assume stable with slight random variance or just current
+            predictions = {
+                "7d": {"risk_score": current_score},
+                "15d": {"risk_score": current_score},
+                "30d": {"risk_score": current_score}
+            }
+        else:
+            # Calculate simple trend (average daily change)
+            # scores are [today, yesterday, day_before...]
+            # daily_change = (today - oldest) / days
+            oldest = history_scores[-1]
+            days = len(history_scores) - 1
+            daily_change = (current_score - oldest) / days if days > 0 else 0
+            
+            # Predict
+            pred_7 = max(0, min(100, current_score + (daily_change * 7)))
+            pred_15 = max(0, min(100, current_score + (daily_change * 15)))
+            pred_30 = max(0, min(100, current_score + (daily_change * 30)))
+            
+            predictions = {
+                "7d": {"risk_score": round(pred_7, 1)},
+                "15d": {"risk_score": round(pred_15, 1)},
+                "30d": {"risk_score": round(pred_30, 1)}
+            }
+            
+        return predictions
+
     def run(self):
         log("inspection", "Starting inspection run...")
         report_id = datetime.now().strftime('%Y-%m-%d')
@@ -308,18 +428,35 @@ class InspectionEngine:
             if y_report:
                 y_data = y_report.content
                 y_risk = y_data.get('risk_summary', {}).get('score', 0.0)
+                y_reasons = y_data.get('risk_summary', {}).get('reasons', [])
                 y_down = len(y_data.get('down_targets', []))
                 y_firing = len(y_data.get('firing_alerts', []))
                 
+                # Compat Logic
+                is_legacy = False
+                if y_reasons and isinstance(y_reasons, list):
+                    if "resource_max=OK" in y_reasons or "alerts_or_targets_down" in y_reasons:
+                        is_legacy = True
+                        
+                y_health = y_risk
+                if is_legacy:
+                    y_health = 100 - y_risk
+                
                 compare_data["delta"] = {
-                    "risk_score": round(0.0 if not down_targets and not firing else 50.0 - y_risk, 2),
+                    "risk_score": round(health_score - y_health, 2),
                     "down_targets": down_count - y_down,
                     "firing_alerts": firing_count - y_firing
                 }
         except:
             pass
 
-        # 4. Final Report
+        # 4. Calculate Dynamic Score
+        health_score, health_level, health_reasons = self._calculate_health_score(down_targets, firing, metrics_summary)
+        
+        # 5. Predict Future
+        forecast_data = self._predict_future_scores(health_score)
+
+        # 6. Final Report
         report = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "prometheus_status": "ok" if total_targets > 0 else "error",
@@ -330,17 +467,13 @@ class InspectionEngine:
             "ai_analysis": ai_analysis,
             "report_id": report_id,
             "risk_summary": {
-                "score": 0.0 if not down_targets and not firing else 50.0,
-                "level": "ok" if not down_targets and not firing else "warning",
-                "reasons": ["resource_max=OK"] if not down_targets and not firing else ["alerts_or_targets_down"]
+                "score": health_score,
+                "level": health_level,
+                "reasons": health_reasons
             },
             "compare_with_yesterday": compare_data,
             "forecast_7_15_30": {
-                "predictions": {
-                    "7d": {"risk_score": 0.0},
-                    "15d": {"risk_score": 0.0},
-                    "30d": {"risk_score": 0.0}
-                }
+                "predictions": forecast_data
             }
         }
         

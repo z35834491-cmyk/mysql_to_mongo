@@ -30,4 +30,11 @@ export interface InspectionReport {
   ai_analysis?: string
   metrics?: any
   metrics_summary?: any[]
+  forecast_7_15_30?: {
+    predictions: {
+      "7d": { risk_score: number }
+      "15d": { risk_score: number }
+      "30d": { risk_score: number }
+    }
+  }
 }

@@ -68,9 +68,25 @@ def history(request):
     for r in reports:
         content = r.content
         risk = content.get('risk_summary', {})
+        score = risk.get('score', 0)
+        reasons = risk.get('reasons', [])
+        
+        # Backward compatibility check
+        # Old logic: Score is Risk (0=Good, 50=Bad)
+        # New logic: Score is Health (100=Good, 0=Bad)
+        # Heuristic: If reasons contains "resource_max=OK" or "alerts_or_targets_down", it's old logic
+        is_legacy = False
+        if reasons and isinstance(reasons, list):
+            if "resource_max=OK" in reasons or "alerts_or_targets_down" in reasons:
+                is_legacy = True
+        
+        health_score = score
+        if is_legacy:
+            health_score = 100 - score
+            
         results.append({
             "report_id": r.report_id,
-            "score": 100 - risk.get('score', 0), # Convert risk score to health score
+            "score": health_score,
             "summary": content.get('ai_analysis', '')[:100] + '...' if content.get('ai_analysis') else 'No analysis available'
         })
     
@@ -86,9 +102,14 @@ def history(request):
                         try:
                             content = json.load(f_in)
                             risk = content.get('risk_summary', {})
+                            score = risk.get('score', 0)
+                            
+                            # Legacy file logic is definitely legacy
+                            health_score = 100 - score
+                            
                             results.append({
                                 "report_id": rid,
-                                "score": 100 - risk.get('score', 0),
+                                "score": health_score,
                                 "summary": content.get('ai_analysis', '')[:100] + '...' if content.get('ai_analysis') else 'No analysis available'
                             })
                         except:
@@ -97,3 +118,64 @@ def history(request):
     # Sort results by report_id desc
     results.sort(key=lambda x: x['report_id'], reverse=True)
     return Response({"items": results})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_aggregated_report(request):
+    rtype = request.query_params.get('type', 'weekly') # weekly, monthly
+    days = 30 if rtype == 'monthly' else 7
+    
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days)
+    
+    reports = InspectionReport.objects.filter(
+        report_id__gte=start_date.strftime('%Y-%m-%d'),
+        report_id__lte=today.strftime('%Y-%m-%d')
+    ).order_by('report_id')
+    
+    if not reports:
+        return Response({"error": "No data available for this period"}, status=404)
+        
+    # Aggregation Logic
+    total_score = 0
+    count = 0
+    scores_trend = []
+    common_issues = {}
+    
+    for r in reports:
+        content = r.content
+        risk = content.get('risk_summary', {})
+        score = risk.get('score', 0)
+        reasons = risk.get('reasons', [])
+        
+        # Compat logic
+        is_legacy = False
+        if reasons and isinstance(reasons, list):
+            if "resource_max=OK" in reasons or "alerts_or_targets_down" in reasons:
+                is_legacy = True
+        
+        health_score = score
+        if is_legacy:
+            health_score = 100 - score
+            
+        total_score += health_score
+        count += 1
+        scores_trend.append({"date": r.report_id, "score": health_score})
+        
+        # Count issues
+        for reason in reasons:
+            if reason not in ["System Healthy", "resource_max=OK"]:
+                common_issues[reason] = common_issues.get(reason, 0) + 1
+                
+    avg_score = round(total_score / count, 1) if count > 0 else 0
+    sorted_issues = sorted(common_issues.items(), key=lambda x: x[1], reverse=True)[:5]
+    
+    return Response({
+        "type": rtype,
+        "start_date": start_date.strftime('%Y-%m-%d'),
+        "end_date": today.strftime('%Y-%m-%d'),
+        "average_score": avg_score,
+        "report_count": count,
+        "trend": scores_trend,
+        "top_issues": [{"issue": k, "count": v} for k, v in sorted_issues]
+    })
