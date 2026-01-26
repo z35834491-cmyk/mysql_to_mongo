@@ -211,6 +211,7 @@ def start_with_conn_ids(request):
             "delete_append_new_doc": data.get('delete_append_new_doc', True),
             "drop_target_before_full_sync": data.get('drop_target_before_full_sync', False),
             "auto_discover_new_tables": data.get('auto_discover_new_tables', True),
+            "use_pk_as_mongo_id": data.get('use_pk_as_mongo_id', True),
         }
         
         cfg = SyncTaskRequest(**req_data)
