@@ -151,19 +151,31 @@
                 <!-- File List -->
                 <div class="saved-file-list">
                   <div class="list-header">
-                    <span>{{ selectedTask.name }} Logs</span>
-                    <div style="display:flex; align-items:center; gap:8px">
-                       <el-button link :icon="Setting" @click="openConfig(selectedTask)">Config</el-button>
+                    <el-input 
+                      v-model="fileSearchQuery" 
+                      placeholder="Filter files..." 
+                      size="small"
+                      :prefix-icon="Search"
+                      clearable
+                      style="width: 100%"
+                    />
+                  </div>
+                  <div class="list-toolbar">
+                     <span class="file-count">{{ filteredSavedLogFiles.length }} Files</span>
+                     <div class="toolbar-actions">
+                       <el-tooltip content="Task Config" placement="top">
+                          <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
+                       </el-tooltip>
                        <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
                         <el-option :value="10" label="10" />
                         <el-option :value="20" label="20" />
                         <el-option :value="50" label="50" />
                       </el-select>
-                    </div>
+                     </div>
                   </div>
                   <div v-loading="savedLoading" class="list-content">
                     <div 
-                      v-for="file in savedLogFiles" 
+                      v-for="file in filteredSavedLogFiles" 
                       :key="file.name"
                       class="file-item"
                       :class="{ active: savedLogFile === file.name }"
@@ -299,6 +311,14 @@ const logLoading = ref(false)
 const savedLoading = ref(false)
 const savedContentLoading = ref(false)
 const savedLogFiles = ref<any[]>([])
+const fileSearchQuery = ref('')
+
+const filteredSavedLogFiles = computed(() => {
+  if (!fileSearchQuery.value) return savedLogFiles.value
+  const q = fileSearchQuery.value.toLowerCase()
+  return savedLogFiles.value.filter(f => f.name.toLowerCase().includes(q))
+})
+
 const savedLogFile = ref('')
 const savedLogContent = ref('')
 const savedFilePage = ref(1)
@@ -679,14 +699,28 @@ onMounted(() => {
 }
 
 .list-header {
-  padding: 12px 16px;
-  font-weight: 600;
-  color: #475569;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  height: 50px;
+}
+
+.list-toolbar {
+  padding: 8px 16px;
+  background: #fff;
   border-bottom: 1px solid #e2e8f0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 50px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .list-content {
