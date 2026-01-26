@@ -1,15 +1,27 @@
 import request from '../utils/request'
 
-export interface Schedule {
+export interface StaffInfo {
   id: number
-  staff_name: string
-  shift_date: string
-  shift_type: string
-  extra_info: Record<string, any>
-  created_at: string
-  updated_at: string
+  name: string
+}
+
+export interface BizShiftRespVO {
+  id: number
+  ruleId: number
+  shiftDate: string
+  startTime: string
+  endTime: string
+  staffIds: string
+  staffList: StaffInfo[]
+  createTime: string
+}
+
+export interface ScheduleResponse {
+  code: number
+  data: BizShiftRespVO[]
+  msg: string
 }
 
 export function getSchedules() {
-  return request.get<Schedule[]>('/schedules/')
+  return request.get<ScheduleResponse>('/schedules/')
 }

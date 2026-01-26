@@ -28,11 +28,12 @@
                 v-for="shift in getShiftsForDate(data.day)" 
                 :key="shift.id"
                 class="shift-item"
-                :class="getShiftClass(shift.shift_type)"
+                :class="getShiftClass(shift)"
                 @click.stop="showShiftDetail(shift)"
               >
                 <span class="shift-time-dot"></span>
-                <span class="shift-staff">{{ shift.staff_name }}</span>
+                <span class="shift-time">{{ formatTime(shift.startTime) }}</span>
+                <span class="shift-staff">{{ getStaffNames(shift) }}</span>
               </div>
             </div>
           </div>
@@ -42,32 +43,30 @@
 
     <el-card v-else shadow="never" class="table-card">
       <el-table :data="schedules" v-loading="loading" style="width: 100%">
-        <el-table-column prop="staff_name" label="Staff Name" min-width="150" sortable>
+        <el-table-column label="Staff Members" min-width="200">
           <template #default="{ row }">
             <div class="staff-info">
               <el-avatar size="small" :icon="UserFilled" />
-              <span class="staff-name">{{ row.staff_name }}</span>
+              <span class="staff-name">{{ getStaffNames(row) }}</span>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column prop="shift_date" label="Date" width="150" sortable />
+        <el-table-column prop="shiftDate" label="Date" width="150" sortable />
         
-        <el-table-column prop="shift_type" label="Shift" width="150">
+        <el-table-column label="Time" width="180">
           <template #default="{ row }">
-            <el-tag :type="getShiftTagType(row.shift_type)" effect="light">
-              {{ row.shift_type }}
-            </el-tag>
+            {{ row.startTime }} - {{ row.endTime }}
           </template>
         </el-table-column>
 
-        <el-table-column prop="extra_info" label="Original Data (JSON)" min-width="200">
+        <el-table-column label="Raw Data" min-width="100">
           <template #default="{ row }">
             <el-popover placement="top" :width="300" trigger="hover">
               <template #reference>
                 <el-tag size="small" type="info">View JSON</el-tag>
               </template>
-              <pre class="json-preview">{{ JSON.stringify(row.extra_info, null, 2) }}</pre>
+              <pre class="json-preview">{{ JSON.stringify(row, null, 2) }}</pre>
             </el-popover>
           </template>
         </el-table-column>
@@ -75,24 +74,24 @@
     </el-card>
 
     <!-- Detail Dialog -->
-    <el-dialog v-model="dialogVisible" title="Shift Details" width="400px">
+    <el-dialog v-model="dialogVisible" title="Shift Details" width="450px">
       <div v-if="currentShift" class="shift-detail">
         <div class="detail-row">
-          <label>Staff:</label>
-          <span>{{ currentShift.staff_name }}</span>
-        </div>
-        <div class="detail-row">
           <label>Date:</label>
-          <span>{{ currentShift.shift_date }}</span>
+          <span>{{ currentShift.shiftDate }}</span>
         </div>
         <div class="detail-row">
-          <label>Shift:</label>
-          <el-tag :type="getShiftTagType(currentShift.shift_type)">{{ currentShift.shift_type }}</el-tag>
+          <label>Time:</label>
+          <span>{{ currentShift.startTime }} - {{ currentShift.endTime }}</span>
+        </div>
+        <div class="detail-row">
+          <label>Staff:</label>
+          <span>{{ getStaffNames(currentShift) }}</span>
         </div>
         <div class="detail-divider"></div>
         <div class="detail-json">
           <h4>Raw Data</h4>
-          <pre>{{ JSON.stringify(currentShift.extra_info, null, 2) }}</pre>
+          <pre>{{ JSON.stringify(currentShift, null, 2) }}</pre>
         </div>
       </div>
     </el-dialog>
@@ -100,23 +99,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { UserFilled, Refresh } from '@element-plus/icons-vue'
-import { getSchedules, type Schedule } from '@/api/schedules'
+import { getSchedules, type BizShiftRespVO } from '@/api/schedules'
 
-const schedules = ref<Schedule[]>([])
+const schedules = ref<BizShiftRespVO[]>([])
 const loading = ref(false)
 const viewMode = ref('calendar')
 const dialogVisible = ref(false)
-const currentShift = ref<Schedule | null>(null)
+const currentShift = ref<BizShiftRespVO | null>(null)
 
 const fetchData = async () => {
   loading.value = true
   try {
-    const data = await getSchedules()
-    schedules.value = data
+    const res = await getSchedules()
+    if (res.code === 0 && res.data) {
+      schedules.value = res.data
+    } else {
+      schedules.value = []
+    }
   } catch (error) {
     console.error(error)
+    schedules.value = []
   } finally {
     loading.value = false
   }
@@ -124,7 +128,7 @@ const fetchData = async () => {
 
 // Calendar Logic
 const getShiftsForDate = (dateStr: string) => {
-  return schedules.value.filter(s => s.shift_date === dateStr)
+  return schedules.value.filter(s => s.shiftDate === dateStr)
 }
 
 const isToday = (date: Date) => {
@@ -132,26 +136,27 @@ const isToday = (date: Date) => {
   return date.toDateString() === today.toDateString()
 }
 
-const getShiftClass = (type: string) => {
-  const t = (type || '').toLowerCase()
-  if (t.includes('morning')) return 'shift-morning'
-  if (t.includes('afternoon')) return 'shift-afternoon'
-  if (t.includes('night')) return 'shift-night'
-  return 'shift-default'
+const formatTime = (timeStr: string) => {
+  // Assuming HH:mm:ss, return HH:mm
+  return timeStr?.slice(0, 5) || ''
 }
 
-const showShiftDetail = (shift: Schedule) => {
+const getStaffNames = (shift: BizShiftRespVO) => {
+  if (!shift.staffList || shift.staffList.length === 0) return 'No Staff'
+  return shift.staffList.map(s => s.name).join(', ')
+}
+
+const getShiftClass = (shift: BizShiftRespVO) => {
+  // Simple heuristic based on start time
+  const hour = parseInt(shift.startTime.split(':')[0])
+  if (hour < 12) return 'shift-morning'
+  if (hour < 18) return 'shift-afternoon'
+  return 'shift-night'
+}
+
+const showShiftDetail = (shift: BizShiftRespVO) => {
   currentShift.value = shift
   dialogVisible.value = true
-}
-
-// Table Logic
-const getShiftTagType = (type: string) => {
-  const t = (type || '').toLowerCase()
-  if (t.includes('morning')) return 'warning'
-  if (t.includes('night')) return 'info'
-  if (t.includes('afternoon')) return 'success'
-  return ''
 }
 
 onMounted(() => {
