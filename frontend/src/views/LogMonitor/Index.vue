@@ -166,6 +166,21 @@
                        <el-tooltip content="Task Config" placement="top">
                           <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
                        </el-tooltip>
+                       
+                       <el-dropdown trigger="click" @command="handleSortCommand">
+                          <span class="el-dropdown-link" style="cursor: pointer; display: flex; align-items: center; color: #64748b; font-size: 12px; margin-right: 4px">
+                            <el-icon><Sort /></el-icon>
+                          </span>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item command="mtime:desc">Date (Newest)</el-dropdown-item>
+                              <el-dropdown-item command="mtime:asc">Date (Oldest)</el-dropdown-item>
+                              <el-dropdown-item command="name:asc">Name (A-Z)</el-dropdown-item>
+                              <el-dropdown-item command="size:desc">Size (Large)</el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                       </el-dropdown>
+
                        <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
                         <el-option :value="10" label="10" />
                         <el-option :value="20" label="20" />
@@ -290,7 +305,7 @@ import _ from 'lodash'
 import { ref, onMounted, computed, watch } from 'vue'
 import { monitorApi, type MonitorTask } from '@/api/monitor'
 import { taskApi } from '@/api/task'
-import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download, Setting } from '@element-plus/icons-vue'
+import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download, Setting, Sort } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
@@ -478,12 +493,20 @@ const fetchK8sLogs = async () => {
 }
 
 // Saved Logs Actions
+const savedFileSortBy = ref('mtime')
+const savedFileOrder = ref('desc')
+
 const fetchSavedLogs = async (page = 1) => {
   if (!selectedTaskId.value) return
   savedFilePage.value = page
   savedLoading.value = true
   try {
-    const res = await monitorApi.getLogs(selectedTaskId.value, { page, page_size: savedFilePageSize.value })
+    const res = await monitorApi.getLogs(selectedTaskId.value, { 
+        page, 
+        page_size: savedFilePageSize.value,
+        sort_by: savedFileSortBy.value,
+        order: savedFileOrder.value
+    })
     savedLogFiles.value = res.files
     savedFileTotal.value = res.total
   } catch (e) {
@@ -492,6 +515,14 @@ const fetchSavedLogs = async (page = 1) => {
   } finally {
     savedLoading.value = false
   }
+}
+
+const handleSortCommand = (command: string) => {
+    // command: "mtime:desc"
+    const [field, order] = command.split(':')
+    savedFileSortBy.value = field
+    savedFileOrder.value = order
+    fetchSavedLogs(1)
 }
 
 const selectSavedFile = (name: string) => {

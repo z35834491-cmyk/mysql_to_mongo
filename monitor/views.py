@@ -71,6 +71,9 @@ def monitor_logs(request):
     task_id = request.query_params.get('task_id')
     page = int(request.query_params.get('page', 1))
     page_size = int(request.query_params.get('page_size', 10))
+    search_query = request.query_params.get('search', '').lower()
+    sort_by = request.query_params.get('sort_by', 'mtime') # name, size, mtime
+    order = request.query_params.get('order', 'desc') # asc, desc
     
     base_dir = monitor_engine.LOG_DIR
     if task_id:
@@ -85,6 +88,10 @@ def monitor_logs(request):
     try:
         for f in os.listdir(log_dir):
             if f.endswith(".log"):
+                # Filter by search query if provided
+                if search_query and search_query not in f.lower():
+                    continue
+                    
                 full_path = os.path.join(log_dir, f)
                 stat = os.stat(full_path)
                 files.append({
@@ -92,9 +99,16 @@ def monitor_logs(request):
                     "size": stat.st_size,
                     "mtime": stat.st_mtime
                 })
-        # Sort by mtime desc
-        files.sort(key=lambda x: x['mtime'], reverse=True)
         
+        # Sort logic
+        reverse = (order == 'desc')
+        if sort_by == 'name':
+            files.sort(key=lambda x: x['name'], reverse=reverse)
+        elif sort_by == 'size':
+            files.sort(key=lambda x: x['size'], reverse=reverse)
+        else: # mtime default
+            files.sort(key=lambda x: x['mtime'], reverse=reverse)
+            
         # Pagination
         total = len(files)
         start = (page - 1) * page_size
