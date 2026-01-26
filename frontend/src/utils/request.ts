@@ -38,8 +38,12 @@ class Request {
       (error) => {
         // Handle Session Timeout (401 or 403 when session expired)
         if (error.response?.status === 401 || (error.response?.status === 403 && error.response?.data?.detail?.includes('authentication'))) {
-          ElMessage.error('Session expired. Please login again.')
-          window.location.href = '/accounts/login/'
+          // Prevent multiple redirects or alerts if many requests fail at once
+          if (!window.location.pathname.startsWith('/login')) {
+              ElMessage.error('Session expired. Please login again.')
+              // Use window.location.replace to prevent back-button loops
+              window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname)
+          }
           return Promise.reject(error)
         }
 
