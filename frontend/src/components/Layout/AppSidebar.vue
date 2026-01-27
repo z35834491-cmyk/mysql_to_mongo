@@ -16,6 +16,7 @@
         text-color="#94a3b8"
         active-text-color="#ffffff"
         router
+        @select="handleMenuSelect"
       >
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
@@ -77,6 +78,10 @@ const systemStore = useSystemStore()
 const isCollapsed = ref(false)
 
 const isAdmin = computed(() => systemStore.isAdmin)
+
+const handleMenuSelect = () => {
+  // Menu selection handling if needed
+}
 
 onMounted(() => {
   systemStore.fetchCurrentUser()
@@ -161,17 +166,26 @@ const activeMenu = computed(() => {
   line-height: 50px;
   font-weight: 500;
   font-size: 14px;
+  padding: 0 16px !important;
 }
 
 :deep(.el-menu-item.is-active) {
-  background: linear-gradient(90deg, var(--primary-color), var(--primary-dark)) !important;
-  color: #fff !important;
+  background: linear-gradient(90deg, #3b82f6, #2563eb) !important;
+  color: #ffffff !important;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+:deep(.el-menu-item.is-active span) {
+  color: #ffffff !important;
+}
+
+:deep(.el-menu-item.is-active .el-icon) {
+  color: #ffffff !important;
 }
 
 :deep(.el-menu-item:hover) {
   background-color: rgba(255,255,255,0.05) !important;
-  color: #fff !important;
+  color: #ffffff !important;
 }
 
 .sidebar-footer {
