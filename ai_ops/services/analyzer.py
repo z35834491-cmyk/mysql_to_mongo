@@ -6,6 +6,12 @@ from django.utils import timezone
 import requests
 from inspection.models import InspectionConfig
 
+try:
+    from kubernetes import client, config
+    K8S_AVAILABLE = True
+except ImportError:
+    K8S_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 class DiagnosticStrategy:
@@ -116,10 +122,118 @@ class FaultAnalyzer:
                 except Exception as e:
                     logger.warning(f"Failed to query metric {name}: {e}")
 
-        # 2. (Future) Command Execution Strategy
-        # context['logs'].append(ssh_client.exec_command('iotop -b -n 1'))
-        
+        # 2. Log Collection Strategy (K8s)
+        if K8S_AVAILABLE:
+            try:
+                k8s_info = self._collect_k8s_info(labels)
+                if k8s_info:
+                    context['logs'].append(f"--- K8s Diagnosis ---\n{k8s_info}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch K8s info: {e}")
+
         return context
+
+    def _collect_k8s_info(self, labels):
+        try:
+            config.load_incluster_config()
+        except:
+            try:
+                config.load_kube_config()
+            except:
+                logger.warning("No K8s config found")
+                return None
+        
+        v1 = client.CoreV1Api()
+        namespace = labels.get('namespace', 'default')
+        pod_name = labels.get('pod')
+        
+        # If pod is not directly in labels, try to find it via deployment
+        if not pod_name:
+            deployment = labels.get('deployment')
+            if deployment:
+                try:
+                    pods = v1.list_namespaced_pod(namespace)
+                    for p in pods.items:
+                        if p.metadata.name.startswith(deployment):
+                            pod_name = p.metadata.name
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to list pods for deployment {deployment}: {e}")
+
+        if not pod_name:
+            return None
+
+        info_lines = []
+        try:
+            # 1. Get Pod Status
+            pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            info_lines.append(f"Pod Status: {pod.status.phase}")
+            
+            # Analyze container statuses
+            is_unhealthy = False
+            container_statuses = pod.status.container_statuses or []
+            for cs in container_statuses:
+                status_str = "Running"
+                if cs.state.waiting:
+                    status_str = f"Waiting ({cs.state.waiting.reason}: {cs.state.waiting.message})"
+                    is_unhealthy = True
+                elif cs.state.terminated:
+                    status_str = f"Terminated ({cs.state.terminated.reason}: {cs.state.terminated.message}, ExitCode: {cs.state.terminated.exit_code})"
+                    if cs.state.terminated.exit_code != 0:
+                        is_unhealthy = True
+                elif not cs.ready:
+                    status_str = "Running (Not Ready)"
+                    is_unhealthy = True
+                
+                info_lines.append(f"Container {cs.name}: {status_str}")
+                
+                # Restart count check
+                if cs.restart_count > 0:
+                     info_lines.append(f"  Restarts: {cs.restart_count}")
+                     is_unhealthy = True
+
+            # 2. Collect Events (if unhealthy or not Running)
+            # Events are useful for scheduling issues, image pull errors, probe failures
+            if is_unhealthy or pod.status.phase != 'Running':
+                try:
+                    events = v1.list_namespaced_event(namespace, field_selector=f'involvedObject.name={pod_name}')
+                    if events.items:
+                        info_lines.append("\n--- K8s Events ---")
+                        for e in events.items:
+                            info_lines.append(f"[{e.type}] {e.reason}: {e.message}")
+                except Exception as e:
+                    info_lines.append(f"Failed to get events: {e}")
+
+            # 3. Collect Logs (if likely to contain info)
+            # Skip logs if ImagePullBackOff or ContainerCreating (logs usually empty)
+            should_fetch_logs = True
+            for cs in container_statuses:
+                if cs.state.waiting and cs.state.waiting.reason in ['ImagePullBackOff', 'ErrImagePull', 'ContainerCreating', 'CreateContainerConfigError']:
+                    should_fetch_logs = False
+            
+            if should_fetch_logs:
+                try:
+                    # Fetch logs (limit 50 lines)
+                    logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=50)
+                    if logs:
+                        info_lines.append("\n--- K8s Logs ---")
+                        info_lines.append(logs)
+                    
+                    # If previous instance failed, try to get previous logs
+                    for cs in container_statuses:
+                        if cs.restart_count > 0:
+                             prev_logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=20, previous=True)
+                             if prev_logs:
+                                 info_lines.append("\n--- Previous Instance Logs ---")
+                                 info_lines.append(prev_logs)
+                             break # Only fetch for one container to avoid spam
+                except Exception as e:
+                    info_lines.append(f"Failed to fetch logs: {e}")
+
+            return "\n".join(info_lines)
+
+        except Exception as e:
+            return f"Error analyzing pod {pod_name}: {e}"
 
     def _query_prometheus(self, query):
         if not self.config.prometheus_url:
