@@ -199,11 +199,18 @@ onMounted(() => {
 
 /* Calendar Styles */
 .calendar-view {
-  background: #fff;
+  background: var(--app-card-bg);
   border-radius: 12px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--app-border-color);
   padding: 16px;
-  min-height: 600px;
+  /* Removed min-height to allow fit-content */
+  height: auto;
+  transition: background-color 0.3s;
+}
+
+:deep(.el-calendar) {
+  background-color: transparent;
+  --el-calendar-bg-color: transparent;
 }
 
 :deep(.el-calendar-table .el-calendar-day) {

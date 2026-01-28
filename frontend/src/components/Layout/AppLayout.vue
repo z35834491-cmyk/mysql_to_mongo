@@ -30,6 +30,11 @@
           <el-divider direction="vertical" />
           
           <div class="action-icons">
+            <!-- MODIFIED_BY_AGENT_START: Add settings button -->
+            <div class="header-icon-wrapper" @click="showSettings = true">
+              <el-icon class="header-icon"><Setting /></el-icon>
+            </div>
+            <!-- MODIFIED_BY_AGENT_END -->
             <el-color-picker 
               v-model="themeColor" 
               size="small" 
@@ -66,7 +71,7 @@
         </div>
       </el-header>
       
-      <el-main class="app-main">
+      <el-main class="app-main" :style="mainStyle">
         <router-view v-slot="{ Component }">
           <transition name="fade-transform" mode="out-in">
             <component :is="Component" />
@@ -75,22 +80,95 @@
       </el-main>
     </el-container>
   </el-container>
+
+  <!-- MODIFIED_BY_AGENT_START: Theme Settings Drawer -->
+  <el-drawer v-model="showSettings" title="Theme Settings" size="300px">
+    <div class="settings-section">
+      <h3>Presets</h3>
+      <div class="preset-list">
+        <div 
+          v-for="preset in themePresets" 
+          :key="preset.name" 
+          class="preset-item"
+          :style="{ background: preset.color }"
+          @click="applyPreset(preset)"
+        >
+          {{ preset.name }}
+        </div>
+      </div>
+    </div>
+
+    <el-divider />
+
+    <div class="settings-section">
+      <h3>Background Color</h3>
+      <div class="color-picker-row">
+        <span>Main Background</span>
+        <el-color-picker v-model="backgroundColor" show-alpha @change="updateBackground" />
+      </div>
+    </div>
+
+    <el-divider />
+
+    <div class="settings-section">
+      <h3>Background Image</h3>
+      <div class="bg-input-group">
+        <el-input 
+          v-model="backgroundImage" 
+          placeholder="Image URL..." 
+          clearable
+          class="url-input"
+        >
+          <template #prefix><el-icon><Link /></el-icon></template>
+        </el-input>
+        <el-upload
+          action="#"
+          :auto-upload="false"
+          :show-file-list="false"
+          :on-change="handleFileChange"
+          accept="image/*"
+        >
+          <el-button :icon="Upload" circle />
+        </el-upload>
+      </div>
+      
+      <div class="bg-preview" v-if="backgroundImage" :style="{ backgroundImage: `url(${backgroundImage})` }">
+        <el-button circle size="small" :icon="Close" class="remove-bg" @click="backgroundImage = ''" />
+      </div>
+    </div>
+
+    <el-divider />
+
+    <div class="settings-section">
+      <h3>Glass Effect (透视与羽化)</h3>
+      <div class="slider-group">
+        <span class="slider-label">Transparency</span>
+        <el-slider v-model="glassOpacity" :min="0" :max="100" :format-tooltip="(val) => `${val}%`" @input="updateGlassEffect" />
+      </div>
+      <div class="slider-group">
+        <span class="slider-label">Blur (Feather)</span>
+        <el-slider v-model="glassBlur" :min="0" :max="40" :format-tooltip="(val) => `${val}px`" @input="updateGlassEffect" />
+      </div>
+    </div>
+  </el-drawer>
+  <!-- MODIFIED_BY_AGENT_END -->
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
 import sharkAvatar from '@/assets/images/brand.png'
 import { 
   ArrowDown, Bell, Moon, Sunny, Cpu, PieChart, 
-  User, Setting, SwitchButton 
+  User, Setting, SwitchButton, Picture, Upload, Link, Close
 } from '@element-plus/icons-vue'
 import { useDark, useToggle } from '@vueuse/core'
 import { useSystemStore } from '@/stores/system'
 import { storeToRefs } from 'pinia'
 import request from '@/utils/request'
 import { ElMessage } from 'element-plus'
+import type { UploadFile } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,6 +199,82 @@ const updateThemeColor = (color: string | null) => {
     document.documentElement.style.setProperty('--el-color-primary-dark-2', darkColor)
   }
 }
+
+// MODIFIED_BY_AGENT_START: Background & Presets Logic
+const showSettings = ref(false)
+const backgroundColor = ref('#f8fafc')
+const backgroundImage = ref('')
+// Glass Effect State
+const glassOpacity = ref(0) // 0 means fully opaque (no transparency) by default for compatibility, user can increase
+const glassBlur = ref(0)
+
+const mainStyle = computed(() => {
+  const style: any = {
+    backgroundColor: backgroundColor.value
+  }
+  if (backgroundImage.value) {
+    style.backgroundImage = `url(${backgroundImage.value})`
+    style.backgroundSize = 'cover'
+    style.backgroundPosition = 'center'
+    style.backgroundAttachment = 'fixed'
+  }
+  return style
+})
+
+const updateBackground = () => {
+  // Logic handled by computed mainStyle binding
+}
+
+const handleFileChange = (file: UploadFile) => {
+  if (file.raw) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      if (e.target?.result) {
+        backgroundImage.value = e.target.result as string
+        ElMessage.success('Background image loaded')
+      }
+    }
+    reader.readAsDataURL(file.raw)
+  }
+}
+
+const themePresets = [
+  { name: 'Default', color: '#3b82f6', bg: '#f8fafc', bgImg: '' },
+  { name: 'Ocean', color: '#0ea5e9', bg: '#f0f9ff', bgImg: '' },
+  { name: 'Forest', color: '#10b981', bg: '#ecfdf5', bgImg: '' },
+  { name: 'Sunset', color: '#f59e0b', bg: '#fffbeb', bgImg: '' },
+  { name: 'Night', color: '#6366f1', bg: '#1e1b4b', bgImg: 'https://images.unsplash.com/photo-1534796636912-3b95b3ab5980?auto=format&fit=crop&w=2000&q=80' },
+]
+
+const applyPreset = (preset: any) => {
+  themeColor.value = preset.color
+  updateThemeColor(preset.color)
+  backgroundColor.value = preset.bg
+  backgroundImage.value = preset.bgImg
+  ElMessage.success(`Applied ${preset.name} theme`)
+}
+
+// Glass Effect Logic
+const updateGlassEffect = () => {
+  const alpha = 1 - (glassOpacity.value / 100)
+  const blur = glassBlur.value
+  
+  document.documentElement.style.setProperty('--app-glass-alpha', alpha.toString())
+  document.documentElement.style.setProperty('--app-glass-blur', `${blur}px`)
+  
+  // Apply glass class to body/html if effect is active
+  if (glassOpacity.value > 0 || glassBlur.value > 0) {
+    document.documentElement.classList.add('glass-active')
+  } else {
+    document.documentElement.classList.remove('glass-active')
+  }
+}
+
+// Watch dark mode to re-apply correct glass colors
+watch(isDark, () => {
+  updateGlassEffect()
+})
+// MODIFIED_BY_AGENT_END
 
 // Helper to mix colors
 const mixColor = (color1: string, color2: string, weight: number) => {
@@ -179,6 +333,200 @@ html.dark {
   --app-text-muted: #94a3b8;
   --app-border-color: #334155;
 }
+
+/* MODIFIED_BY_AGENT_START: Glass Effect Global Styles (Moved to Global Scope) */
+html.glass-active {
+  --app-glass-border: 1px solid rgba(255, 255, 255, 0.1);
+  /* Override global card bg variable to be transparent */
+  --app-card-bg: rgba(255, 255, 255, var(--app-glass-alpha));
+}
+
+html.glass-active.dark {
+  --app-card-bg: rgba(30, 41, 59, var(--app-glass-alpha));
+}
+
+/* Force transparency and blur on Header */
+html.glass-active .app-header {
+  /* Use a lower base alpha to make blur visible, user control overrides */
+  background-color: rgba(255, 255, 255, var(--app-glass-alpha)) !important;
+  backdrop-filter: blur(var(--app-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--app-glass-blur)) !important;
+  border-bottom: var(--app-glass-border) !important;
+}
+
+html.glass-active.dark .app-header {
+  background-color: rgba(15, 23, 42, var(--app-glass-alpha)) !important;
+}
+
+/* Force transparency and blur on Sidebar */
+html.glass-active .sidebar, 
+html.glass-active .el-aside {
+  background-color: rgba(255, 255, 255, var(--app-glass-alpha)) !important; 
+  backdrop-filter: blur(var(--app-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--app-glass-blur)) !important;
+  border-right: var(--app-glass-border) !important;
+  box-shadow: none !important; /* Remove shadow to clean up edges */
+}
+
+html.glass-active.dark .sidebar,
+html.glass-active.dark .el-aside {
+  background-color: rgba(15, 23, 42, var(--app-glass-alpha)) !important;
+}
+
+/* Ensure Menu is transparent */
+html.glass-active .sidebar .el-menu {
+  background-color: transparent !important;
+}
+
+/* Sidebar Text & Icon Adaptation for Light Glass Mode */
+html.glass-active:not(.dark) .sidebar .title {
+  background: transparent !important;
+  -webkit-text-fill-color: initial !important;
+  color: var(--app-text-main) !important;
+}
+
+html.glass-active:not(.dark) .sidebar .el-menu-item {
+  color: var(--app-text-main) !important;
+}
+
+html.glass-active:not(.dark) .sidebar .el-menu-item .el-icon {
+  color: var(--app-text-muted) !important;
+}
+
+html.glass-active:not(.dark) .sidebar .el-menu-item:hover {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+  color: var(--el-color-primary) !important;
+}
+
+html.glass-active:not(.dark) .sidebar .el-menu-item.is-active {
+  background: var(--el-color-primary) !important;
+  color: #fff !important;
+}
+
+html.glass-active:not(.dark) .sidebar .menu-group-title {
+  color: var(--app-text-muted) !important;
+}
+
+html.glass-active:not(.dark) .sidebar .sidebar-footer {
+  color: var(--app-text-main) !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Force transparency on Cards inside Main (including Dashboard custom cards & Calendar) */
+html.glass-active .app-main .el-card,
+html.glass-active .app-main .stat-card,
+html.glass-active .app-main .chart-card,
+html.glass-active .app-main .health-card,
+html.glass-active .calendar-view {
+  background-color: var(--app-card-bg) !important;
+  backdrop-filter: blur(var(--app-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--app-glass-blur)) !important;
+  border: var(--app-glass-border) !important;
+}
+
+/* MODIFIED_BY_AGENT_START: Global Overlay Components Glass Effect (Dialog, Drawer, Dropdown, Popover) */
+html.glass-active .el-dialog,
+html.glass-active .el-drawer,
+html.glass-active .el-dropdown-menu,
+html.glass-active .el-popover,
+html.glass-active .el-select-dropdown {
+  background-color: rgba(255, 255, 255, var(--app-glass-alpha)) !important;
+  backdrop-filter: blur(var(--app-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--app-glass-blur)) !important;
+  border: var(--app-glass-border) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+}
+
+html.glass-active.dark .el-dialog,
+html.glass-active.dark .el-drawer,
+html.glass-active.dark .el-dropdown-menu,
+html.glass-active.dark .el-popover,
+html.glass-active.dark .el-select-dropdown {
+  background-color: rgba(30, 41, 59, var(--app-glass-alpha)) !important;
+}
+
+/* Fix arrow colors for popovers/dropdowns */
+html.glass-active .el-popper__arrow::before {
+  background: transparent !important;
+  border: var(--app-glass-border) !important;
+}
+/* MODIFIED_BY_AGENT_END */
+
+/* MODIFIED_BY_AGENT_START: Fix Element Plus Table & Calendar Transparency */
+html.glass-active .el-table,
+html.glass-active .el-table__expanded-cell,
+html.glass-active .el-table th.el-table__cell,
+html.glass-active .el-table tr,
+html.glass-active .el-calendar {
+  background-color: transparent !important;
+  --el-table-bg-color: transparent !important;
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.1) !important;
+  --el-table-row-hover-bg-color: rgba(var(--el-color-primary-rgb), 0.1) !important;
+  --el-calendar-bg-color: transparent !important;
+  --el-calendar-selected-bg-color: rgba(0, 0, 0, 0.25) !important; /* Soft dark selection */
+}
+
+/* Enhanced hover and selection states for calendar */
+html.glass-active .el-calendar-table .el-calendar-day:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important; /* Lighter hover */
+}
+
+html.glass-active .el-calendar-table td.is-selected .el-calendar-day {
+  background-color: rgba(0, 0, 0, 0.25) !important; /* Soft dark selection */
+  color: #fff !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3);
+}
+
+/* MODIFIED_BY_AGENT_START: Enhance Calendar Date Visibility in Glass Mode */
+/* Make all dates look like subtle bubbles to improve readability on complex backgrounds */
+html.glass-active .cell-date {
+  background-color: rgba(255, 255, 255, 0.5); /* Subtle white bubble */
+  color: #1e293b; /* Dark text for contrast */
+  font-weight: 700;
+  backdrop-filter: blur(4px); /* Mini blur inside the bubble for extra readability */
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* "Today" style overrides */
+html.glass-active .cell-date.is-today {
+  background-color: var(--el-color-primary) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 4px rgba(var(--el-color-primary-rgb), 0.4);
+}
+
+/* Dark mode adaptation */
+html.glass-active.dark .cell-date {
+  background-color: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+/* MODIFIED_BY_AGENT_END */
+
+html.glass-active .el-calendar-table tr:first-child td {
+  border-top: 1px solid rgba(255,255,255,0.3);
+}
+
+html.glass-active .el-calendar-table td {
+  border-bottom: 1px solid rgba(255,255,255,0.3);
+  border-right: 1px solid rgba(255,255,255,0.3);
+}
+
+html.glass-active.dark .el-table th.el-table__cell {
+  --el-table-header-bg-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Fix pagination background */
+html.glass-active .el-pagination button,
+html.glass-active .el-pagination .el-pager li {
+  background-color: transparent !important;
+}
+/* MODIFIED_BY_AGENT_END */
+
+/* Make main container transparent to show body background */
+html.glass-active .app-main {
+  background-color: transparent !important;
+}
+/* MODIFIED_BY_AGENT_END */
 </style>
 
 <style scoped>
@@ -350,4 +698,89 @@ html.dark {
   opacity: 0;
   transform: translateY(-10px);
 }
+
+/* MODIFIED_BY_AGENT_START: Settings Drawer Styles */
+.settings-section {
+  margin-bottom: 20px;
+}
+
+.settings-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--app-text-main);
+}
+
+.preset-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.preset-item {
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  transition: transform 0.2s;
+}
+
+.preset-item:hover {
+  transform: scale(1.05);
+}
+
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bg-preview {
+  margin-top: 10px;
+  width: 100%;
+  height: 100px;
+  border-radius: 8px;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--app-border-color);
+  position: relative;
+}
+
+.bg-input-group {
+  display: flex;
+  gap: 10px;
+}
+
+.url-input {
+  flex: 1;
+}
+
+.remove-bg {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  opacity: 0.8;
+}
+
+.remove-bg:hover {
+  opacity: 1;
+}
+
+/* MODIFIED_BY_AGENT_START: Slider Styles */
+.slider-group {
+  margin-bottom: 15px;
+}
+
+.slider-label {
+  font-size: 12px;
+  color: var(--app-text-muted);
+  display: block;
+  margin-bottom: 4px;
+}
+/* MODIFIED_BY_AGENT_END */
 </style>
