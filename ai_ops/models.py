@@ -18,8 +18,15 @@ class Incident(models.Model):
     severity = models.CharField(max_length=50, choices=SEVERITY_CHOICES)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='open')
     started_at = models.DateTimeField()
+    resolved_at = models.DateTimeField(null=True, blank=True)
     description = models.TextField()
     raw_alert_data = models.JSONField(help_text="Raw payload from Prometheus")
+    
+    # Deduplication & Throttling
+    fingerprint = models.CharField(max_length=255, db_index=True, help_text="Unique hash of the alert labels", default='')
+    occurrence_count = models.IntegerField(default=1)
+    last_analyzed_at = models.DateTimeField(null=True, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

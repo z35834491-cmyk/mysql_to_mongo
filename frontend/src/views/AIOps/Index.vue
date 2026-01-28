@@ -67,7 +67,7 @@
               <!-- AI Analysis -->
               <div v-if="currentDetail.report" class="ai-report-box">
                 <div class="report-header">
-                  <el-icon><Cpu /></el-icon> AI 根因分析
+                  <el-icon><Cpu /></el-icon> 故障原因分析
                 </div>
                 <div class="report-body">
                   <div class="analysis-section">
@@ -92,7 +92,7 @@
                   </div>
 
                   <div class="analysis-section" v-if="currentDetail.report.refactoring">
-                    <div class="label">架构整改建议</div>
+                    <div class="label">整改建议</div>
                     <p>{{ currentDetail.report.refactoring }}</p>
                   </div>
 

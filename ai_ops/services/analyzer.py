@@ -68,7 +68,7 @@ class FaultAnalyzer:
     def analyze(self):
         logger.info(f"Starting analysis for incident {self.incident.id}")
         self.incident.status = 'analyzing'
-        self.incident.save()
+        self.incident.save(update_fields=['status'])
 
         try:
             # 1. Parse Alert & Gather Context
@@ -92,13 +92,13 @@ class FaultAnalyzer:
             )
             
             self.incident.status = 'analyzed'
-            self.incident.save()
+            self.incident.save(update_fields=['status'])
             logger.info(f"Analysis completed for incident {self.incident.id}")
 
         except Exception as e:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             self.incident.status = 'open'
-            self.incident.save()
+            self.incident.save(update_fields=['status'])
 
     def _gather_context(self):
         raw = self.incident.raw_alert_data

@@ -34,8 +34,17 @@ import json
 import logging
 from django.utils import timezone
 import threading
+import hashlib
 
 logger = logging.getLogger(__name__)
+
+def get_alert_fingerprint(alert):
+    if 'fingerprint' in alert:
+        return alert['fingerprint']
+    
+    labels = alert.get('labels', {})
+    label_str = json.dumps(labels, sort_keys=True)
+    return hashlib.md5(label_str.encode('utf-8')).hexdigest()
 
 @api_view(['POST'])
 @permission_classes([AllowAny]) # Prometheus Webhook usually doesn't have auth, or uses Basic Auth (handled by middleware if configured)
@@ -58,28 +67,75 @@ def prometheus_webhook(request):
         alerts = data.get('alerts', [])
         
         for alert in alerts:
-            if alert.get('status') != 'firing':
-                continue
-                
+            status = alert.get('status')
             labels = alert.get('labels', {})
             alert_name = labels.get('alertname', 'Unknown Alert')
             severity = labels.get('severity', 'warning')
+            fingerprint = get_alert_fingerprint(alert)
             
-            # Create Incident
-            incident = Incident.objects.create(
-                alert_name=alert_name,
-                severity=severity,
-                started_at=alert.get('startsAt', timezone.now()),
-                description=alert.get('annotations', {}).get('description', ''),
-                raw_alert_data=alert
-            )
+            # Handle Resolution
+            if status == 'resolved':
+                Incident.objects.filter(
+                    fingerprint=fingerprint,
+                    status__in=['open', 'analyzing', 'analyzed']
+                ).update(
+                    status='resolved',
+                    resolved_at=timezone.now()
+                )
+                logger.info(f"Alert resolved: {alert_name} ({fingerprint})")
+                continue
+
+            if status != 'firing':
+                continue
             
-            # Trigger Analysis (Async in real world, Thread for simplicity here)
-            def run_analysis(inc):
-                analyzer = FaultAnalyzer(inc)
-                analyzer.analyze()
+            # Handle Firing
+            # Find existing active incident
+            incident = Incident.objects.filter(
+                fingerprint=fingerprint
+            ).exclude(status='resolved').first()
+            
+            should_analyze = False
+            
+            if incident:
+                # Deduplicate
+                incident.occurrence_count += 1
                 
-            threading.Thread(target=run_analysis, args=(incident,)).start()
+                # Check throttle (1 hour)
+                if incident.last_analyzed_at:
+                    time_since_analysis = timezone.now() - incident.last_analyzed_at
+                    if time_since_analysis.total_seconds() > 3600:
+                        should_analyze = True
+                else:
+                    # Never analyzed (e.g. created before migration or failed previously)
+                    should_analyze = True
+                
+                incident.save()
+                logger.info(f"Alert duplicated: {alert_name} ({fingerprint}), count: {incident.occurrence_count}")
+            else:
+                # Create New Incident
+                incident = Incident.objects.create(
+                    alert_name=alert_name,
+                    severity=severity,
+                    started_at=alert.get('startsAt', timezone.now()),
+                    description=alert.get('annotations', {}).get('description', ''),
+                    raw_alert_data=alert,
+                    fingerprint=fingerprint,
+                    occurrence_count=1
+                )
+                should_analyze = True
+                logger.info(f"New incident created: {alert_name} ({fingerprint})")
+            
+            # Trigger Analysis if needed
+            if should_analyze:
+                # Update timestamp immediately
+                incident.last_analyzed_at = timezone.now()
+                incident.save(update_fields=['last_analyzed_at'])
+                
+                def run_analysis(inc):
+                    analyzer = FaultAnalyzer(inc)
+                    analyzer.analyze()
+                    
+                threading.Thread(target=run_analysis, args=(incident,)).start()
             
         return Response({"msg": "Alerts received", "count": len(alerts)})
     except Exception as e:
