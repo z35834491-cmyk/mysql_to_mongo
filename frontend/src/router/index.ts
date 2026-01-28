@@ -50,6 +50,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Log Monitor', icon: 'Monitor' }
       },
       {
+        path: 'ai-ops',
+        name: 'AIOps',
+        component: () => import('@/views/AIOps/Index.vue'),
+        meta: { title: 'AI Fault Analysis', icon: 'Cpu' }
+      },
+      {
         path: 'schedules',
         name: 'Schedules',
         component: () => import('@/views/Schedules/Index.vue'),
