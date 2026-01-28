@@ -101,7 +101,6 @@ import { useRouter } from 'vue-router'
 import { useConnectionStore } from '@/stores/connection'
 import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
-import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const connectionStore = useConnectionStore()

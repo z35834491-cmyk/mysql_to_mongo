@@ -131,7 +131,6 @@ import {
   RefreshRight, DataLine, Monitor, Warning 
 } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import { useSystemStore } from '@/stores/system'
 
