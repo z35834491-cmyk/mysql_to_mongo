@@ -6,6 +6,7 @@ from django.http import HttpResponse
 import os
 
 def serve_spa(request):
+    # Only served in DEBUG mode or if Nginx is bypassed (which shouldn't happen in prod)
     try:
         # Check potential locations (Local vs Docker)
         possible_paths = [
@@ -50,8 +51,11 @@ urlpatterns = [
     path('api/', include('schedules.urls')),
 
     # Serve assets folder directly (Optimization)
+    # Note: In production with Nginx, this is handled by Nginx.
+    # This is kept for local development (DEBUG=True).
     re_path(r'^assets/(?P<path>.*)$', serve, {'document_root': os.path.join(settings.BASE_DIR, 'frontend/dist/assets')}),
     
     # Catch-all for everything else (root files like brand.png + SPA routes)
+    # In production, Nginx handles this. Kept for dev.
     re_path(r'^(?P<path>.*)$', serve_static_from_root),
 ]

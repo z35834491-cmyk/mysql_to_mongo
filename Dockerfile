@@ -14,7 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including Nginx)
 RUN if [ -f /etc/apt/sources.list ]; then \
         sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
         sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
@@ -24,6 +24,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
     fi && \
     apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    nginx \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -37,6 +38,11 @@ COPY . .
 # Copy built frontend assets
 # We copy the whole dist folder to /app/frontend/dist to align with local dev structure
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
+
+# Configure Nginx
+COPY nginx.conf /etc/nginx/sites-available/default
+# Ensure Nginx runs in foreground if we were running it alone, but we will run it via entrypoint script
+# Remove default nginx site if it exists (though we overwrote default above)
 
 # Create necessary directories
 RUN mkdir -p state logs
