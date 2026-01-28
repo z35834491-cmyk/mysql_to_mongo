@@ -20,41 +20,45 @@
       >
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
-          <template #title>Dashboard</template>
+          <template #title>仪表盘</template>
         </el-menu-item>
         
-        <div class="menu-group-title" v-if="!isCollapsed">DATA PIPELINE</div>
+        <div class="menu-group-title" v-if="!isCollapsed">数据流水线</div>
         <el-menu-item index="/tasks">
           <el-icon><List /></el-icon>
-          <template #title>Sync Tasks</template>
+          <template #title>同步任务</template>
         </el-menu-item>
         <el-menu-item index="/connections">
           <el-icon><Link /></el-icon>
-          <template #title>Data Sources</template>
+          <template #title>数据源</template>
         </el-menu-item>
 
-        <div class="menu-group-title" v-if="!isCollapsed">OPERATIONS</div>
+        <div class="menu-group-title" v-if="!isCollapsed">运维操作</div>
+        <el-menu-item index="/ai-ops">
+          <el-icon><Cpu /></el-icon>
+          <template #title>智能故障分析</template>
+        </el-menu-item>
         <el-menu-item index="/schedules">
           <el-icon><Calendar /></el-icon>
-          <template #title>Schedules</template>
+          <template #title>调度管理</template>
         </el-menu-item>
         
-        <div class="menu-group-title" v-if="!isCollapsed">MAINTENANCE</div>
+        <div class="menu-group-title" v-if="!isCollapsed">系统维护</div>
         <el-menu-item index="/logs">
           <el-icon><Monitor /></el-icon>
-          <template #title>Log Monitor</template>
+          <template #title>日志监控</template>
         </el-menu-item>
         <el-menu-item index="/system">
           <el-icon><Setting /></el-icon>
-          <template #title>System Inspect</template>
+          <template #title>系统巡检</template>
         </el-menu-item>
         <el-menu-item index="/deploy">
           <el-icon><Upload /></el-icon>
-          <template #title>Server Deploy</template>
+          <template #title>服务部署</template>
         </el-menu-item>
         <el-menu-item index="/permissions" v-if="isAdmin">
           <el-icon><Lock /></el-icon>
-          <template #title>Permissions</template>
+          <template #title>权限管理</template>
         </el-menu-item>
       </el-menu>
     </div>
@@ -70,7 +74,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock, Calendar } from '@element-plus/icons-vue'
+import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock, Calendar, Cpu } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
 const route = useRoute()

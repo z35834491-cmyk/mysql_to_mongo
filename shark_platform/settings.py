@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'inspection',
     'tasks',
     'schedules',
+    'ai_ops',
 ]
 
 MIDDLEWARE = [
