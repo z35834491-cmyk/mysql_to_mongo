@@ -1,6 +1,6 @@
 <template>
   <div class="permissions-container">
-    <div class="page-header">
+    <div class="page-header header-info">
       <h2 class="page-title">Access Control & Permissions</h2>
       <p class="page-subtitle">Manage users, roles, and feature-level permissions</p>
     </div>
@@ -152,7 +152,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { Search, Plus, Lock } from '@element-plus/icons-vue'
 import sharkAvatar from '@/assets/images/brand.png'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
 const activeTab = ref('users')

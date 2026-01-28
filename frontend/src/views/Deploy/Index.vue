@@ -90,7 +90,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useDeployStore } from '@/stores/deploy'
 import { storeToRefs } from 'pinia'
-import { ElMessageBox, ElMessage } from 'element-plus'
+import { Plus, Upload, Delete, Edit, Refresh } from '@element-plus/icons-vue'
 
 const activeTab = ref('servers')
 const deployStore = useDeployStore()

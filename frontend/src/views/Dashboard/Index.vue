@@ -77,10 +77,17 @@
 
           <el-divider />
           <div class="quick-actions">
-            <div class="action-title">QUICK ACTIONS</div>
+            <div class="action-header">
+              <el-icon><Lightning /></el-icon>
+              <span class="action-title">QUICK ACTIONS</span>
+            </div>
             <div class="action-buttons">
-              <el-button size="small" class="action-btn" plain @click="$router.push('/system')">Run Inspection</el-button>
-              <el-button size="small" class="action-btn" plain @click="$router.push('/tasks')">New Sync Task</el-button>
+              <el-button size="small" class="action-btn" plain @click="$router.push('/system')">
+                <el-icon class="btn-icon"><Search /></el-icon> Run Inspection
+              </el-button>
+              <el-button size="small" class="action-btn" plain @click="$router.push('/tasks')">
+                <el-icon class="btn-icon"><Plus /></el-icon> New Sync Task
+              </el-button>
             </div>
           </div>
         </div>
@@ -94,7 +101,8 @@ import { ref, onMounted, computed, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { 
   Cpu, PieChart, Refresh, CircleCheck, 
-  DataAnalysis, Connection, Link, Warning 
+  DataAnalysis, Connection, Link, Warning, Lightning,
+  Search, Plus
 } from '@element-plus/icons-vue'
 import { useConnectionStore } from '@/stores/connection'
 import { useSystemStore } from '@/stores/system'
@@ -426,12 +434,18 @@ onMounted(() => {
   padding-top: 8px;
 }
 
+.action-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  color: var(--app-text-muted);
+}
+
 .action-title {
   font-size: 11px;
   font-weight: 700;
-  color: var(--app-text-muted);
   letter-spacing: 0.1em;
-  margin-bottom: 16px;
 }
 
 .action-buttons {
@@ -442,7 +456,13 @@ onMounted(() => {
 
 .action-btn {
   justify-content: flex-start;
-  padding: 10px 16px;
+  padding: 10px 16px; /* Match header padding visually */
   border-radius: 8px;
+  width: 100%;
+}
+
+.btn-icon {
+  margin-right: 10px; /* Match gap of header */
+  font-size: 14px;
 }
 </style>

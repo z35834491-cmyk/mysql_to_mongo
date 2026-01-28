@@ -212,7 +212,6 @@ import {
   Plus, Coin, Share, User, 
   Edit, Connection, Delete, Setting 
 } from '@element-plus/icons-vue'
-import { ElMessageBox, ElMessage } from 'element-plus'
 
 const connectionStore = useConnectionStore()
 const { connections, loading } = storeToRefs(connectionStore)

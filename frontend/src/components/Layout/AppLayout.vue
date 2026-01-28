@@ -155,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, watch } from 'vue'
+import { computed, ref, reactive, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from './AppSidebar.vue'
 import sharkAvatar from '@/assets/images/brand.png'
@@ -272,6 +272,36 @@ const updateGlassEffect = () => {
 
 // Watch dark mode to re-apply correct glass colors
 watch(isDark, () => {
+  updateGlassEffect()
+})
+
+// Persistence Logic
+onMounted(() => {
+  // Restore settings from localStorage
+  const savedBgColor = localStorage.getItem('app_bg_color')
+  if (savedBgColor) backgroundColor.value = savedBgColor
+
+  const savedBgImg = localStorage.getItem('app_bg_image')
+  if (savedBgImg) backgroundImage.value = savedBgImg
+
+  const savedOpacity = localStorage.getItem('app_glass_opacity')
+  if (savedOpacity) glassOpacity.value = Number(savedOpacity)
+
+  const savedBlur = localStorage.getItem('app_glass_blur')
+  if (savedBlur) glassBlur.value = Number(savedBlur)
+
+  // Apply initial glass effect
+  updateGlassEffect()
+})
+
+watch(backgroundColor, (val) => localStorage.setItem('app_bg_color', val))
+watch(backgroundImage, (val) => localStorage.setItem('app_bg_image', val))
+watch(glassOpacity, (val) => {
+  localStorage.setItem('app_glass_opacity', val.toString())
+  updateGlassEffect()
+})
+watch(glassBlur, (val) => {
+  localStorage.setItem('app_glass_blur', val.toString())
   updateGlassEffect()
 })
 // MODIFIED_BY_AGENT_END
@@ -500,6 +530,144 @@ html.glass-active.dark .cell-date {
   background-color: rgba(0, 0, 0, 0.5);
   color: #fff;
 }
+
+/* Fix Element Plus Tabs Visibility in Glass Mode - Add Glass Background Strip */
+html.glass-active .el-tabs__header {
+  background: rgba(255, 255, 255, 0.35); /* Visible glass strip */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 8px 16px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  border: 1px solid rgba(255,255,255,0.3);
+  width: fit-content; /* Only wrap the tabs */
+  min-width: 200px; /* Minimum width */
+}
+
+/* Remove default tab bottom line */
+html.glass-active .el-tabs__nav-wrap::after {
+  display: none !important;
+}
+
+html.glass-active .el-tabs__item {
+  color: #1e293b !important; /* Dark text */
+  font-weight: 700 !important;
+  text-shadow: none !important;
+  padding: 0 16px !important;
+}
+html.glass-active .el-tabs__item.is-active {
+  color: var(--el-color-primary) !important;
+  font-weight: 800 !important;
+  text-shadow: none !important;
+}
+
+/* Fix Table Header Visibility */
+html.glass-active .el-table th.el-table__cell {
+  background-color: rgba(255, 255, 255, 0.4) !important; /* Semi-transparent white header */
+  color: #0f172a !important; /* Dark text */
+  font-weight: 700 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Enhance Calendar Header (Weekdays) Visibility - Final Polish */
+html.glass-active .el-calendar-table thead th {
+  background-color: transparent !important; /* No background strip */
+  color: #000000 !important; /* Pure black for maximum clarity */
+  opacity: 1 !important;
+  
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  text-transform: capitalize !important;
+  letter-spacing: 0.5px !important;
+  padding: 12px 0 !important;
+  
+  text-shadow: none !important; /* No cheap glow */
+  
+  /* Divider - Made more visible */
+  border-right: 1px solid rgba(255, 255, 255, 0.6) !important; 
+  border-bottom: 1px solid rgba(255, 255, 255, 0.6) !important;
+}
+
+/* Remove right border for the last header cell */
+html.glass-active .el-calendar-table thead th:last-child {
+  border-right: none !important;
+}
+
+/* Force all children to be dark */
+html.glass-active .el-calendar-table thead th * {
+  color: #000000 !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+  text-transform: capitalize !important;
+}
+
+/* Stronger vertical & horizontal dividers for calendar cells */
+html.glass-active .el-calendar-table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.6) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.6) !important;
+}
+
+html.glass-active .el-calendar-table tr td:last-child {
+  border-right: none !important;
+}
+
+/* Ensure the header text isn't overridden by specific element styles */
+html.glass-active .el-calendar-table thead th div {
+  color: #000000 !important;
+}
+
+/* Enhance Page Title & Subtitle Visibility - Premium Glass Style */
+html.glass-active .header-info {
+  background: rgba(255, 255, 255, 0.3); /* Subtle frosted glass container */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px; /* Space below the header */
+}
+
+html.glass-active .page-title,
+html.glass-active .header-info h2 {
+  color: #0f172a !important; /* Sharp dark text */
+  font-weight: 700 !important;
+  text-shadow: none !important; /* Remove cheap glow */
+  margin: 0 !important;
+  font-size: 20px !important;
+  letter-spacing: -0.5px;
+}
+
+html.glass-active .page-subtitle,
+html.glass-active .header-info p {
+  color: #475569 !important; /* Muted dark text */
+  font-weight: 500 !important;
+  text-shadow: none !important;
+  margin: 0 !important;
+  opacity: 1 !important;
+  font-size: 13px !important;
+}
+
+/* Dark mode adaptation for the header pill */
+html.glass-active.dark .header-info {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+html.glass-active.dark .page-title,
+html.glass-active.dark .header-info h2 {
+  color: #fff !important;
+}
+
+html.glass-active.dark .page-subtitle,
+html.glass-active.dark .header-info p {
+  color: #cbd5e1 !important;
+}
+
 /* MODIFIED_BY_AGENT_END */
 
 html.glass-active .el-calendar-table tr:first-child td {
