@@ -20,8 +20,11 @@ if not User.objects.filter(username='admin').exists():
     print('Superuser admin created')
 "
 
-# Start Gunicorn
+# Start Gunicorn (Backend) on port 8001
 # 1 worker is REQUIRED because TaskManager uses in-memory state (threads).
-# Multiple workers would cause split-brain issues where tasks started in one worker
-# cannot be controlled/monitored by requests hitting other workers.
-exec gunicorn shark_platform.wsgi:application --bind 0.0.0.0:8000 --workers 1 --timeout 600 --threads 4
+echo "Starting Gunicorn on port 8001..."
+gunicorn shark_platform.wsgi:application --bind 127.0.0.1:8001 --workers 1 --timeout 600 --threads 4 --daemon
+
+# Start Nginx (Frontend & Proxy) in foreground
+echo "Starting Nginx on port 8000..."
+exec nginx -g 'daemon off;'
