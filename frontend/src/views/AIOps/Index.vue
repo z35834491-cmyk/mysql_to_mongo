@@ -115,9 +115,19 @@
               </div>
 
               <!-- Metrics Chart -->
-              <div v-if="currentDetail.report && currentDetail.report.related_metrics" class="chart-section">
+              <div v-if="currentDetail.report && currentDetail.report.related_metrics && Object.keys(currentDetail.report.related_metrics).length" class="chart-section">
                 <h3 class="section-title"><el-icon><TrendCharts /></el-icon> 监控指标证据</h3>
                 <div ref="chartRef" class="metrics-chart"></div>
+              </div>
+
+              <!-- Diagnostic Logs -->
+              <div v-if="currentDetail.report && currentDetail.report.diagnosis_logs && currentDetail.report.diagnosis_logs.length" class="logs-section">
+                <h3 class="section-title"><el-icon><Monitor /></el-icon> 诊断日志证据</h3>
+                <div class="logs-container">
+                  <div v-for="(log, idx) in currentDetail.report.diagnosis_logs" :key="idx" class="log-block">
+                    <pre>{{ log }}</pre>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

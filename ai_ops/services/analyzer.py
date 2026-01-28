@@ -169,6 +169,13 @@ class FaultAnalyzer:
             pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
             info_lines.append(f"Pod Status: {pod.status.phase}")
             
+            # Add Conditions
+            if pod.status.conditions:
+                info_lines.append("Conditions:")
+                for cond in pod.status.conditions:
+                    status_symbol = "✔" if cond.status == 'True' else "✖"
+                    info_lines.append(f"  [{status_symbol}] {cond.type}: {cond.reason or ''} {cond.message or ''}")
+
             # Analyze container statuses
             is_unhealthy = False
             container_statuses = pod.status.container_statuses or []
