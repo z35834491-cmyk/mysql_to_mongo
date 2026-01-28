@@ -172,6 +172,7 @@ class MonitorEngine:
 
     def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
         alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }
+        error_lines = [] # List of strings for aggregated error log
         
         # Context Management
         # Keep last N lines for context
