@@ -15,46 +15,58 @@
 ## ✨ 核心功能
 
 ### 1. 🔄 数据同步 (Data Sync)
-提供高性能、高可靠的 MySQL 到 MongoDB 实时同步解决方案。
+提供高性能、高可靠的 MySQL 到 MongoDB 实时同步解决方案，支持**全链路自启动**与**断点续传**。
 *   **全量 + 增量同步**：自动执行存量数据全量搬运，随后无缝切换至基于 Binlog (CDC) 的增量实时同步。
+*   **高可靠性**：
+    *   **自动断点续传**：精确记录 Binlog 位点，服务重启后自动恢复同步，确保数据零丢失。
+    *   **自启动机制**：任务配置持久化，系统重启后自动拉起所有运行中的任务。
 *   **多种同步模式**：
-    *   **History Retention (Append)**：保留数据变更历史。Update/Delete 操作转换为 Insert 操作，生成新版本或 Tombstone 记录，适用于审计与时光机查询。
-    *   **Mirror Mode (In-Place)**：目标端与源端保持完全一致。Update 执行覆盖，Delete 执行物理删除（或软删除）。
-*   **智能主键探测**：自动识别 MySQL 表的真实主键（支持非 `id` 字段），解决全量同步时的排序分页问题。
-*   **断点续传**：记录 Binlog 位点，任务重启后自动从断点继续同步，不丢数据。
-*   **自动 Schema 漂移处理**：支持自动发现新表，自动处理新增列。
-*   **自定义起始点位**：支持指定 Binlog 文件名和 Position 开始同步。
+    *   **History Retention (Append)**：保留变更历史，适用于审计与时光机查询。
+    *   **Mirror Mode (In-Place)**：目标端与源端保持完全一致（覆盖更新/物理删除）。
+*   **智能特性**：
+    *   **主键探测**：自动识别非 `id` 主键，解决全量同步排序问题。
+    *   **Schema 漂移处理**：自动适应源端表结构变更（新增列/新表）。
 
 ### 2. 🛡️ 日志监控 (Log Monitor)
-基于 Kubernetes 环境的轻量级日志监控方案。
-*   **实时日志流**：直接从 K8s API 获取 Pod 日志。
-*   **高级告警策略**：
-    *   **Threshold Alert**：阈值告警（如：60秒内出现5次 Error）。
-    *   **Immediate Alert**：关键词立即告警（如：Panic, Fatal）。
-    *   **Ignore/Record**：支持忽略特定日志或仅记录不告警。
-    *   **告警抑制**：支持配置静默期（Silence Period），避免重复告警风暴。
-*   **错误上下文捕获**：自动提取 Error 日志的前后文（各5行），并独立存储为 `_error.log` 文件，便于快速排查。
-*   **日志检索与排序**：支持文件名模糊搜索、按大小/时间排序、批量文件内容搜索。
-*   **日志归档**：支持将监控到的日志自动归档至 S3 兼容存储。
+基于 Kubernetes 环境的智能化日志监控方案，支持**多 Namespace** 绑定与**精细化告警**。
+*   **灵活采集**：
+    *   **多 Namespace 支持**：单个监控任务可同时绑定多个 K8s Namespace（逗号分隔）。
+    *   **实时流式处理**：基于 K8s Watch API 实时分析日志流，低延迟、低内存占用。
+*   **三级告警策略**：
+    1.  **Immediate Alert (立即告警)**：针对 `Panic`, `Fatal` 等严重错误，发现即发送，**不静默**。
+    2.  **Threshold Alert (阈值告警)**：针对 `Error`, `Exception` 等常规错误，支持配置阈值（如 60秒内 5次）触发。支持**智能静默**，相同错误 1 小时内仅发送一次。
+    3.  **Record Only (仅记录)**：针对已知噪音，仅记录上下文但不发送告警（优先级最高）。
+*   **便捷运维**：
+    *   **Deep Link 跳转**：Slack 告警消息附带详情链接，一键跳转 Web 控制台查看完整日志（支持自定义域名）。
+    *   **错误上下文捕获**：自动截取错误发生前后的日志（各 5 行）独立存储，无需翻阅海量日志。
+    *   **日志归档**：支持自动上传至 S3 存储，满足合规留存需求。
 
-### 3. 🔍 系统巡检 (Inspection)
-智能化的系统健康度分析与报告生成。
-*   **动态评分系统**：基于 CPU/内存/磁盘使用率、Down Targets、Firing Alerts 等指标动态计算系统健康分（0-100）。
-*   **AI 趋势预测**：基于历史巡检报告，预测未来 7天/15天/30天 的健康趋势。
-*   **周期性报告**：自动生成周报、月报，聚合分析常见故障点。
-*   **指标采集**：集成 Prometheus API，自动采集关键指标。
+### 3. 🤖 智能故障分析 (AI Ops)
+基于大语言模型 (LLM) 的故障根因分析与自动化诊断系统。
+*   **事件驱动分析**：
+    *   接收 Prometheus Alertmanager 告警 Webhook，自动触发分析流程。
+    *   支持配置 **AI 分析开关**，灵活选择全自动 AI 诊断或基于规则的快速诊断。
+*   **全景上下文收集**：
+    *   **指标关联**：根据告警类型（CPU/Memory/IO）自动生成并执行 PromQL 查询，获取故障发生时的指标快照。
+    *   **K8s 现场还原**：自动抓取相关 Pod 的状态、Events 事件流以及最近的日志片段。
+*   **智能诊断报告**：
+    *   调用 LLM (OpenAI/DeepSeek) 生成结构化分析报告，包含：**故障现象**、**根本原因** (定位到具体进程/Pod)、**紧急缓解措施**、**长期预防建议**及**可执行修复命令**。
 
-### 4. 📅 排班管理 (Schedules)
-灵活的人员排班与轮值管理。
-*   **日历视图**：直观展示每日排班情况，支持早/中/晚班颜色区分。
-*   **多人员支持**：单班次支持多名值班人员。
-*   **API 集成**：提供标准 API 供外部系统（如告警系统）查询当前值班人员。
+### 4. 🔍 系统巡检 (Inspection)
+全自动化的系统健康度分析引擎。
+*   **自动化执行**：内置调度器，每日 **08:00** 自动执行全系统健康检查。
+*   **多维评估**：
+    *   **动态评分**：基于资源利用率、服务状态、告警数量动态计算健康分 (0-100)。
+    *   **趋势预测**：分析历史巡检报告，预测未来 7/15/30 天的健康趋势。
+*   **深度报告**：自动生成包含资源热点、异常 Pod、Top 慢查询的详细巡检报告。
 
-### 5. 🚀 服务器部署 (Server Deploy)
-轻量级的主机管理与批量执行工具。
-*   **资产管理**：管理服务器清单（Host, User, Key）。
-*   **批量执行**：支持向多台服务器批量分发文件、执行 Shell 脚本。
-*   **实时反馈**：Web 端实时展示执行日志与结果状态。
+### 5. 📅 排班管理 (Schedules)
+*   **可视化排班**：日历视图管理每日值班人员，支持早/中/晚多班次。
+*   **开放集成**：提供标准 API 供监控系统查询当前 On-Call 人员，实现告警精准路由。
+
+### 6. 🚀 服务器部署 (Server Deploy)
+*   **资产管理**：统一管理主机清单与 SSH 密钥。
+*   **批量执行**：支持向多台服务器并行分发文件、执行 Shell 脚本，实时回显执行日志。
 
 ---
 
@@ -81,11 +93,17 @@ flowchart TD
             MonEngine -->|Alert| Slack[Slack Webhook]
         end
         
-        subgraph InspectionAI
-            Web -->|Trigger| InspEngine[Inspection Engine]
-            InspEngine -->|Query Metrics| Prom[Prometheus]
-            InspEngine -->|Analyze| AI[Ark AI Model]
-            InspEngine -->|Generate| Report[Inspection Report]
+        subgraph AIOps
+            Web -->|Webhook| FaultAnalyzer[Fault Analyzer]
+            FaultAnalyzer -->|Query| Prom[Prometheus]
+            FaultAnalyzer -->|Context| K8s
+            FaultAnalyzer -->|Diagnose| LLM[LLM Service]
+        end
+
+        subgraph Inspection
+            Web -->|Schedule| InspEngine[Inspection Engine]
+            InspEngine -->|Analyze| Prom
+            InspEngine -->|Predict| LLM
         end
         
         subgraph Schedules
@@ -107,12 +125,19 @@ flowchart TD
     docker-compose up -d --build
     ```
 
-2.  **访问应用**
+2.  **配置环境变量 (可选)**
+    在 `docker-compose.yml` 中配置 `PUBLIC_URL` 以启用告警链接跳转功能：
+    ```yaml
+    environment:
+      - PUBLIC_URL=http://your-domain.com
+    ```
+
+3.  **访问应用**
     打开浏览器访问：[http://localhost:8000/](http://localhost:8000/)
     *   **默认账号**：`admin`
     *   **默认密码**：`admin` (首次启动自动创建)
 
-### 方式三：Kubernetes 部署
+### 方式二：Kubernetes 部署
 
 项目提供了标准的 K8s 部署配置文件，位于 `k8s/` 目录下。
 
@@ -122,10 +147,7 @@ flowchart TD
     docker push your-registry/shark-platform:v1
     ```
 
-2.  **应用配置**
-    修改 `k8s/shark-platform.yaml` 中的镜像地址，并根据需要更新 `k8s/configmap.yaml` 和 `k8s/secrets.yaml`。
-
-3.  **部署到集群**
+2.  **部署到集群**
     ```bash
     kubectl apply -f k8s/configmap.yaml
     kubectl apply -f k8s/secrets.yaml
@@ -133,9 +155,20 @@ flowchart TD
     kubectl apply -f k8s/shark-platform.yaml
     ```
 
-### 方式二：本地开发运行
+3.  **权限配置**
+    如果需要监控其他 Namespace，请确保 ServiceAccount 拥有相应的 `view` 权限：
+    ```bash
+    kubectl create rolebinding monitor-user-view-binding \
+      --clusterrole=view \
+      --serviceaccount=default:monitor-user \
+      --namespace=target-namespace
+    ```
+
+### 方式三：本地开发运行
+
+1.  **依赖准备**
     *   Python 3.9+
-    *   Node.js 16+ (前端构建)
+    *   Node.js 16+
     *   MySQL 5.7+ (开启 Binlog ROW 模式)
     *   MongoDB 4.4+
 
@@ -173,25 +206,6 @@ mysql_to_mongo/
 ├── logs/                    # 应用运行日志
 └── manage.py                # Django 管理入口
 ```
-
----
-
-## 📝 最近更新 (Changelog)
-
-*   **Optimization**: 全面优化前端 UI，采用全新的 Sidebar 设计与全局配色。
-*   **Optimization**: 优化日志监控后端逻辑，支持大文件流式读取与分页，降低内存占用。
-*   **Feature**: 日志监控新增「错误上下文捕获」，自动生成 `_error.log`。
-*   **Feature**: 日志监控新增「高级告警策略」，支持阈值、去重、静默期配置。
-*   **Feature**: 日志监控支持 **Record Only** 模式，仅记录关键错误日志但不触发告警。
-*   **Feature**: 日志监控支持 **多 Namespace** 绑定（逗号分隔）。
-*   **Feature**: 告警消息新增 **Deep Link**，一键跳转至 Web 端查看详细日志（支持自定义域名配置）。
-*   **Feature**: **Data Sync** 任务与 **Inspection** 巡检任务支持 **自启动** 与 **断点恢复**，服务重启后无需人工干预。
-*   **Feature**: 系统巡检新增「动态评分」与「AI 趋势预测」，支持配置 **AI 分析开关**（开启调用 LLM，关闭仅基于指标分析）。
-*   **Feature**: 系统巡检支持每日 8:00 定时自动执行。
-*   **Feature**: 新增排班管理 (Schedules) 模块。
-*   **Fix**: 修复前端 SPA 路由与后端集成的 404 问题，支持 Django 直接托管构建后的 Vue 应用。
-*   **Fix**: 优化 Docker 构建流程，确保前端静态资源正确打包至镜像。
-*   **Refactor**: 移除过时的 Django Template 目录，全面转向前后端分离。
 
 ---
 
