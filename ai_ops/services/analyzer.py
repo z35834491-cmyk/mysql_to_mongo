@@ -112,6 +112,8 @@ class FaultAnalyzer:
                 solutions=ai_result.get('solutions', []),
                 related_metrics=context_data.get('metrics', {}),
                 diagnosis_logs=context_data.get('logs', []),
+                k8s_events=context_data.get('events', []),
+                k8s_pod_status=context_data.get('pod_status', {}),
                 raw_ai_response=json.dumps(ai_result)
             )
             
@@ -169,7 +171,9 @@ class FaultAnalyzer:
         context = {
             "alert": raw,
             "metrics": {},
-            "logs": [] # Placeholder for future command outputs (e.g. top/iotop)
+            "logs": [], # Placeholder for future command outputs (e.g. top/iotop)
+            "events": [],
+            "pod_status": {}
         }
 
         # 1. Metric Collection Strategy
@@ -186,11 +190,25 @@ class FaultAnalyzer:
         # 2. Log Collection Strategy (K8s)
         if K8S_AVAILABLE:
             try:
-                k8s_info = self._collect_k8s_info(labels)
-                if k8s_info:
-                    context['logs'].append(f"--- K8s Diagnosis ---\n{k8s_info}")
+                k8s_data = self._collect_k8s_info(labels)
+                if k8s_data:
+                    if k8s_data.get('logs'):
+                        context['logs'].append(f"--- K8s Diagnosis ---\n{k8s_data['text_summary']}")
+                    context['events'] = k8s_data.get('events', [])
+                    context['pod_status'] = k8s_data.get('pod_status', {})
+                else:
+                    # Fallback if no pod found or logs empty: use Pod Describe info
+                    # _collect_k8s_info already includes describe-like info (status, conditions, events)
+                    # If it returns None, it means Pod not found.
+                    pass
             except Exception as e:
                 logger.warning(f"Failed to fetch K8s info: {e}")
+                
+        # 3. Add Alert Description (if available)
+        # If no logs, this description is crucial for AI
+        description = raw.get('annotations', {}).get('description') or raw.get('annotations', {}).get('message')
+        if description:
+             context['logs'].append(f"--- Alert Description ---\n{description}")
 
         return context
 
@@ -224,11 +242,26 @@ class FaultAnalyzer:
         if not pod_name:
             return None
 
+        result = {
+            "text_summary": "",
+            "logs": [],
+            "events": [],
+            "pod_status": {}
+        }
+        
         info_lines = []
         try:
             # 1. Get Pod Status
             pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
             info_lines.append(f"Pod Status: {pod.status.phase}")
+            
+            result['pod_status'] = {
+                "name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "phase": pod.status.phase,
+                "conditions": [],
+                "containers": []
+            }
             
             # Add Conditions
             if pod.status.conditions:
@@ -236,6 +269,12 @@ class FaultAnalyzer:
                 for cond in pod.status.conditions:
                     status_symbol = "✔" if cond.status == 'True' else "✖"
                     info_lines.append(f"  [{status_symbol}] {cond.type}: {cond.reason or ''} {cond.message or ''}")
+                    result['pod_status']['conditions'].append({
+                        "type": cond.type,
+                        "status": cond.status,
+                        "reason": cond.reason,
+                        "message": cond.message
+                    })
 
             # Analyze container statuses
             is_unhealthy = False
@@ -255,6 +294,14 @@ class FaultAnalyzer:
                 
                 info_lines.append(f"Container {cs.name}: {status_str}")
                 
+                container_info = {
+                    "name": cs.name,
+                    "state": status_str,
+                    "restart_count": cs.restart_count,
+                    "ready": cs.ready
+                }
+                result['pod_status']['containers'].append(container_info)
+                
                 # Restart count check
                 if cs.restart_count > 0:
                      info_lines.append(f"  Restarts: {cs.restart_count}")
@@ -262,15 +309,22 @@ class FaultAnalyzer:
 
             # 2. Collect Events (if unhealthy or not Running)
             # Events are useful for scheduling issues, image pull errors, probe failures
-            if is_unhealthy or pod.status.phase != 'Running':
-                try:
-                    events = v1.list_namespaced_event(namespace, field_selector=f'involvedObject.name={pod_name}')
-                    if events.items:
-                        info_lines.append("\n--- K8s Events ---")
-                        for e in events.items:
-                            info_lines.append(f"[{e.type}] {e.reason}: {e.message}")
-                except Exception as e:
-                    info_lines.append(f"Failed to get events: {e}")
+            # Always collect events for structured data regardless of health, for frontend
+            try:
+                events = v1.list_namespaced_event(namespace, field_selector=f'involvedObject.name={pod_name}')
+                if events.items:
+                    info_lines.append("\n--- K8s Events ---")
+                    for e in events.items:
+                        info_lines.append(f"[{e.type}] {e.reason}: {e.message}")
+                        result['events'].append({
+                            "type": e.type,
+                            "reason": e.reason,
+                            "message": e.message,
+                            "count": e.count,
+                            "last_timestamp": e.last_timestamp.isoformat() if e.last_timestamp else None
+                        })
+            except Exception as e:
+                info_lines.append(f"Failed to get events: {e}")
 
             # 3. Collect Logs (if likely to contain info)
             # Skip logs if ImagePullBackOff or ContainerCreating (logs usually empty)
@@ -286,6 +340,7 @@ class FaultAnalyzer:
                     if logs:
                         info_lines.append("\n--- K8s Logs ---")
                         info_lines.append(logs)
+                        result['logs'].append(logs)
                     
                     # If previous instance failed, try to get previous logs
                     for cs in container_statuses:
@@ -294,14 +349,16 @@ class FaultAnalyzer:
                              if prev_logs:
                                  info_lines.append("\n--- Previous Instance Logs ---")
                                  info_lines.append(prev_logs)
+                                 result['logs'].append(f"Previous Instance:\n{prev_logs}")
                              break # Only fetch for one container to avoid spam
                 except Exception as e:
                     info_lines.append(f"Failed to fetch logs: {e}")
 
-            return "\n".join(info_lines)
+            result['text_summary'] = "\n".join(info_lines)
+            return result
 
         except Exception as e:
-            return f"Error analyzing pod {pod_name}: {e}"
+            return None
 
     def _query_prometheus(self, query):
         if not self.config.prometheus_url:

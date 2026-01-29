@@ -46,6 +46,8 @@ class AnalysisReport(models.Model):
     solutions = models.JSONField(help_text="List of actionable steps", default=list)
     related_metrics = models.JSONField(help_text="Metrics data for visualization", default=dict)
     diagnosis_logs = models.JSONField(help_text="Logs from diagnostic commands", default=list)
+    k8s_events = models.JSONField(help_text="K8s Events for frontend display", default=list)
+    k8s_pod_status = models.JSONField(help_text="Pod status and conditions", default=dict)
     
     raw_ai_response = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
