@@ -130,45 +130,51 @@ class MonitorEngine:
 
     def _fetch_k8s_logs(self, task):
         api = self._get_k8s_client(task)
-        namespace = task.k8s_namespace
+        # Support multiple namespaces comma-separated
+        raw_namespaces = task.k8s_namespace.split(',')
+        namespaces = [n.strip() for n in raw_namespaces if n.strip()]
+        if not namespaces:
+            namespaces = ['default']
         
-        try:
-            pods = api.list_namespaced_pod(namespace)
-        except Exception as e:
-            raise Exception(f"Failed to list pods: {e}")
-
         today_str = datetime.date.today().isoformat()
         
         # Task specific log dir
         task_log_dir = os.path.join(self.LOG_DIR, str(task.id))
         os.makedirs(task_log_dir, exist_ok=True)
-        
-        for pod in pods.items:
-            pod_name = pod.metadata.name
-            if not pod.spec.containers:
-                continue
-            container_name = pod.spec.containers[0].name
-            
-            log_file_path = os.path.join(task_log_dir, f"{pod_name}_{today_str}.log")
-            
-            since_seconds = task.poll_interval_seconds + 10
-            
+
+        for namespace in namespaces:
             try:
-                # Use streaming to avoid loading huge logs into memory
-                response = api.read_namespaced_pod_log(
-                    name=pod_name,
-                    namespace=namespace,
-                    container=container_name,
-                    since_seconds=since_seconds,
-                    timestamps=True,
-                    _preload_content=False # Enable streaming
-                )
-                
-                self._process_log_stream(response, task, pod_name, task_log_dir, log_file_path)
-                    
+                pods = api.list_namespaced_pod(namespace)
             except Exception as e:
-                # logger.warning(f"Failed to read log for {pod_name}: {e}")
-                pass
+                logger.error(f"Failed to list pods in namespace {namespace}: {e}")
+                continue
+            
+            for pod in pods.items:
+                pod_name = pod.metadata.name
+                if not pod.spec.containers:
+                    continue
+                container_name = pod.spec.containers[0].name
+                
+                log_file_path = os.path.join(task_log_dir, f"{pod_name}_{today_str}.log")
+                
+                since_seconds = task.poll_interval_seconds + 10
+                
+                try:
+                    # Use streaming to avoid loading huge logs into memory
+                    response = api.read_namespaced_pod_log(
+                        name=pod_name,
+                        namespace=namespace,
+                        container=container_name,
+                        since_seconds=since_seconds,
+                        timestamps=True,
+                        _preload_content=False # Enable streaming
+                    )
+                    
+                    self._process_log_stream(response, task, pod_name, task_log_dir, log_file_path)
+                        
+                except Exception as e:
+                    # logger.warning(f"Failed to read log for {pod_name}: {e}")
+                    pass
 
     def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
         alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }

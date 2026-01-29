@@ -20,45 +20,45 @@
       >
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
-          <template #title>仪表盘</template>
+          <template #title>Dashboard</template>
         </el-menu-item>
         
-        <div class="menu-group-title" v-if="!isCollapsed">数据流水线</div>
+        <div class="menu-group-title" v-if="!isCollapsed">Data Pipeline</div>
         <el-menu-item index="/tasks">
           <el-icon><List /></el-icon>
-          <template #title>同步任务</template>
+          <template #title>Sync Tasks</template>
         </el-menu-item>
         <el-menu-item index="/connections">
           <el-icon><Link /></el-icon>
-          <template #title>数据源</template>
+          <template #title>Data Sources</template>
         </el-menu-item>
 
-        <div class="menu-group-title" v-if="!isCollapsed">运维操作</div>
+        <div class="menu-group-title" v-if="!isCollapsed">Operations</div>
         <el-menu-item index="/ai-ops">
           <el-icon><Cpu /></el-icon>
-          <template #title>智能故障分析</template>
+          <template #title>Fault Analysis</template>
         </el-menu-item>
         <el-menu-item index="/schedules">
           <el-icon><Calendar /></el-icon>
-          <template #title>调度管理</template>
+          <template #title>Schedule Mgmt</template>
         </el-menu-item>
         
-        <div class="menu-group-title" v-if="!isCollapsed">系统维护</div>
+        <div class="menu-group-title" v-if="!isCollapsed">System Maintenance</div>
         <el-menu-item index="/logs">
           <el-icon><Monitor /></el-icon>
-          <template #title>日志监控</template>
+          <template #title>Log Monitor</template>
         </el-menu-item>
         <el-menu-item index="/system">
           <el-icon><Setting /></el-icon>
-          <template #title>系统巡检</template>
+          <template #title>System Inspection</template>
         </el-menu-item>
         <el-menu-item index="/deploy">
           <el-icon><Upload /></el-icon>
-          <template #title>服务部署</template>
+          <template #title>Deployment</template>
         </el-menu-item>
         <el-menu-item index="/permissions" v-if="isAdmin">
           <el-icon><Lock /></el-icon>
-          <template #title>权限管理</template>
+          <template #title>Access Control</template>
         </el-menu-item>
       </el-menu>
     </div>

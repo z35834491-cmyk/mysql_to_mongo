@@ -2,10 +2,10 @@ from django.db import models
 
 class MonitorTask(models.Model):
     name = models.CharField(max_length=100, default="New Monitor")
-    enabled = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=True)
     
     # K8s Config
-    k8s_namespace = models.CharField(max_length=255, default="default", help_text="K8s Namespace to watch")
+    k8s_namespace = models.CharField(max_length=255, default="default", help_text="K8s Namespace to watch (comma separated for multiple)")
     k8s_kubeconfig = models.TextField(blank=True, null=True, help_text="Kubeconfig content (YAML). If empty, use in-cluster config or default.")
     
     # S3 Config

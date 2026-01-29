@@ -90,8 +90,16 @@ class FaultAnalyzer:
             # 1. Parse Alert & Gather Context
             context_data = self._gather_context()
             
-            # 2. Call AI
-            ai_result = self._call_ai_service(context_data)
+            # 2. Check AI Switch
+            from ..models import AIConfig
+            ai_config = AIConfig.get_active_config()
+            
+            if ai_config.enable_ai_analysis:
+                # Call AI
+                ai_result = self._call_ai_service(context_data)
+            else:
+                # Self Analysis based on Prometheus metrics
+                ai_result = self._analyze_without_ai(context_data)
             
             # 3. Save Report
             AnalysisReport.objects.create(
@@ -115,6 +123,43 @@ class FaultAnalyzer:
             logger.error(f"Analysis failed: {e}", exc_info=True)
             self.incident.status = 'open'
             self.incident.save(update_fields=['status'])
+
+    def _analyze_without_ai(self, context):
+        """
+        Generate a report based on Prometheus metrics without calling LLM.
+        """
+        alert_name = self.incident.alert_name
+        metrics = context.get('metrics', {})
+        
+        # Basic construction of report from metrics
+        phenomenon = f"Detected {alert_name} alert."
+        root_cause = "Automatic analysis disabled. Please check metrics below."
+        
+        # Try to find high resource consumers from metrics keys
+        # The keys in DiagnosticStrategy are like 'top10_cpu_containers', 'top10_mem_containers'
+        
+        top_consumers = []
+        for k, v in metrics.items():
+            if 'top10' in k and v:
+                # v is a list of results. Each result has 'metric' dict and 'value' list.
+                for item in v[:3]: # Take top 3
+                    metric_labels = item.get('metric', {})
+                    pod = metric_labels.get('pod') or metric_labels.get('name') or metric_labels.get('id', 'unknown')
+                    val = item.get('value', [0, 0])[1]
+                    top_consumers.append(f"{k}: {pod} ({val})")
+        
+        if top_consumers:
+            root_cause = f"Top resource consumers identified: {', '.join(top_consumers)}"
+            
+        return {
+            "phenomenon": phenomenon,
+            "root_cause": root_cause,
+            "mitigation": "Check the highlighted pods/processes.",
+            "prevention": "Adjust resource limits or scale out.",
+            "refactoring": "Analyze application performance profiles.",
+            "solutions": ["kubectl top pod", "kubectl get events"]
+        }
+
 
     def _gather_context(self):
         raw = self.incident.raw_alert_data

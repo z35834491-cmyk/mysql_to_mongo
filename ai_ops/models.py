@@ -97,6 +97,7 @@ class AIConfig(models.Model):
 """)
 
     is_active = models.BooleanField(default=True)
+    enable_ai_analysis = models.BooleanField(default=True, help_text="Switch to enable/disable AI analysis. If disabled, uses Prometheus metrics only.")
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
