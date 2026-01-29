@@ -231,7 +231,21 @@ def role_list(request):
     
     elif request.method == 'POST':
         data = request.data
-        group, created = Group.objects.get_or_create(name=data['name'])
+        group = None
+        
+        # Try to find by ID first if provided (Edit mode)
+        if 'id' in data and data['id']:
+            try:
+                group = Group.objects.get(id=data['id'])
+                group.name = data['name']
+                group.save()
+            except Group.DoesNotExist:
+                pass
+        
+        # Fallback to get_or_create by name
+        if not group:
+            group, created = Group.objects.get_or_create(name=data['name'])
+            
         if 'permissions' in data:
             perms = Permission.objects.filter(codename__in=data['permissions'])
             group.permissions.set(perms)

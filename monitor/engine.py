@@ -39,7 +39,7 @@ class MonitorEngine:
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
-            logger.info("Monitor engine started")
+            logger.info("Monitor engine started (v2-patched)")
 
     def stop(self):
         self._stop_event.set()
