@@ -39,6 +39,7 @@ class MonitorTask(models.Model):
     last_error = models.TextField(null=True, blank=True)
     alerts_sent_count = models.IntegerField(default=0)
     alert_state = models.JSONField(default=dict, blank=True, help_text="Runtime state for alert silencing")
+    threshold_state = models.JSONField(default=dict, blank=True, help_text="Runtime state for threshold counting")
 
     def __str__(self):
         return self.name
