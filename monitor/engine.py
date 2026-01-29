@@ -217,131 +217,134 @@ class MonitorEngine:
         
         try:
             # Open main file in append mode. Buffering is default.
-            with open(log_file_path, "a", encoding="utf-8") as f:
-                for line_bytes in stream:
-                    if not line_bytes:
-                        continue
-                        
-                    # Decode bytes to string
-                    line = line_bytes.decode('utf-8', errors='replace')
+            # with open(log_file_path, "a", encoding="utf-8") as f:
+            for line_bytes in stream:
+                if not line_bytes:
+                    continue
                     
-                    # Write to main file immediately
-                    f.write(line)
-                    if not line.endswith('\n'):
-                        f.write('\n')
-                    
-                    # --- Analysis Logic Per Line ---
-                    if any(k in line for k in clean_ignore_keywords):
+                # Decode bytes to string
+                line = line_bytes.decode('utf-8', errors='replace')
+                
+                # Write to main file immediately -> DEPRECATED: Only collecting error logs now
+                # f.write(line)
+                # if not line.endswith('\n'):
+                #     f.write('\n')
+                
+                # --- Analysis Logic Per Line ---
+                if any(k in line for k in clean_ignore_keywords):
                         # Even if ignored, should we maintain context? 
                         # Probably yes, as context might be relevant.
                         # But user said "ignore", usually means noise. 
                         # Let's skip entirely to be safe and clean.
                         continue
 
-                    line_lower = line.lower()
-                    
-                    # Simple counting
-                    if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
-                        count_error += 1
-                    elif 'warn' in line_lower:
-                        count_warn += 1
-                    elif 'info' in line_lower:
-                        count_info += 1
-                    else:
-                        count_other += 1
+                line_lower = line.lower()
+                
+                # Simple counting
+                if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
+                    count_error += 1
+                elif 'warn' in line_lower:
+                    count_warn += 1
+                elif 'info' in line_lower:
+                    count_info += 1
+                else:
+                    count_other += 1
 
-                    # Check for "Trigger" conditions (Alerts, Errors, Record Only)
-                    
-                    # 1. Immediate Alerts
-                    is_alert = False
-                    if clean_immediate_keywords:
-                        for k in clean_immediate_keywords:
-                            if k.lower() in line_lower:
+                # Check for "Trigger" conditions (Alerts, Errors, Record Only)
+                
+                # 1. Immediate Alerts
+                is_alert = False
+                if clean_immediate_keywords:
+                    for k in clean_immediate_keywords:
+                        if k.lower() in line_lower:
+                            alerts.append({
+                                'type': 'IMMEDIATE',
+                                'keyword': k,
+                                'msg': f"[IMMEDIATE] {line}"
+                            })
+                            is_alert = True
+                            break # Match first keyword only per line to avoid dupes
+                
+                # 2. Threshold Alerts
+                current_ts = time.time()
+                try:
+                    ts_str = line[:19]
+                    dt = datetime.datetime.fromisoformat(ts_str)
+                    current_ts = dt.timestamp()
+                except:
+                    pass
+
+                if clean_alert_keywords:
+                    for k in clean_alert_keywords:
+                        if k.lower() in line_lower:
+                            if k not in threshold_state:
+                                threshold_state[k] = []
+                            threshold_state[k].append(current_ts)
+                            threshold_state[k] = [t for t in threshold_state[k] if current_ts - t <= threshold_window]
+                            
+                            if len(threshold_state[k]) >= threshold_count:
                                 alerts.append({
-                                    'type': 'IMMEDIATE',
+                                    'type': 'THRESHOLD',
                                     'keyword': k,
-                                    'msg': f"[IMMEDIATE] {line}"
+                                    'msg': f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}"
                                 })
                                 is_alert = True
-                                break # Match first keyword only per line to avoid dupes
-                    
-                    # 2. Threshold Alerts
-                    current_ts = time.time()
-                    try:
-                        ts_str = line[:19]
-                        dt = datetime.datetime.fromisoformat(ts_str)
-                        current_ts = dt.timestamp()
-                    except:
-                        pass
+                                threshold_state[k] = []
+                
+                # 3. Generic Errors (for context recording)
+                is_error = any(k in line_lower for k in default_error_keywords)
+                
+                # 4. Record Only
+                is_record = False
+                if clean_record_keywords:
+                     if any(k in line for k in clean_record_keywords):
+                         is_record = True
 
-                    if clean_alert_keywords:
-                        for k in clean_alert_keywords:
-                            if k.lower() in line_lower:
-                                if k not in threshold_state:
-                                    threshold_state[k] = []
-                                threshold_state[k].append(current_ts)
-                                threshold_state[k] = [t for t in threshold_state[k] if current_ts - t <= threshold_window]
-                                
-                                if len(threshold_state[k]) >= threshold_count:
-                                    alerts.append({
-                                        'type': 'THRESHOLD',
-                                        'keyword': k,
-                                        'msg': f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}"
-                                    })
-                                    is_alert = True
-                                    threshold_state[k] = []
-                    
-                    # 3. Generic Errors (for context recording)
-                    is_error = any(k in line_lower for k in default_error_keywords)
-                    
-                    # 4. Record Only
-                    is_record = False
-                    if clean_record_keywords:
-                         if any(k in line for k in clean_record_keywords):
-                             is_record = True
+                # --- Context Recording Logic ---
+                # Trigger condition: Alert OR Error OR Record
+                should_trigger_context = is_alert or is_error or is_record
+                
+                if should_trigger_context:
+                    # Add to error_lines for aggregated log
+                    error_lines.append(line.strip())
 
-                    # --- Context Recording Logic ---
-                    # Trigger condition: Alert OR Error OR Record
-                    should_trigger_context = is_alert or is_error or is_record
+                    # If we are not already recording, dump context first
+                    if lines_to_record_counter <= 0:
+                        # Write separator if needed
+                        error_file_handle.write("-" * 40 + "\n")
+                        # Write context buffer
+                        for ctx_line in context_buffer:
+                            error_file_handle.write(f"[CTX] {ctx_line}")
+                            if not ctx_line.endswith('\n'): error_file_handle.write('\n')
                     
-                    if should_trigger_context:
-                        # If we are not already recording, dump context first
-                        if lines_to_record_counter <= 0:
-                            # Write separator if needed
-                            error_file_handle.write("-" * 40 + "\n")
-                            # Write context buffer
-                            for ctx_line in context_buffer:
-                                error_file_handle.write(f"[CTX] {ctx_line}")
-                                if not ctx_line.endswith('\n'): error_file_handle.write('\n')
-                        
-                        # Reset counter to capture next N lines
-                        lines_to_record_counter = CONTEXT_LINES
-                        
-                        # Write current line with prefix
-                        prefix = ""
-                        if is_alert: prefix += "[ALERT]"
-                        if is_error: prefix += "[ERROR]"
-                        if is_record: prefix += "[RECORD]"
-                        error_file_handle.write(f"{prefix} {line}")
+                    # Reset counter to capture next N lines
+                    lines_to_record_counter = CONTEXT_LINES
+                    
+                    # Write current line with prefix
+                    prefix = ""
+                    if is_alert: prefix += "[ALERT]"
+                    if is_error: prefix += "[ERROR]"
+                    if is_record: prefix += "[RECORD]"
+                    error_file_handle.write(f"{prefix} {line}")
+                    if not line.endswith('\n'): error_file_handle.write('\n')
+                    
+                else:
+                    # Normal line
+                    if lines_to_record_counter > 0:
+                        # We are in the "after" window
+                        error_file_handle.write(f"[CTX] {line}")
                         if not line.endswith('\n'): error_file_handle.write('\n')
-                        
-                    else:
-                        # Normal line
-                        if lines_to_record_counter > 0:
-                            # We are in the "after" window
-                            error_file_handle.write(f"[CTX] {line}")
-                            if not line.endswith('\n'): error_file_handle.write('\n')
-                            lines_to_record_counter -= 1
+                        lines_to_record_counter -= 1
+                
+                # Update context buffer (always keep last N lines)
+                context_buffer.append(line)
+                if len(context_buffer) > CONTEXT_LINES:
+                    context_buffer.pop(0)
                     
-                    # Update context buffer (always keep last N lines)
-                    context_buffer.append(line)
-                    if len(context_buffer) > CONTEXT_LINES:
-                        context_buffer.pop(0)
-                        
-                    # Flush error file periodically or on write? 
-                    # Python's file object is buffered, let's flush on trigger to be safe
-                    if should_trigger_context:
-                        error_file_handle.flush()
+                # Flush error file periodically or on write? 
+                # Python's file object is buffered, let's flush on trigger to be safe
+                if should_trigger_context:
+                    error_file_handle.flush()
 
         finally:
             if error_file_handle:
@@ -376,14 +379,15 @@ class MonitorEngine:
 
         # 3. Send Slack Alerts
         if alerts:
-            self._send_slack_alert(alerts, task, source_name, log_dir)
+            error_filename = os.path.basename(error_file_path)
+            self._send_slack_alert(alerts, task, source_name, log_dir, error_filename)
 
     def _analyze_logs(self, log_content, task, source_name, log_dir):
         # DEPRECATED: Kept only if needed for non-streaming fallback, 
         # but _fetch_k8s_logs now uses _process_log_stream.
         pass
 
-    def _send_slack_alert(self, alerts, task, source, log_dir):
+    def _send_slack_alert(self, alerts, task, source, log_dir, error_filename=None):
         if not task.alert_enabled:
             return
             
@@ -436,6 +440,13 @@ class MonitorEngine:
             return # All silenced
             
         msg = f"🚨 *Alert in {source} (Task: {task.name})*\n"
+        
+        if error_filename:
+            # Assuming localhost:5173 for local dev as per context
+            # In production this should be a configured base URL
+            link = f"http://localhost:5173/logs?taskId={task.id}&filename={error_filename}"
+            msg += f"👉 <{link}|View Detailed Logs>\n"
+            
         snippet = "\n".join(final_msgs[:10])
         if len(final_msgs) > 10:
             snippet += f"\n... and {len(final_msgs)-10} more lines"

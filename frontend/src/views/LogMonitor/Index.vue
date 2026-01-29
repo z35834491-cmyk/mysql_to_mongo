@@ -310,11 +310,13 @@
 <script setup lang="ts">
 import _ from 'lodash'
 import { ref, onMounted, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { monitorApi, type MonitorTask } from '@/api/monitor'
 import { taskApi } from '@/api/task'
 import { Refresh, Plus, VideoPlay, VideoPause, Document, Search, Download, Setting, Sort } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
+const route = useRoute()
 const systemStore = useSystemStore()
 const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_tasks'))
 
@@ -679,8 +681,27 @@ watch(viewMode, (val) => {
   else fetchLocalFiles(1)
 })
 
-onMounted(() => {
-  fetchTasks()
+onMounted(async () => {
+  await fetchTasks()
+  
+  // Auto-open from query params
+  const tId = route.query.taskId
+  const fName = route.query.filename
+  
+  if (tId) {
+    const task = tasks.value.find(t => t.id === Number(tId))
+    if (task) {
+      selectedTaskId.value = task.id!
+      selectedTask.value = { ...task }
+      form.value = { ...task }
+      
+      await fetchSavedLogs(1)
+      
+      if (fName) {
+        selectSavedFile(String(fName))
+      }
+    }
+  }
 })
 </script>
 

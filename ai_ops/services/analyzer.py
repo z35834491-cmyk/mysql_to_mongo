@@ -25,38 +25,54 @@ class DiagnosticStrategy:
         """
         queries = {}
         instance = labels.get('instance')
+        node = labels.get('node') or labels.get('nodename')
         namespace = labels.get('namespace')
         pod = labels.get('pod')
 
         # Base filter
-        node_filter = f'instance="{instance}"' if instance else ""
+        # Prefer 'node' label if available for cAdvisor/Kubelet metrics, otherwise try instance
+        # Note: instance in node_exporter is usually IP:Port, in cAdvisor it might be NodeName
+        node_filter_cadvisor = f'node="{node}"' if node else (f'instance="{instance}"' if instance else "")
+        node_filter_nodeexp = f'instance="{instance}"' if instance else (f'node="{node}"' if node else "")
+        
         pod_filter = f'namespace="{namespace}", pod="{pod}"' if namespace and pod else ""
 
         if 'CPU' in alert_name:
             if pod_filter:
                 # Pod level CPU
                 queries['pod_cpu_usage'] = f'rate(container_cpu_usage_seconds_total{{{pod_filter}}}[5m])'
-            elif node_filter:
-                # Node level CPU + Top 5 Processes (simulated via container metrics if on K8s node)
-                queries['node_cpu_idle'] = f'rate(node_cpu_seconds_total{{mode="idle", {node_filter}}}[5m])'
-                # Find top 5 containers using CPU on this node
-                queries['top5_cpu_containers'] = f'topk(5, rate(container_cpu_usage_seconds_total{{instance=~"{instance}.*"}}[5m]))'
+            else:
+                # Node level CPU
+                if node_filter_nodeexp:
+                    queries['node_cpu_usage'] = f'100 - (avg by (instance) (rate(node_cpu_seconds_total{{mode="idle", {node_filter_nodeexp}}}[5m])) * 100)'
+                
+                # Top 5 Processes/Containers on the node
+                # We use a broad regex for instance if we only have IP, or just rely on node label if present
+                filter_str = node_filter_cadvisor if node_filter_cadvisor else 'id="/"' # Fallback
+                queries['top10_cpu_containers'] = f'topk(10, sort_desc(rate(container_cpu_usage_seconds_total{{{filter_str}}}[5m])))'
 
         elif 'Memory' in alert_name:
             if pod_filter:
                 queries['pod_memory_usage'] = f'container_memory_usage_bytes{{{pod_filter}}}'
-            elif node_filter:
-                queries['node_memory_free'] = f'node_memory_MemFree_bytes{{{node_filter}}}'
-                queries['top5_mem_containers'] = f'topk(5, container_memory_usage_bytes{{instance=~"{instance}.*"}})'
+            else:
+                if node_filter_nodeexp:
+                    queries['node_memory_usage'] = f'100 * (1 - node_memory_MemFree_bytes{{{node_filter_nodeexp}}} / node_memory_MemTotal_bytes{{{node_filter_nodeexp}}})'
+                
+                filter_str = node_filter_cadvisor if node_filter_cadvisor else 'id="/"'
+                queries['top10_mem_containers'] = f'topk(10, sort_desc(container_memory_usage_bytes{{{filter_str}}}))'
 
         elif 'IO' in alert_name or 'Disk' in alert_name:
-            if node_filter:
-                # Node IO
-                queries['node_disk_read'] = f'rate(node_disk_read_bytes_total{{{node_filter}}}[5m])'
-                queries['node_disk_write'] = f'rate(node_disk_written_bytes_total{{{node_filter}}}[5m])'
-                # Attempt to find which container is doing IO (if cAdvisor exports it)
-                # container_fs_writes_bytes_total
-                queries['top5_io_containers'] = f'topk(5, rate(container_fs_writes_bytes_total{{instance=~"{instance}.*"}}[5m]))'
+            if pod_filter:
+                queries['pod_io_read'] = f'rate(container_fs_reads_bytes_total{{{pod_filter}}}[5m])'
+                queries['pod_io_write'] = f'rate(container_fs_writes_bytes_total{{{pod_filter}}}[5m])'
+            else:
+                if node_filter_nodeexp:
+                    queries['node_disk_read'] = f'rate(node_disk_read_bytes_total{{{node_filter_nodeexp}}}[5m])'
+                    queries['node_disk_write'] = f'rate(node_disk_written_bytes_total{{{node_filter_nodeexp}}}[5m])'
+                    queries['node_disk_util'] = f'rate(node_disk_io_time_seconds_total{{{node_filter_nodeexp}}}[5m])'
+                
+                filter_str = node_filter_cadvisor if node_filter_cadvisor else 'id="/"'
+                queries['top10_io_containers'] = f'topk(10, sort_desc(rate(container_fs_writes_bytes_total{{{filter_str}}}[5m]) + rate(container_fs_reads_bytes_total{{{filter_str}}}[5m])))'
 
         return queries
 
