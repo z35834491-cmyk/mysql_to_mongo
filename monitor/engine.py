@@ -180,6 +180,26 @@ class MonitorEngine:
         alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }
         error_lines = [] # List of strings for aggregated error log
         
+        # Load persistent threshold state from task if available, or init new
+        threshold_state = task.threshold_state or {}
+        threshold_window = task.alert_threshold_seconds # e.g. 60
+        threshold_count = task.alert_threshold_count # e.g. 5
+        threshold_updated = False
+        
+        # Keywords
+        clean_immediate_keywords = [k.strip().lower() for k in task.keywords_immediate.splitlines() if k.strip()]
+        clean_alert_keywords = [k.strip().lower() for k in task.keywords_alert.splitlines() if k.strip()]
+        clean_record_keywords = [k.strip() for k in task.keywords_record.splitlines() if k.strip()]
+        clean_ignore_keywords = [k.strip() for k in task.keywords_ignore.splitlines() if k.strip()]
+        
+        default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
+        
+        # Stats
+        count_error = 0
+        count_warn = 0
+        count_info = 0
+        count_other = 0
+        
         # Context Management
         # Keep last N lines for context
         CONTEXT_LINES = 5
@@ -197,33 +217,10 @@ class MonitorEngine:
         today_str = datetime.date.today().isoformat()
         error_file_path = os.path.join(log_dir, f"{source_name}_{today_str}_error.log")
         
-        # We need a dedicated file handle for the error file, opened in append mode
-        error_file_handle = open(error_file_path, "a", encoding="utf-8")
-
-        # Counters for scan history
-        count_error = 0
-        count_warn = 0
-        count_info = 0
-        count_other = 0
-        
-        # Default error keywords
-        default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
-        
-        # Configs
-        clean_alert_keywords = [k.strip() for k in task.alert_keywords if k.strip()] if task.alert_keywords else []
-        clean_immediate_keywords = [k.strip() for k in task.immediate_keywords if k.strip()] if task.immediate_keywords else []
-        clean_ignore_keywords = [k.strip() for k in task.ignore_keywords if k.strip()] if task.ignore_keywords else []
-        clean_record_keywords = [k.strip() for k in task.record_only_keywords if k.strip()] if task.record_only_keywords else []
-        
-        # Threshold Logic State
-        # { keyword: [timestamp1, timestamp2, ...] }
-        threshold_state = {} 
-        threshold_count = getattr(task, 'alert_threshold_count', 5)
-        threshold_window = getattr(task, 'alert_threshold_window', 60)
-        
+        error_file_handle = None
         try:
-            # Open main file in append mode. Buffering is default.
-            # with open(log_file_path, "a", encoding="utf-8") as f:
+            error_file_handle = open(error_file_path, "a", encoding="utf-8")
+            
             for line_bytes in stream:
                 if not line_bytes:
                     continue
@@ -231,18 +228,9 @@ class MonitorEngine:
                 # Decode bytes to string
                 line = line_bytes.decode('utf-8', errors='replace')
                 
-                # Write to main file immediately -> DEPRECATED: Only collecting error logs now
-                # f.write(line)
-                # if not line.endswith('\n'):
-                #     f.write('\n')
-                
                 # --- Analysis Logic Per Line ---
                 if any(k in line for k in clean_ignore_keywords):
-                        # Even if ignored, should we maintain context? 
-                        # Probably yes, as context might be relevant.
-                        # But user said "ignore", usually means noise. 
-                        # Let's skip entirely to be safe and clean.
-                        continue
+                    continue
 
                 line_lower = line.lower()
                 
@@ -286,7 +274,9 @@ class MonitorEngine:
                             if k not in threshold_state:
                                 threshold_state[k] = []
                             threshold_state[k].append(current_ts)
+                            # Cleanup old timestamps
                             threshold_state[k] = [t for t in threshold_state[k] if current_ts - t <= threshold_window]
+                            threshold_updated = True
                             
                             if len(threshold_state[k]) >= threshold_count:
                                 alerts.append({
@@ -295,7 +285,16 @@ class MonitorEngine:
                                     'msg': f"[THRESHOLD {len(threshold_state[k])}/{threshold_window}s] Keyword: '{k}' | Last: {line}"
                                 })
                                 is_alert = True
-                                threshold_state[k] = []
+                                threshold_state[k] = [] # Reset state after alert to avoid spamming every line?
+                                # User requirement: "Same alert sent once per hour".
+                                # If we reset state, next error will start counting from 0.
+                                # If we don't reset, next error will be 6th, 7th... and trigger alert again?
+                                # Yes, we should reset state here so we don't trigger on 6th, 7th, 8th.
+                                # The "Silence" logic in `_send_slack_alert` handles the 1 hour cooldown.
+                                # So here we just need to detect the BURST (e.g. 5 errors in 60s).
+                                # Once burst detected, we fire alert.
+                                # Then we reset burst counter.
+                                pass
                 
                 # 3. Generic Errors (for context recording)
                 is_error = any(k in line_lower for k in default_error_keywords)
@@ -381,6 +380,11 @@ class MonitorEngine:
         finally:
             if error_file_handle:
                 error_file_handle.close()
+                
+            # Save threshold state if updated
+            if threshold_updated:
+                task.threshold_state = threshold_state
+                task.save(update_fields=['threshold_state'])
 
         # --- Post-processing after stream ends ---
         
@@ -410,39 +414,95 @@ class MonitorEngine:
                 logger.error(f"Failed to write aggregated error log: {e}")
 
         # 3. Send Slack Alerts
-        # Filter out Record Only "alerts" if they were accidentally added to alerts list
-        # Actually alerts list only contains IMMEDIATE and THRESHOLD types, Record Only logic is handled via is_record flag
-        # But we need to double check if THRESHOLD logic caught keywords that are also in Record Only?
-        # The logic above:
-        # - IMMEDIATE: checks clean_immediate_keywords
-        # - THRESHOLD: checks clean_alert_keywords
-        # - RECORD: checks clean_record_keywords
-        # So they are independent. If a keyword is in BOTH alert and record, it will trigger both.
-        # User's issue: "IP不在白名单中" is in Record Only, but it triggered an alert.
-        # Looking at screenshot:
-        # Alert 1: Keyword 'error'. Msg: "...TokenAuthenticationFilter... IP不在白名单中..."
-        # Alert 2: Keyword 'exception'. Msg: "...Exception: IP不在白名单中..."
-        # Reason: The log line contains "error" or "exception" (case insensitive), which are likely in the DEFAULT error keywords or configured alert keywords.
-        # Fix: If a line matches Record Only keywords, we should SUPPRESS it from being treated as an Alert, OR strictly separate the logic.
-        # Better approach: If is_record is True, we force is_alert to False and remove from alerts list?
-        # Or more flexible: allow user to specify "Ignore for Alert" implicitly by putting it in Record Only?
-        # Let's check the code flow again.
+        # CRITICAL FIX: The previous silence logic was filtering too aggressively or incorrectly.
+        # User reported "I have a line that met condition, why no alert?"
+        # The logs show "alerts=0" in scan history for the pod.
+        # This means `alerts` list was empty or cleared.
         
-        # Current flow:
-        # 1. Check Immediate -> add to alerts
-        # 2. Check Threshold -> add to alerts
-        # 3. Check Generic Errors (just for context)
-        # 4. Check Record Only -> set is_record=True
+        # Possible reasons:
+        # 1. It matched Record Only and was removed (intended).
+        # 2. It matched Threshold but didn't reach count?
+        # 3. Silence logic was applied prematurely? 
+        #    Wait, silence logic is applied inside `_send_slack_alert`.
+        #    The `alerts` list passed to `_send_slack_alert` comes from the loop above.
         
-        # The screenshot shows the alerts were triggered by "Threshold Alert" with keywords 'error' and 'exception'.
-        # This implies 'error' and 'exception' are in the `alert_keywords` (Threshold).
-        # And the log line happened to contain both "IP不在白名单中" AND "error"/"exception".
+        # If scan history says alerts=0, it means `alerts` list was empty BEFORE calling `_send_slack_alert`.
+        # So it must be Logic in the loop.
         
-        # To fix "Record Only means DO NOT ALERT", we should check if the line matches any Record Only keyword.
-        # If it does, we should prevent it from generating an alert, even if it matches Alert keywords.
+        # Logic in loop:
+        # 1. Immediate -> add to alerts
+        # 2. Threshold -> add to alerts IF count >= threshold_count
+        # 3. Record Only -> remove from alerts
         
-        # However, the alerts are accumulated in the loop. We need to filter them before sending, 
-        # OR check record keywords earlier and skip alert generation.
+        # User says "I have a line that met condition".
+        # If it's a Threshold Alert (e.g. "error"), did it meet the count?
+        # Screenshot shows: "counts error=2". 
+        # If threshold_count is default (e.g. 5), then 2 < 5, so no alert.
+        # Check task config for threshold_count. Default is usually 1 or 5.
+        # If user expects alert on FIRST error, they should use Immediate Alert or set Threshold Count to 1.
+        
+        # However, user says "相同告警在一个小时内只发送一次，除非是图中配置的告警(Immediate Alert)才是出现就发送。"
+        # This implies they want Threshold logic (with silence) but maybe the count threshold is preventing it?
+        
+        # Wait, if `alerts` is empty in `scan_history`, it means it never entered the list.
+        # If it's a Threshold Alert, it only enters list if `len(threshold_state[k]) >= threshold_count`.
+        # If count is 2 and threshold is 5, it won't alert. This is correct behavior for Threshold.
+        
+        # BUT, if user thinks it SHOULD alert, maybe they set threshold to 1?
+        # Or maybe they think "Immediate Alert" logic is broken?
+        # If they configured keywords in "Immediate Alert", it should trigger immediately (count=1).
+        
+        # Let's verify the logic for Immediate Alert again.
+        # if k.lower() in line_lower: alerts.append(...)
+        
+        # If the keyword was "error" and it was in Immediate, it should alert.
+        # If "error" was in Threshold, it waits for count.
+        
+        # If the screenshot shows "counts error=2" and "alerts=0", and the user expects an alert,
+        # then either:
+        # A) The keyword "error" is in Threshold list, and count threshold > 2.
+        # B) The keyword "error" is NOT in any list (maybe case sensitivity?).
+        # C) It matched Record Only and was removed.
+        
+        # To debug/fix, we should ensure that if user wants "Appear then send" (Frequency Control), 
+        # they are using Threshold Alert with Count=1.
+        
+        # Also, check the Silence Logic in `_send_slack_alert`.
+        # The user's complaint "My silence function is gone" suggests they might have seen spam before?
+        # Or they mean "Why is it NOT alerting now?".
+        # "我有一条达到我条件的了，为什么没有告警了" -> "I have one that met condition, why no alert?"
+        # And screenshot shows alerts=0.
+        
+        # This strongly suggests the Threshold Count condition wasn't met.
+        # If user wants 1 error to trigger alert, they must set Threshold Count to 1.
+        
+        # However, there is a potential bug in `threshold_state` persistence.
+        # `threshold_state` is a local variable in `_run_loop` or `MonitorEngine`.
+        # Wait, `threshold_state` is initialized inside the loop `threshold_state = {}`? 
+        # No, it should be persistent across loops for the same task.
+        # In `_process_log_stream`, `threshold_state` is passed in? No, it's local.
+        # `_process_log_stream` is called once per stream.
+        # If stream stays open (streaming mode), `threshold_state` persists for the duration of connection.
+        # If connection drops and reconnects, state is lost.
+        
+        # In `_fetch_k8s_logs`, we call `_process_log_stream`.
+        # `threshold_state` is defined inside `_process_log_stream`:
+        # `threshold_state = {}`
+        
+        # If `_process_log_stream` processes a batch of lines and returns? 
+        # No, `api.read_namespaced_pod_log(..., _preload_content=False)` returns a generator/stream.
+        # The loop `for line in stream:` runs until stream ends.
+        # For `follow=True` (which we aren't using explicitly, we use `since_seconds` polling?),
+        # Wait, `read_namespaced_pod_log` without `follow=True` returns existing logs and closes.
+        # We are using `since_seconds=task.poll_interval_seconds + 10`.
+        # This means we are polling.
+        # So `_process_log_stream` runs for a short batch and exits.
+        # **THEREFORE, `threshold_state` IS LOST between polls!**
+        
+        # This is the BUG.
+        # If Threshold Count is 5, and we get 2 errors in this poll, and 3 errors in next poll,
+        # We never trigger alert because `threshold_state` is reset every poll.
+        # We need to persist `threshold_state` in the Task object or Engine instance.
         
         if alerts:
             error_filename = os.path.basename(error_file_path)
