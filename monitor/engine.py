@@ -461,9 +461,55 @@ class MonitorEngine:
         if not webhook_url:
             return
             
-        # Group by type
-        # Limit to first 10 to avoid spam
-        shown_alerts = alerts[:10]
+        # --- Deduplication Logic (Alert Silence) ---
+        # 1. Group alerts by keyword
+        # 2. Check silence period for each keyword
+        # 3. Filter out silenced alerts
+        
+        now = time.time()
+        silence_seconds = task.alert_silence_minutes * 60
+        alert_state = task.alert_state or {}
+        
+        # Filter alerts
+        filtered_alerts = []
+        updated_state = False
+        
+        # Helper to get keyword from alert
+        # Alert dict: {'type': 'IMMEDIATE'|'THRESHOLD', 'keyword': 'xxx', 'msg': '...'}
+        
+        # We process alerts in order. 
+        # For IMMEDIATE alerts, we might want to respect silence too? User said "unless it is configured in the graph (Immediate) then send immediately"
+        # The user input says: "相同告警在一个小时内只发送一次，除非是图中配置的告警(Immediate Alert)才是出现就发送。"
+        # This implies:
+        # - THRESHOLD alerts: Apply silence logic (deduplication).
+        # - IMMEDIATE alerts: Do NOT apply silence logic (always send).
+        
+        for alert in alerts:
+            atype = alert.get('type')
+            keyword = alert.get('keyword')
+            
+            if atype == 'IMMEDIATE':
+                # Immediate alerts always pass through
+                filtered_alerts.append(alert)
+            else:
+                # Threshold alerts check silence
+                last_sent = alert_state.get(keyword, 0)
+                if now - last_sent > silence_seconds:
+                    filtered_alerts.append(alert)
+                    alert_state[keyword] = now
+                    updated_state = True
+                else:
+                    logger.info(f"Silenced alert for '{keyword}' (Last sent: {datetime.datetime.fromtimestamp(last_sent)})")
+
+        if updated_state:
+            task.alert_state = alert_state
+            task.save(update_fields=['alert_state'])
+            
+        if not filtered_alerts:
+            return
+
+        # Use filtered alerts for display
+        shown_alerts = filtered_alerts[:10]
         
         blocks = [
             {
@@ -513,13 +559,13 @@ class MonitorEngine:
                 }
             })
             
-        if len(alerts) > 10:
+        if len(filtered_alerts) > 10:
              blocks.append({
                 "type": "context",
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": f"... and {len(alerts) - 10} more alerts."
+                        "text": f"... and {len(filtered_alerts) - 10} more alerts."
                     }
                 ]
             })
