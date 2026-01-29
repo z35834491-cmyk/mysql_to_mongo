@@ -192,8 +192,16 @@ class FaultAnalyzer:
             try:
                 k8s_data = self._collect_k8s_info(labels)
                 if k8s_data:
+                    # Strategy: Provide BOTH Describe info and Logs to AI
+                    
+                    # 1. Always append Describe/Event summary
+                    context['logs'].append(f"--- Pod Describe / Events ---\n{k8s_data['text_summary']}")
+                    
+                    # 2. If Logs exist, append them as well
                     if k8s_data.get('logs'):
-                        context['logs'].append(f"--- K8s Diagnosis ---\n{k8s_data['text_summary']}")
+                         logs_str = "\n".join(k8s_data['logs'])
+                         context['logs'].append(f"--- Pod Logs ---\n{logs_str}")
+
                     context['events'] = k8s_data.get('events', [])
                     context['pod_status'] = k8s_data.get('pod_status', {})
                 else:
@@ -223,6 +231,8 @@ class FaultAnalyzer:
                 return None
         
         v1 = client.CoreV1Api()
+        app_v1 = client.AppsV1Api()
+        
         namespace = labels.get('namespace', 'default')
         pod_name = labels.get('pod')
         
@@ -251,83 +261,133 @@ class FaultAnalyzer:
         
         info_lines = []
         try:
-            # 1. Get Pod Status
+            # 1. Fetch Pod Object
             pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-            info_lines.append(f"Pod Status: {pod.status.phase}")
             
+            # --- Emulate `kubectl describe pod` output structure ---
+            
+            # Header Info
+            info_lines.append(f"Name:         {pod.metadata.name}")
+            info_lines.append(f"Namespace:    {pod.metadata.namespace}")
+            info_lines.append(f"Priority:     {pod.spec.priority or 0}")
+            info_lines.append(f"Node:         {pod.spec.node_name}/{pod.status.host_ip}")
+            info_lines.append(f"Start Time:   {pod.status.start_time}")
+            info_lines.append(f"Labels:       {json.dumps(pod.metadata.labels, indent=2)}")
+            info_lines.append(f"Annotations:  {json.dumps(pod.metadata.annotations, indent=2)}")
+            info_lines.append(f"Status:       {pod.status.phase}")
+            info_lines.append(f"IP:           {pod.status.pod_ip}")
+            
+            # Controllers
+            if pod.metadata.owner_references:
+                controllers = [f"{ref.kind}/{ref.name}" for ref in pod.metadata.owner_references]
+                info_lines.append(f"Controlled By: {', '.join(controllers)}")
+            
+            # Containers Detail
+            info_lines.append("\nContainers:")
+            for c in pod.spec.containers:
+                info_lines.append(f"  {c.name}:")
+                info_lines.append(f"    Image:          {c.image}")
+                
+                # Find container status
+                c_status = next((s for s in (pod.status.container_statuses or []) if s.name == c.name), None)
+                if c_status:
+                    info_lines.append(f"    Container ID:   {c_status.container_id}")
+                    # State
+                    if c_status.state.running:
+                        info_lines.append(f"    State:          Running")
+                        info_lines.append(f"      Started:      {c_status.state.running.started_at}")
+                    elif c_status.state.waiting:
+                        info_lines.append(f"    State:          Waiting")
+                        info_lines.append(f"      Reason:       {c_status.state.waiting.reason}")
+                        info_lines.append(f"      Message:      {c_status.state.waiting.message}")
+                    elif c_status.state.terminated:
+                        info_lines.append(f"    State:          Terminated")
+                        info_lines.append(f"      Reason:       {c_status.state.terminated.reason}")
+                        info_lines.append(f"      Exit Code:    {c_status.state.terminated.exit_code}")
+                    
+                    info_lines.append(f"    Ready:          {c_status.ready}")
+                    info_lines.append(f"    Restart Count:  {c_status.restart_count}")
+                
+                # Limits/Requests
+                resources = c.resources
+                if resources:
+                    if resources.limits:
+                        info_lines.append(f"    Limits:         {resources.limits}")
+                    if resources.requests:
+                        info_lines.append(f"    Requests:       {resources.requests}")
+                
+                # Ports
+                if c.ports:
+                    ports = [f"{p.container_port}/{p.protocol}" for p in c.ports]
+                    info_lines.append(f"    Ports:          {', '.join(ports)}")
+
+            # Conditions
+            info_lines.append("\nConditions:")
+            info_lines.append("  Type              Status")
+            if pod.status.conditions:
+                for cond in pod.status.conditions:
+                    info_lines.append(f"  {cond.type:<17} {cond.status}")
+            
+            # Events
+            info_lines.append("\nEvents:")
+            info_lines.append("  Type    Reason     Age    From               Message")
+            info_lines.append("  ----    ------     ---    ----               -------")
+            
+            try:
+                events = v1.list_namespaced_event(namespace, field_selector=f'involvedObject.name={pod_name}')
+                # Sort events by timestamp
+                sorted_events = sorted(events.items, key=lambda e: e.last_timestamp or e.event_time or datetime.datetime.min)
+                
+                for e in sorted_events:
+                    # Calculate age (approx)
+                    age = "N/A"
+                    if e.last_timestamp:
+                        delta = timezone.now() - e.last_timestamp
+                        age = f"{int(delta.total_seconds())}s"
+                    
+                    source = e.source.component if e.source else ""
+                    msg = (e.message[:100] + '..') if e.message and len(e.message) > 100 else e.message
+                    info_lines.append(f"  {e.type:<7} {e.reason:<10} {age:<6} {source:<18} {msg}")
+                    
+                    # Also populate structured result for frontend
+                    result['events'].append({
+                        "type": e.type,
+                        "reason": e.reason,
+                        "message": e.message,
+                        "count": e.count,
+                        "last_timestamp": e.last_timestamp.isoformat() if e.last_timestamp else None
+                    })
+            except Exception as e:
+                info_lines.append(f"  <Failed to fetch events: {e}>")
+
+            result['text_summary'] = "\n".join(info_lines)
+            
+            # --- End Emulation ---
+
+            # Also populate pod_status structure for frontend cards
             result['pod_status'] = {
                 "name": pod.metadata.name,
                 "namespace": pod.metadata.namespace,
                 "phase": pod.status.phase,
-                "conditions": [],
+                "conditions": [{"type": c.type, "status": c.status} for c in (pod.status.conditions or [])],
                 "containers": []
             }
             
-            # Add Conditions
-            if pod.status.conditions:
-                info_lines.append("Conditions:")
-                for cond in pod.status.conditions:
-                    status_symbol = "✔" if cond.status == 'True' else "✖"
-                    info_lines.append(f"  [{status_symbol}] {cond.type}: {cond.reason or ''} {cond.message or ''}")
-                    result['pod_status']['conditions'].append({
-                        "type": cond.type,
-                        "status": cond.status,
-                        "reason": cond.reason,
-                        "message": cond.message
-                    })
-
-            # Analyze container statuses
-            is_unhealthy = False
-            container_statuses = pod.status.container_statuses or []
-            for cs in container_statuses:
-                status_str = "Running"
-                if cs.state.waiting:
-                    status_str = f"Waiting ({cs.state.waiting.reason}: {cs.state.waiting.message})"
-                    is_unhealthy = True
-                elif cs.state.terminated:
-                    status_str = f"Terminated ({cs.state.terminated.reason}: {cs.state.terminated.message}, ExitCode: {cs.state.terminated.exit_code})"
-                    if cs.state.terminated.exit_code != 0:
-                        is_unhealthy = True
-                elif not cs.ready:
-                    status_str = "Running (Not Ready)"
-                    is_unhealthy = True
+            for cs in (pod.status.container_statuses or []):
+                state = "Running"
+                if cs.state.waiting: state = f"Waiting ({cs.state.waiting.reason})"
+                elif cs.state.terminated: state = f"Terminated ({cs.state.terminated.reason})"
                 
-                info_lines.append(f"Container {cs.name}: {status_str}")
-                
-                container_info = {
+                result['pod_status']['containers'].append({
                     "name": cs.name,
-                    "state": status_str,
+                    "state": state,
                     "restart_count": cs.restart_count,
                     "ready": cs.ready
-                }
-                result['pod_status']['containers'].append(container_info)
-                
-                # Restart count check
-                if cs.restart_count > 0:
-                     info_lines.append(f"  Restarts: {cs.restart_count}")
-                     is_unhealthy = True
+                })
 
-            # 2. Collect Events (if unhealthy or not Running)
-            # Events are useful for scheduling issues, image pull errors, probe failures
-            # Always collect events for structured data regardless of health, for frontend
-            try:
-                events = v1.list_namespaced_event(namespace, field_selector=f'involvedObject.name={pod_name}')
-                if events.items:
-                    info_lines.append("\n--- K8s Events ---")
-                    for e in events.items:
-                        info_lines.append(f"[{e.type}] {e.reason}: {e.message}")
-                        result['events'].append({
-                            "type": e.type,
-                            "reason": e.reason,
-                            "message": e.message,
-                            "count": e.count,
-                            "last_timestamp": e.last_timestamp.isoformat() if e.last_timestamp else None
-                        })
-            except Exception as e:
-                info_lines.append(f"Failed to get events: {e}")
-
-            # 3. Collect Logs (if likely to contain info)
+            # 3. Collect Logs (same logic as before)
             # Skip logs if ImagePullBackOff or ContainerCreating (logs usually empty)
+            container_statuses = pod.status.container_statuses or []
             should_fetch_logs = True
             for cs in container_statuses:
                 if cs.state.waiting and cs.state.waiting.reason in ['ImagePullBackOff', 'ErrImagePull', 'ContainerCreating', 'CreateContainerConfigError']:
@@ -335,29 +395,23 @@ class FaultAnalyzer:
             
             if should_fetch_logs:
                 try:
-                    # Fetch logs (limit 50 lines)
                     logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=50)
                     if logs:
-                        info_lines.append("\n--- K8s Logs ---")
-                        info_lines.append(logs)
                         result['logs'].append(logs)
                     
-                    # If previous instance failed, try to get previous logs
                     for cs in container_statuses:
                         if cs.restart_count > 0:
                              prev_logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=20, previous=True)
                              if prev_logs:
-                                 info_lines.append("\n--- Previous Instance Logs ---")
-                                 info_lines.append(prev_logs)
                                  result['logs'].append(f"Previous Instance:\n{prev_logs}")
-                             break # Only fetch for one container to avoid spam
+                             break
                 except Exception as e:
-                    info_lines.append(f"Failed to fetch logs: {e}")
+                    pass
 
-            result['text_summary'] = "\n".join(info_lines)
             return result
 
         except Exception as e:
+            logger.error(f"Error analyzing pod {pod_name}: {e}")
             return None
 
     def _query_prometheus(self, query):
