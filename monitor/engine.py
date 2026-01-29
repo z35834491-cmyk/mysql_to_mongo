@@ -141,12 +141,27 @@ class MonitorEngine:
         # Task specific log dir
         task_log_dir = os.path.join(self.LOG_DIR, str(task.id))
         os.makedirs(task_log_dir, exist_ok=True)
+        
+        # DEBUG: Log namespaces
+        try:
+            with open(os.path.join(task_log_dir, "debug.log"), "a") as f:
+                f.write(f"[{datetime.datetime.now()}] Checking namespaces: {namespaces}\n")
+        except: pass
 
         for namespace in namespaces:
             try:
                 pods = api.list_namespaced_pod(namespace)
+                # DEBUG: Log pods count
+                try:
+                    with open(os.path.join(task_log_dir, "debug.log"), "a") as f:
+                        f.write(f"[{datetime.datetime.now()}] Namespace {namespace}: Found {len(pods.items)} pods\n")
+                except: pass
             except Exception as e:
                 logger.error(f"Failed to list pods in namespace {namespace}: {e}")
+                try:
+                    with open(os.path.join(task_log_dir, "debug.log"), "a") as f:
+                        f.write(f"[{datetime.datetime.now()}] Failed to list pods in {namespace}: {e}\n")
+                except: pass
                 continue
             
             for pod in pods.items:
@@ -174,7 +189,11 @@ class MonitorEngine:
                     self._process_log_stream(response, task, unique_name, task_log_dir, log_file_path)
                         
                 except Exception as e:
-                    # logger.warning(f"Failed to read log for {pod_name}: {e}")
+                    logger.warning(f"Failed to read log for {pod_name}: {e}")
+                    try:
+                        with open(os.path.join(task_log_dir, "debug.log"), "a") as f:
+                            f.write(f"[{datetime.datetime.now()}] Failed to read log for {pod_name}: {e}\n")
+                    except: pass
                     pass
 
     def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
