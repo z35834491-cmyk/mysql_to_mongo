@@ -271,7 +271,13 @@ const handleAddRole = () => {
 }
 
 const handleEditRole = (role: any) => {
-  roleForm.value = { ...role }
+  // Map permission codenames from backend to the checkbox group model
+  const rolePermissions = role.permissions ? role.permissions : []
+  roleForm.value = { 
+    id: role.id,
+    name: role.name,
+    permissions: rolePermissions
+  }
   roleDialogVisible.value = true
 }
 
