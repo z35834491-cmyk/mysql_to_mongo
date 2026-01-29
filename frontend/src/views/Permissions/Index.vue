@@ -274,7 +274,6 @@ const handleAddRole = () => {
 const handleEditRole = async (role: any) => {
   // Deep copy permissions to ensure reactivity and break references
   const rolePermissions = role.permissions ? [...role.permissions] : []
-  console.log('Editing role:', role.name, 'Permissions:', rolePermissions)
   
   roleForm.value = { 
     id: role.id,

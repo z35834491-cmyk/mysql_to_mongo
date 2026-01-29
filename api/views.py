@@ -82,6 +82,37 @@ class HasRolePermission(BasePermission):
                 return has('view_inspection')
         return True
 
+
+def _custom_permission_content_type():
+    ct, _ = ContentType.objects.get_or_create(app_label='api', model='custom_permission')
+    return ct
+
+
+def _ensure_custom_permissions():
+    ct = _custom_permission_content_type()
+    perms = [
+        {"codename": "view_dashboard", "name": "View Dashboard"},
+        {"codename": "view_tasks", "name": "View Sync Tasks"},
+        {"codename": "manage_tasks", "name": "Manage Sync Tasks"},
+        {"codename": "view_logs", "name": "View Logs"},
+        {"codename": "manage_log_monitor", "name": "Manage Log Monitor"},
+        {"codename": "view_inspection", "name": "View Inspection"},
+        {"codename": "run_inspection", "name": "Run Inspection"},
+        {"codename": "view_deploy", "name": "View Deployments"},
+        {"codename": "manage_deploy", "name": "Manage Deployments"},
+        {"codename": "manage_users", "name": "Manage Users & Roles"},
+    ]
+    for p in perms:
+        obj, created = Permission.objects.get_or_create(
+            content_type=ct,
+            codename=p["codename"],
+            defaults={"name": p["name"]},
+        )
+        if not created and obj.name != p["name"]:
+            obj.name = p["name"]
+            obj.save()
+    return perms
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def system_stats(request):
@@ -218,6 +249,7 @@ def user_detail(request, pk):
 @api_view(['GET', 'POST'])
 @permission_classes([HasRolePermission])
 def role_list(request):
+    _ensure_custom_permissions()
     if request.method == 'GET':
         groups = Group.objects.all().prefetch_related('permissions')
         data = []
@@ -247,35 +279,13 @@ def role_list(request):
             group, created = Group.objects.get_or_create(name=data['name'])
             
         if 'permissions' in data:
-            perms = Permission.objects.filter(codename__in=data['permissions'])
+            ct = _custom_permission_content_type()
+            perms = Permission.objects.filter(content_type=ct, codename__in=data['permissions'])
             group.permissions.set(perms)
         return Response({"msg": "saved", "id": group.id})
 
 @api_view(['GET'])
 @permission_classes([HasRolePermission])
 def permission_list(request):
-    # List all available custom permissions or key app permissions
-    # For now, let's return some logical permissions for our apps
-    perms = [
-        {"codename": "view_dashboard", "name": "View Dashboard"},
-        
-        # Tasks
-        {"codename": "view_tasks", "name": "View Sync Tasks"},
-        {"codename": "manage_tasks", "name": "Manage Sync Tasks"},
-        
-        # Logs
-        {"codename": "view_logs", "name": "View Logs"},
-        {"codename": "manage_log_monitor", "name": "Manage Log Monitor"},
-        
-        # Inspection
-        {"codename": "view_inspection", "name": "View Inspection"},
-        {"codename": "run_inspection", "name": "Run Inspection"},
-        
-        # Deploy
-        {"codename": "view_deploy", "name": "View Deployments"},
-        {"codename": "manage_deploy", "name": "Manage Deployments"},
-        
-        # Admin
-        {"codename": "manage_users", "name": "Manage Users & Roles"},
-    ]
+    perms = _ensure_custom_permissions()
     return Response({"permissions": perms})
