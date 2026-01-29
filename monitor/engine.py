@@ -155,7 +155,8 @@ class MonitorEngine:
                     continue
                 container_name = pod.spec.containers[0].name
                 
-                log_file_path = os.path.join(task_log_dir, f"{pod_name}_{today_str}.log")
+                unique_name = f"{namespace}_{pod_name}"
+                log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
                 
                 since_seconds = task.poll_interval_seconds + 10
                 
@@ -170,7 +171,7 @@ class MonitorEngine:
                         _preload_content=False # Enable streaming
                     )
                     
-                    self._process_log_stream(response, task, pod_name, task_log_dir, log_file_path)
+                    self._process_log_stream(response, task, unique_name, task_log_dir, log_file_path)
                         
                 except Exception as e:
                     # logger.warning(f"Failed to read log for {pod_name}: {e}")
@@ -182,17 +183,30 @@ class MonitorEngine:
         
         # Load persistent threshold state from task if available, or init new
         threshold_state = task.threshold_state or {}
-        threshold_window = task.alert_threshold_seconds # e.g. 60
+        threshold_window = task.alert_threshold_window # e.g. 60
         threshold_count = task.alert_threshold_count # e.g. 5
         threshold_updated = False
         
         # Keywords
-        clean_immediate_keywords = [k.strip().lower() for k in task.keywords_immediate.splitlines() if k.strip()]
-        clean_alert_keywords = [k.strip().lower() for k in task.keywords_alert.splitlines() if k.strip()]
-        clean_record_keywords = [k.strip() for k in task.keywords_record.splitlines() if k.strip()]
-        clean_ignore_keywords = [k.strip() for k in task.keywords_ignore.splitlines() if k.strip()]
+        # Model fields are JSONField (list of strings), e.g. ["error", "exception"]
+        # We need to handle them as lists, not splitlines() on text.
         
-        default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic']
+        def parse_keywords(field_value):
+            if not field_value:
+                return []
+            if isinstance(field_value, list):
+                return [str(k).strip() for k in field_value if str(k).strip()]
+            if isinstance(field_value, str):
+                return [k.strip() for k in field_value.splitlines() if k.strip()]
+            return []
+
+        clean_immediate_keywords = [k.lower() for k in parse_keywords(task.immediate_keywords)]
+        clean_alert_keywords = [k.lower() for k in parse_keywords(task.alert_keywords)]
+        clean_record_keywords = parse_keywords(task.record_only_keywords)
+        clean_ignore_keywords = parse_keywords(task.ignore_keywords)
+        
+        # Add 'fata' to default errors (common in Go apps)
+        default_error_keywords = ['error', 'exception', 'fail', 'fatal', 'panic', 'fata']
         
         # Stats
         count_error = 0
@@ -218,8 +232,10 @@ class MonitorEngine:
         error_file_path = os.path.join(log_dir, f"{source_name}_{today_str}_error.log")
         
         error_file_handle = None
+        log_file_handle = None
         try:
             error_file_handle = open(error_file_path, "a", encoding="utf-8")
+            log_file_handle = open(log_file_path, "a", encoding="utf-8")
             
             for line_bytes in stream:
                 if not line_bytes:
@@ -228,6 +244,9 @@ class MonitorEngine:
                 # Decode bytes to string
                 line = line_bytes.decode('utf-8', errors='replace')
                 
+                # Write to raw log
+                log_file_handle.write(line)
+
                 # --- Analysis Logic Per Line ---
                 if any(k in line for k in clean_ignore_keywords):
                     continue
@@ -380,6 +399,8 @@ class MonitorEngine:
         finally:
             if error_file_handle:
                 error_file_handle.close()
+            if log_file_handle:
+                log_file_handle.close()
                 
             # Save threshold state if updated
             if threshold_updated:

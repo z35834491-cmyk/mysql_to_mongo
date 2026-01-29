@@ -18,17 +18,17 @@
         router
         @select="handleMenuSelect"
       >
-        <el-menu-item index="/dashboard">
+        <el-menu-item index="/dashboard" v-if="canViewDashboard">
           <el-icon><Odometer /></el-icon>
           <template #title>Dashboard</template>
         </el-menu-item>
         
         <div class="menu-group-title" v-if="!isCollapsed">Data Pipeline</div>
-        <el-menu-item index="/tasks">
+        <el-menu-item index="/tasks" v-if="canViewTasks">
           <el-icon><List /></el-icon>
           <template #title>Sync Tasks</template>
         </el-menu-item>
-        <el-menu-item index="/connections">
+        <el-menu-item index="/connections" v-if="canViewTasks">
           <el-icon><Link /></el-icon>
           <template #title>Data Sources</template>
         </el-menu-item>
@@ -44,15 +44,15 @@
         </el-menu-item>
         
         <div class="menu-group-title" v-if="!isCollapsed">System Maintenance</div>
-        <el-menu-item index="/logs">
+        <el-menu-item index="/logs" v-if="canViewLogs">
           <el-icon><Monitor /></el-icon>
           <template #title>Log Monitor</template>
         </el-menu-item>
-        <el-menu-item index="/system">
+        <el-menu-item index="/system" v-if="canViewSystem">
           <el-icon><Setting /></el-icon>
           <template #title>System Inspection</template>
         </el-menu-item>
-        <el-menu-item index="/deploy">
+        <el-menu-item index="/deploy" v-if="canViewDeploy">
           <el-icon><Upload /></el-icon>
           <template #title>Deployment</template>
         </el-menu-item>
@@ -82,6 +82,11 @@ const systemStore = useSystemStore()
 const isCollapsed = ref(false)
 
 const isAdmin = computed(() => systemStore.isAdmin)
+const canViewDashboard = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_dashboard'))
+const canViewTasks = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_tasks'))
+const canViewLogs = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_logs'))
+const canViewSystem = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_inspection'))
+const canViewDeploy = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_deploy'))
 
 const handleMenuSelect = () => {
   // Menu selection handling if needed

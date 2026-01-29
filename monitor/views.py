@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from api.views import HasRolePermission
 from django.http import FileResponse, HttpResponseNotFound
 import os
 from .models import MonitorTask
@@ -8,7 +9,7 @@ from .engine import monitor_engine
 from django.forms.models import model_to_dict
 
 @api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_tasks(request):
     if request.method == 'GET':
         tasks = MonitorTask.objects.all()
@@ -31,12 +32,17 @@ def monitor_tasks(request):
             poll_interval_seconds=data.get('poll_interval_seconds', 60),
             alert_keywords=data.get('alert_keywords', []),
             ignore_keywords=data.get('ignore_keywords', []),
-            record_only_keywords=data.get('record_only_keywords', [])
+            record_only_keywords=data.get('record_only_keywords', []),
+            # New fields
+            immediate_keywords=data.get('immediate_keywords', []),
+            alert_threshold_count=data.get('alert_threshold_count', 5),
+            alert_threshold_window=data.get('alert_threshold_window', 60),
+            alert_silence_minutes=data.get('alert_silence_minutes', 60)
         )
         return Response(model_to_dict(task))
 
 @api_view(['GET', 'PUT', 'DELETE'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_task_detail(request, pk):
     try:
         task = MonitorTask.objects.get(pk=pk)
@@ -52,7 +58,8 @@ def monitor_task_detail(request, pk):
             "name", "enabled", "k8s_namespace", "k8s_kubeconfig", 
             "s3_archive_enabled", "s3_bucket", "s3_region", "s3_access_key", "s3_secret_key", "s3_endpoint",
             "retention_days", "slack_webhook_url", "poll_interval_seconds",
-            "alert_keywords", "ignore_keywords", "record_only_keywords"
+            "alert_keywords", "ignore_keywords", "record_only_keywords",
+            "immediate_keywords", "alert_threshold_count", "alert_threshold_window", "alert_silence_minutes"
         ]:
             if field in data:
                 setattr(task, field, data[field])
@@ -66,7 +73,7 @@ def monitor_task_detail(request, pk):
         return Response({"msg": "deleted"})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_logs(request):
     task_id = request.query_params.get('task_id')
     page = int(request.query_params.get('page', 1))
@@ -126,7 +133,7 @@ def monitor_logs(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_log_view(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
@@ -244,7 +251,7 @@ def monitor_log_view(request):
         return Response({"error": str(e)}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_log_download(request):
     filename = request.query_params.get('filename')
     task_id = request.query_params.get('task_id')
@@ -265,7 +272,7 @@ def monitor_log_download(request):
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def monitor_log_batch_search(request):
     data = request.data
     task_id = data.get('task_id')
@@ -308,4 +315,3 @@ def monitor_log_batch_search(request):
             break
             
     return Response({"results": results})
-

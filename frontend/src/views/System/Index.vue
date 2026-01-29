@@ -7,8 +7,8 @@
       </div>
       <div class="header-actions">
         <el-button @click="showLogs" :icon="Document">Inspection Logs</el-button>
-        <el-button @click="configVisible = true" :icon="Setting">Configure AI</el-button>
-        <el-button type="primary" size="large" @click="handleRun" :loading="loading" class="action-btn shadow-btn">
+        <el-button @click="configVisible = true" :icon="Setting" v-if="canManage">Configure AI</el-button>
+        <el-button type="primary" size="large" @click="handleRun" :loading="loading" class="action-btn shadow-btn" v-if="canManage">
           <el-icon><Search /></el-icon> Run New Inspection
         </el-button>
       </div>
@@ -242,6 +242,7 @@ use([
 ])
 
 const systemStore = useSystemStore()
+const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('run_inspection'))
 // ... existing refs and computed ...
 
 const getChartOption = (category: string) => {

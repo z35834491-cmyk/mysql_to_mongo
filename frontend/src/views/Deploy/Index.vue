@@ -3,7 +3,7 @@
     <el-tabs v-model="activeTab">
       <el-tab-pane label="Servers" name="servers">
         <div class="toolbar">
-          <el-button type="primary" @click="handleAddServer">Add Server</el-button>
+          <el-button type="primary" @click="handleAddServer" v-if="canManage">Add Server</el-button>
         </div>
         <el-table :data="servers" v-loading="loading" style="width: 100%">
           <el-table-column prop="host" label="Host" />
@@ -14,7 +14,7 @@
               <el-tag size="small">{{ row.key_path ? 'SSH Key' : 'Password' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="Actions" width="150">
+          <el-table-column label="Actions" width="150" v-if="canManage">
             <template #default="{ row }">
               <el-button size="small" type="danger" @click="handleDeleteServer(row.id)">Delete</el-button>
             </template>
@@ -26,7 +26,7 @@
         <el-card shadow="never" class="deploy-card">
           <el-form :model="deployForm" label-width="120px">
             <el-form-item label="Target Servers">
-              <el-select v-model="deployForm.server_ids" multiple placeholder="Select servers">
+              <el-select v-model="deployForm.server_ids" multiple placeholder="Select servers" :disabled="!canManage">
                 <el-option
                   v-for="server in servers"
                   :key="server.id"
@@ -41,10 +41,11 @@
                 type="textarea" 
                 :rows="10" 
                 placeholder="#!/bin/bash\necho 'Hello World'"
+                :disabled="!canManage"
               />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="handleDeploy" :disabled="!canDeploy">Execute</el-button>
+              <el-button type="primary" @click="handleDeploy" :disabled="!canDeploy || !canManage">Execute</el-button>
             </el-form-item>
           </el-form>
         </el-card>
@@ -89,12 +90,16 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useDeployStore } from '@/stores/deploy'
+import { useSystemStore } from '@/stores/system'
 import { storeToRefs } from 'pinia'
 import { Plus, Upload, Delete, Edit, Refresh } from '@element-plus/icons-vue'
 
 const activeTab = ref('servers')
 const deployStore = useDeployStore()
+const systemStore = useSystemStore()
 const { servers, loading } = storeToRefs(deployStore)
+
+const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_deploy'))
 
 const serverDialogVisible = ref(false)
 const editMode = ref(false)

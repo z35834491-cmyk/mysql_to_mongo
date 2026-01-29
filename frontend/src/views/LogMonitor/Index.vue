@@ -318,7 +318,7 @@ import { useSystemStore } from '@/stores/system'
 
 const route = useRoute()
 const systemStore = useSystemStore()
-const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_tasks'))
+const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_log_monitor'))
 
 const loading = ref(false)
 const viewMode = ref('k8s') // 'k8s' | 'local'

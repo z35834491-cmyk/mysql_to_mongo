@@ -33,13 +33,53 @@ def logout_view(request):
 # Custom Permission Class
 class HasRolePermission(BasePermission):
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = request.user
+        if not user or not user.is_authenticated:
             return False
-        if request.user.is_superuser:
+        if user.is_superuser:
             return True
-        # For user management, require Admin role or is_staff
         if 'users' in request.path or 'roles' in request.path:
-            return request.user.is_staff or request.user.groups.filter(name='Admin').exists()
+            return user.is_staff or user.groups.filter(name='Admin').exists()
+        perms = set()
+        for group in user.groups.all().prefetch_related('permissions'):
+            for p in group.permissions.all():
+                perms.add(p.codename)
+        path = request.path
+        method = request.method
+        def has(c):
+            return c in perms
+        if '/monitor/logs' in path:
+            return has('view_logs')
+        if '/monitor/tasks' in path:
+            if method == 'GET':
+                return has('view_logs') or has('manage_log_monitor')
+            return has('manage_log_monitor')
+        if '/tasks/' in path:
+            if method == 'GET':
+                return has('view_tasks')
+            return has('manage_tasks')
+        if '/api/logs/' in path:
+            return has('view_logs')
+        if '/api/k8s/' in path:
+            return has('view_logs')
+        if '/deploy/' in path:
+            if '/deploy/servers' in path:
+                if method == 'GET':
+                    return has('view_deploy')
+                return has('manage_deploy')
+            if '/deploy/run' in path or '/deploy/execute' in path:
+                return has('manage_deploy')
+            if '/deploy/plans' in path:
+                return has('view_deploy')
+        if '/inspection/' in path:
+            if '/inspection/run' in path:
+                return has('run_inspection')
+            if '/inspection/config' in path:
+                if method == 'GET':
+                    return has('view_inspection')
+                return has('run_inspection')
+            if '/inspection/reports' in path:
+                return has('view_inspection')
         return True
 
 @api_view(['GET'])
@@ -204,9 +244,24 @@ def permission_list(request):
     # For now, let's return some logical permissions for our apps
     perms = [
         {"codename": "view_dashboard", "name": "View Dashboard"},
+        
+        # Tasks
+        {"codename": "view_tasks", "name": "View Sync Tasks"},
         {"codename": "manage_tasks", "name": "Manage Sync Tasks"},
+        
+        # Logs
         {"codename": "view_logs", "name": "View Logs"},
+        {"codename": "manage_log_monitor", "name": "Manage Log Monitor"},
+        
+        # Inspection
+        {"codename": "view_inspection", "name": "View Inspection"},
         {"codename": "run_inspection", "name": "Run Inspection"},
+        
+        # Deploy
+        {"codename": "view_deploy", "name": "View Deployments"},
+        {"codename": "manage_deploy", "name": "Manage Deployments"},
+        
+        # Admin
         {"codename": "manage_users", "name": "Manage Users & Roles"},
     ]
     return Response({"permissions": perms})

@@ -385,28 +385,31 @@ class FaultAnalyzer:
                     "ready": cs.ready
                 })
 
-            # 3. Collect Logs (same logic as before)
-            # Skip logs if ImagePullBackOff or ContainerCreating (logs usually empty)
-            container_statuses = pod.status.container_statuses or []
-            should_fetch_logs = True
-            for cs in container_statuses:
-                if cs.state.waiting and cs.state.waiting.reason in ['ImagePullBackOff', 'ErrImagePull', 'ContainerCreating', 'CreateContainerConfigError']:
-                    should_fetch_logs = False
+            # 3. Collect Logs (Strategy: Always try, append if successful)
+            # Logic: If pod is in a state where logs are expected (even crashloop), fetch them.
+            # Only skip if strictly initializing and API would block/fail? 
+            # Actually read_namespaced_pod_log usually works unless container never started.
+            # We try anyway and catch exception.
             
-            if should_fetch_logs:
-                try:
-                    logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=50)
-                    if logs:
-                        result['logs'].append(logs)
-                    
-                    for cs in container_statuses:
-                        if cs.restart_count > 0:
-                             prev_logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=20, previous=True)
-                             if prev_logs:
-                                 result['logs'].append(f"Previous Instance:\n{prev_logs}")
-                             break
-                except Exception as e:
-                    pass
+            try:
+                # Fetch logs (limit 50 lines)
+                logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=50)
+                if logs:
+                    result['logs'].append(logs)
+                
+                # If previous instance failed, try to get previous logs
+                container_statuses = pod.status.container_statuses or []
+                for cs in container_statuses:
+                    if cs.restart_count > 0:
+                         prev_logs = v1.read_namespaced_pod_log(name=pod_name, namespace=namespace, tail_lines=20, previous=True)
+                         if prev_logs:
+                             result['logs'].append(f"Previous Instance:\n{prev_logs}")
+                         break # Only fetch for one container to avoid spam
+            except Exception as e:
+                # Log fetch failed (e.g. container creating, or CRI error)
+                # We do NOT return None here, we just don't have logs.
+                # The text_summary (describe info) is still valuable.
+                pass
 
             return result
 

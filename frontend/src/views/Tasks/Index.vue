@@ -140,6 +140,7 @@ const systemStore = useSystemStore()
 const { tasks, taskStats } = storeToRefs(taskStore)
 const loading = ref(false)
 const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('manage_tasks'))
+// const canView = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_tasks'))
 
 const eventsChartRef = ref<HTMLElement>()
 let eventsChart: echarts.ECharts | null = null

@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from api.views import HasRolePermission
 from django.http import JsonResponse, StreamingHttpResponse
 from .models import Connection, SyncTask
 from .schemas import ConnectionConfig, SyncTaskRequest, DBConfig
@@ -49,7 +50,7 @@ def _get_k8s_core_api():
 # --- Connections ---
 
 @api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def connection_list(request):
     if request.method == 'GET':
         conns = Connection.objects.all()
@@ -95,7 +96,7 @@ def connection_list(request):
             return Response({"detail": str(e)}, status=400)
 
 @api_view(['GET', 'DELETE'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def connection_detail(request, conn_id):
     if request.method == 'GET':
         try:
@@ -123,7 +124,7 @@ def connection_detail(request, conn_id):
         return Response({"msg": "deleted", "id": conn_id})
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def connection_test(request):
     # Reuse logic from legacy routes or rewrite using pymysql/pymongo
     # For brevity, let's assume valid. But we should implement test.
@@ -133,17 +134,17 @@ def connection_test(request):
 # --- Tasks ---
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def task_list(request):
     return Response({"tasks": task_manager.list_tasks()})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def task_status_list(request):
     return Response({"tasks": task_manager.get_all_tasks_status()})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def task_status_detail(request, task_id):
     status = task_manager.get_task_status(task_id)
     if status:
@@ -151,7 +152,7 @@ def task_status_detail(request, task_id):
     return Response({"detail": "Task not found"}, status=404)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def start_task(request):
     try:
         cfg = SyncTaskRequest(**request.data)
@@ -161,7 +162,7 @@ def start_task(request):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def start_with_conn_ids(request):
     try:
         data = request.data
@@ -221,7 +222,7 @@ def start_with_conn_ids(request):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def start_existing(request, task_id):
     try:
         task_manager.start_by_id(task_id)
@@ -230,7 +231,7 @@ def start_existing(request, task_id):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def reset_and_start(request, task_id):
     try:
         task_manager.stop(task_id)
@@ -241,25 +242,25 @@ def reset_and_start(request, task_id):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def stop_task(request, task_id):
     task_manager.stop(task_id)
     return Response({"msg": "stopped", "task_id": task_id})
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def stop_task_soft(request, task_id):
     task_manager.stop_soft(task_id)
     return Response({"msg": "stopped (soft)", "task_id": task_id})
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def delete_task(request, task_id):
     task_manager.delete(task_id)
     return Response({"msg": "deleted", "task_id": task_id})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def task_logs(request, task_id):
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 100))
@@ -299,7 +300,7 @@ def task_logs(request, task_id):
         return Response({"detail": str(e)}, status=500)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def log_files_list(request):
     log_dir = "logs"
     if not os.path.exists(log_dir):
@@ -342,7 +343,7 @@ def log_files_list(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def download_log_file(request, filename):
     log_dir = "logs"
     p = os.path.join(log_dir, filename)
@@ -368,7 +369,7 @@ def download_log_file(request, filename):
     return response
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def log_stats(request):
     log_dir = "logs"
     if not os.path.exists(log_dir):
@@ -447,7 +448,7 @@ def log_stats(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def log_global_search(request):
     keyword = request.GET.get('q', '').strip()
     if not keyword:
@@ -485,7 +486,7 @@ def log_global_search(request):
 # --- K8s Logs ---
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def k8s_namespaces(request):
     api = _get_k8s_core_api()
     if not api:
@@ -499,7 +500,7 @@ def k8s_namespaces(request):
         return Response({"namespaces": [], "error": str(e)})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def k8s_pods(request):
     ns = request.GET.get('namespace', 'default')
     api = _get_k8s_core_api()
@@ -520,7 +521,7 @@ def k8s_pods(request):
         return Response({"pods": [], "error": str(e)})
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def k8s_pod_logs(request):
     ns = request.GET.get('namespace', 'default')
     pod_name = request.GET.get('pod_name')
@@ -559,7 +560,7 @@ def _get_mysql_conn(cfg):
     )
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def mysql_databases(request):
     try:
         conn = _get_mysql_conn(request.data)
@@ -575,7 +576,7 @@ def mysql_databases(request):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def mysql_databases_by_id(request, conn_id):
     try:
         c = Connection.objects.get(id=conn_id)
@@ -601,7 +602,7 @@ def mysql_databases_by_id(request, conn_id):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def mysql_tables(request):
     try:
         cfg = request.data.copy()
@@ -621,7 +622,7 @@ def mysql_tables(request):
         return Response({"detail": str(e)}, status=400)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([HasRolePermission])
 def mysql_tables_by_id(request, conn_id):
     try:
         db = request.data.get('database')
