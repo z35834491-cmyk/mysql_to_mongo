@@ -149,10 +149,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { Search, Plus, Lock } from '@element-plus/icons-vue'
 import sharkAvatar from '@/assets/images/brand.png'
 import request from '@/utils/request'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const activeTab = ref('users')
 const loading = ref(false)
@@ -270,14 +271,17 @@ const handleAddRole = () => {
   roleDialogVisible.value = true
 }
 
-const handleEditRole = (role: any) => {
-  // Map permission codenames from backend to the checkbox group model
-  const rolePermissions = role.permissions ? role.permissions : []
+const handleEditRole = async (role: any) => {
+  // Deep copy permissions to ensure reactivity and break references
+  const rolePermissions = role.permissions ? [...role.permissions] : []
+  console.log('Editing role:', role.name, 'Permissions:', rolePermissions)
+  
   roleForm.value = { 
     id: role.id,
     name: role.name,
     permissions: rolePermissions
   }
+  await nextTick()
   roleDialogVisible.value = true
 }
 
