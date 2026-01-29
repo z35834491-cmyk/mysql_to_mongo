@@ -91,14 +91,37 @@ const router = createRouter({
 
 router.beforeEach(async (to, from, next) => {
   const systemStore = useSystemStore()
+  
+  // 1. Ensure user info is loaded
   if (!systemStore.currentUser) {
     try {
       await systemStore.fetchCurrentUser()
-    } catch {}
+    } catch {
+      // If fetch fails and we are not going to login, redirect
+      if (to.path !== '/login') return next('/login')
+    }
   }
+
+  // 2. Permission Check
   const perm = (to.meta as any)?.viewPerm as string | undefined
-  if (perm && !(systemStore.isAdmin || systemStore.hasPermission(perm))) {
-    return next('/logs')
+  if (perm) {
+    const hasAccess = systemStore.isAdmin || systemStore.hasPermission(perm)
+    if (!hasAccess) {
+      // Prevent infinite loop: if we are already targeting the fallback route
+      if (to.path === '/logs' && !systemStore.hasPermission('view_logs')) {
+        return next('/login')
+      }
+      
+      // Intelligent fallback
+      if (systemStore.hasPermission('view_logs')) return next('/logs')
+      if (systemStore.hasPermission('view_tasks')) return next('/tasks')
+      if (systemStore.hasPermission('view_deploy')) return next('/deploy')
+      if (systemStore.hasPermission('view_inspection')) return next('/system')
+      if (systemStore.hasPermission('view_dashboard')) return next('/dashboard')
+      
+      // No permissions found
+      return next('/login')
+    }
   }
   next()
 })
