@@ -32,6 +32,10 @@
           <el-icon><Link /></el-icon>
           <template #title>Data Sources</template>
         </el-menu-item>
+        <el-menu-item index="/database-manager">
+          <el-icon><Coin /></el-icon>
+          <template #title>Database Manager</template>
+        </el-menu-item>
 
         <div class="menu-group-title" v-if="!isCollapsed">Operations</div>
         <el-menu-item index="/ai-ops">

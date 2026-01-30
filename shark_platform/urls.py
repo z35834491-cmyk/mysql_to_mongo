@@ -50,6 +50,7 @@ urlpatterns = [
     path('api/inspection/', include('inspection.urls')),
     path('api/', include('schedules.urls')),
     path('api/ai_ops/', include('ai_ops.urls')),
+    path('api/db/', include('db_manager.urls')),
 
     # Serve assets folder directly (Optimization)
     # Note: In production with Nginx, this is handled by Nginx.
