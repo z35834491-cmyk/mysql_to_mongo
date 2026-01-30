@@ -72,6 +72,7 @@ class MySQLEngine(BaseEngine):
         try:
             with conn.cursor() as c:
                 # Query information_schema for detailed table info
+                # Only select necessary columns for overview
                 c.execute("""
                     SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_ROWS, DATA_LENGTH, ENGINE, CREATE_TIME, UPDATE_TIME
                     FROM information_schema.TABLES 
@@ -93,7 +94,7 @@ class MySQLEngine(BaseEngine):
 
                     tree[db].append({
                         "name": row['TABLE_NAME'],
-                        "rows": row['TABLE_ROWS'],
+                        "rows": row['TABLE_ROWS'] if row['TABLE_ROWS'] is not None else 0, # Ensure rows is not None
                         "size": size_str,
                         "engine": row['ENGINE'],
                         "created": row['CREATE_TIME'].strftime('%Y-%m-%d %H:%M:%S') if row['CREATE_TIME'] else '-',
@@ -112,11 +113,7 @@ class MySQLEngine(BaseEngine):
                 if sql:
                     # Execute multiple statements
                     try:
-                        # Split statements if needed or rely on pymysql's ability
-                        # Pymysql executes one statement at a time with .execute(), but we want to show results.
-                        # For simplicity in this console, we execute and fetch result of the LAST statement or all if possible.
-                        # However, standard cursor.execute() usually handles one statement unless client flags are set.
-                        # We will try to execute it directly.
+                        # ... existing SQL execution logic ...
                         c.execute(sql)
                         
                         # Commit if it's a DML/DDL (Insert, Update, Delete, Create, Drop)
@@ -142,10 +139,31 @@ class MySQLEngine(BaseEngine):
                     page_size = int(params.get('pageSize', 100))
                     offset = (page - 1) * page_size
                     
-                    count_sql = f"SELECT COUNT(*) as cnt FROM `{table}`"
-                    if where: count_sql += f" WHERE {where}"
-                    c.execute(count_sql)
-                    total = c.fetchone()['cnt']
+                    # Optimization: Use approximate count from information_schema if no filter is applied
+                    # This significantly speeds up loading large tables
+                    total = 0
+                    if not where:
+                        try:
+                            c.execute(f"""
+                                SELECT TABLE_ROWS 
+                                FROM information_schema.TABLES 
+                                WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+                            """, (db, table))
+                            res = c.fetchone()
+                            if res:
+                                total = res['TABLE_ROWS']
+                        except:
+                            # Fallback to COUNT(*) if information_schema query fails
+                            pass
+                    
+                    # If total is still 0 or we have a where clause, do a real count
+                    # Note: For very large tables with WHERE, this can still be slow. 
+                    # We could implement a 'fast mode' flag from frontend to skip this if needed.
+                    if total == 0 or where:
+                        count_sql = f"SELECT COUNT(*) as cnt FROM `{table}`"
+                        if where: count_sql += f" WHERE {where}"
+                        c.execute(count_sql)
+                        total = c.fetchone()['cnt']
                     
                     select_sql = f"SELECT * FROM `{table}`"
                     if where: select_sql += f" WHERE {where}"
@@ -177,12 +195,19 @@ class RedisEngine(BaseEngine):
             else:
                 nodes.append(redis.cluster.ClusterNode(self.conn.host, self.conn.port))
             
-            return RedisCluster(startup_nodes=nodes, password=self.conn.password or None, decode_responses=True)
+            # Pass username if provided (Redis 6+ ACL support)
+            return RedisCluster(
+                startup_nodes=nodes, 
+                password=self.conn.password or None, 
+                username=self.conn.user or None, # Added username support
+                decode_responses=True
+            )
         else:
             return redis.Redis(
                 host=self.conn.host,
                 port=self.conn.port,
                 password=self.conn.password or None,
+                username=self.conn.user or None, # Added username support
                 db=db,
                 socket_timeout=5,
                 decode_responses=True
@@ -202,14 +227,60 @@ class RedisEngine(BaseEngine):
         r = self._connect()
         mode = self.conn.extra_config.get('mode', 'standalone')
         try:
+            # 1. Determine DBs to show
+            dbs = []
             if mode == 'cluster':
-                tree['db0'] = ['Keys']
+                dbs = ['db0']
             else:
                 info = r.info('keyspace')
                 for k in info.keys():
                     if k.startswith('db'):
-                        tree[k] = ['Keys'] 
-        except:
+                        dbs.append(k)
+                if not dbs: dbs = ['db0']
+            
+            # 2. For each DB, scan keys to build "virtual folders"
+            # This mimics Redis Commander's tree view (grouped by prefix)
+            for db_key in dbs:
+                db_idx = int(db_key.replace('db', '')) if db_key.startswith('db') else 0
+                
+                # Connect to specific DB if standalone
+                if mode != 'cluster':
+                    r.select(db_idx)
+                
+                # Scan a sample of keys (limit to avoid blocking)
+                # We use a larger count to get a good representative sample
+                cursor = '0'
+                keys = []
+                # Scan up to 5000 keys to build the structure
+                for _ in range(5): 
+                    cursor, partial = r.scan(cursor=cursor, count=1000)
+                    keys.extend(partial)
+                    if cursor == 0 or len(keys) >= 5000:
+                        break
+                
+                # Group keys
+                groups = set()
+                for k in keys:
+                    if ':' in k:
+                        # Use the first part as a folder
+                        prefix = k.split(':')[0]
+                        groups.add(f"{prefix}:*")
+                    else:
+                        # Or just add the key itself if no separator
+                        # But to avoid clutter, maybe we can group them as "Others"?
+                        # For now, let's just add the key, but if too many, maybe ignore?
+                        # Let's add them.
+                        groups.add(k)
+                
+                # If no keys found, add a placeholder
+                if not groups:
+                    groups.add('Keys')
+                
+                # Convert to list and sort
+                tree[db_key] = sorted(list(groups))
+
+        except Exception as e:
+            # Fallback
             tree['db0'] = ['Keys']
         finally:
             r.close()
@@ -236,8 +307,23 @@ class RedisEngine(BaseEngine):
                     "total": 1
                 }
             
-            pattern = params.get('pattern', '*')
-            cursor, keys = r.scan(cursor=0, match=pattern, count=1000)
+            # Use table name as pattern if no explicit pattern provided
+            # This supports clicking on "user:*" in the sidebar
+            pattern = params.get('pattern')
+            if not pattern and table and table != 'Keys':
+                 pattern = table
+            
+            if not pattern: pattern = '*'
+
+            # Scan with pagination
+            cursor = params.get('cursor', 0) # Frontend can pass cursor for true pagination later
+            # For now we just scan from 0, but we can improve this.
+            # Current frontend doesn't support passing cursor back, it relies on "page".
+            # Redis SCAN is cursor based, not offset based. 
+            # To support offset-like behavior properly is hard without caching.
+            # We will stick to a simple scan for now, maybe increase count.
+            
+            redis_cursor, keys = r.scan(cursor=0, match=pattern, count=1000)
             
             rows = []
             for k in keys:
@@ -254,7 +340,7 @@ class RedisEngine(BaseEngine):
             return {
                 "headers": ["key", "type", "value"],
                 "rows": rows,
-                "total": len(rows),
+                "total": len(rows), # Note: This is just the count of scanned keys in this batch
             }
         finally:
             r.close()
@@ -306,37 +392,54 @@ class MongoEngine(BaseEngine):
             dbs = c.list_database_names()
             for db in dbs:
                 if db in ('admin', 'config', 'local'): continue
+                
+                # Optimized: Only list names first
                 cols = c[db].list_collection_names()
                 
                 col_list = []
+                # Very simple heuristic: if > 100 collections, skip detailed stats entirely
+                # Just return names. This makes loading almost instant even for 10k collections.
+                fast_mode = len(cols) > 50
+                
                 for col_name in cols:
-                    try:
-                        stats = c[db].command("collStats", col_name)
-                        size = stats.get('size', 0)
-                        if size > 1024 * 1024:
-                            size_str = f"{size / (1024 * 1024):.2f} MB"
-                        elif size > 1024:
-                            size_str = f"{size / 1024:.2f} KB"
-                        else:
-                            size_str = f"{size} B"
-                            
-                        col_list.append({
-                            "name": col_name,
-                            "rows": stats.get('count', 0),
-                            "size": size_str,
-                            "engine": "WiredTiger",
-                            "created": "-", 
-                            "updated": "-" 
-                        })
-                    except:
+                    if fast_mode:
                          col_list.append({
                             "name": col_name,
                             "rows": "-",
                             "size": "-",
-                            "engine": "-",
-                            "created": "-",
-                            "updated": "-"
+                            "engine": "WiredTiger",
+                            "created": "-", 
+                            "updated": "-" 
                         })
+                    else:
+                        try:
+                            # Full stats for small number of collections
+                            stats = c[db].command("collStats", col_name)
+                            size = stats.get('size', 0)
+                            if size > 1024 * 1024:
+                                size_str = f"{size / (1024 * 1024):.2f} MB"
+                            elif size > 1024:
+                                size_str = f"{size / 1024:.2f} KB"
+                            else:
+                                size_str = f"{size} B"
+                                
+                            col_list.append({
+                                "name": col_name,
+                                "rows": stats.get('count', 0),
+                                "size": size_str,
+                                "engine": "WiredTiger",
+                                "created": "-", 
+                                "updated": "-" 
+                            })
+                        except:
+                             col_list.append({
+                                "name": col_name,
+                                "rows": "-",
+                                "size": "-",
+                                "engine": "-",
+                                "created": "-",
+                                "updated": "-"
+                            })
                 tree[db] = col_list
         finally:
             c.close()
@@ -353,13 +456,25 @@ class MongoEngine(BaseEngine):
                     query_filter = json.loads(filter_str)
                 except:
                     return {"headers": ["Error"], "rows": [{"Error": "Invalid JSON"}], "total": 0}
+                
+                # Optimized: Add projection to limit fields if documents are huge?
+                # For now, just limiting limit
                 cursor = col.find(query_filter).limit(50)
-                total = 50
+                
+                # Optimized: count_documents is slow with filter, use limit if possible or explain
+                # For UX, we just say "50+" if we hit limit? 
+                # Or use count_documents with limit.
+                total = col.count_documents(query_filter, limit=1000)
             else:
                 page = int(params.get('page', 1))
                 page_size = int(params.get('pageSize', 20))
                 skip = (page - 1) * page_size
-                cursor = col.find().skip(skip).limit(page_size)
+                
+                # Optimization: Sort by _id desc (LIFO) by default for better usability
+                # Most users want to see the latest data first
+                cursor = col.find().sort('_id', -1).skip(skip).limit(page_size)
+                
+                # Optimized: estimated_document_count is fast (metadata based)
                 total = col.estimated_document_count()
             
             rows = []
@@ -368,10 +483,17 @@ class MongoEngine(BaseEngine):
                 rows.append(safe_doc)
             
             headers = set()
-            for r in rows:
+            # Optimized: Only scan first 10 rows for headers to be faster
+            for r in rows[:10]:
                 headers.update(r.keys())
             
-            return {"headers": list(headers), "rows": rows, "total": total}
+            # Ensure _id is always first
+            header_list = sorted(list(headers))
+            if '_id' in header_list:
+                header_list.remove('_id')
+                header_list.insert(0, '_id')
+            
+            return {"headers": header_list, "rows": rows, "total": total}
         finally:
             c.close()
 
@@ -397,29 +519,39 @@ class RabbitMQEngine(BaseEngine):
             return False, str(e)
     
     def get_structure(self):
-        return {"Queues": ["(Enter Queue Name)"]}
+        # Optimized: Try to list actual queues if management plugin is not available
+        # Note: Pika (AMQP) cannot list queues directly easily without Management API (HTTP).
+        # Standard AMQP doesn't support "List Queues".
+        # But we can try to return a better hint or structure.
+        return {"Queues": ["(Enter Queue Name to Peek)"]}
         
     def query(self, db, target, params):
         queue_name = params.get('where') or target
-        if queue_name == "(Enter Queue Name)" or not queue_name:
+        if queue_name == "(Enter Queue Name)" or queue_name == "(Enter Queue Name to Peek)" or not queue_name:
              return {"headers": ["Info"], "rows": [{"Info": "Please enter Queue Name in search box"}], "total": 0}
              
         conn = self._connect()
         try:
             channel = conn.channel()
             rows = []
+            # Peek 10 messages
             for _ in range(10):
                 method, props, body = channel.basic_get(queue_name, auto_ack=False)
                 if method:
+                    # Optimized: Truncate body if too long for preview
+                    body_str = body.decode('utf-8', 'ignore')
+                    if len(body_str) > 1000: body_str = body_str[:1000] + "... (truncated)"
+                    
                     rows.append({
                         "Exchange": method.exchange,
                         "RoutingKey": method.routing_key,
                         "Redelivered": method.redelivered,
-                        "Body": body.decode('utf-8', 'ignore')[:500]
+                        "Body": body_str,
+                        "Props": str(props)
                     })
                 else:
                     break
-            return {"headers": ["Exchange", "RoutingKey", "Body", "Redelivered"], "rows": rows, "total": len(rows)}
+            return {"headers": ["Exchange", "RoutingKey", "Body", "Redelivered", "Props"], "rows": rows, "total": len(rows)}
         except Exception as e:
             return {"headers": ["Error"], "rows": [{"Error": str(e)}], "total": 0}
         finally:

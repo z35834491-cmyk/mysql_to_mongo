@@ -304,6 +304,22 @@
                           <span v-else>{{ row[col] }}</span>
                         </template>
                       </el-table-column>
+                      
+                      <!-- Fixed Actions Column for Rightmost Visibility -->
+                      <el-table-column label="Action" width="70" fixed="right" align="center">
+                        <template #default="{ row }">
+                          <el-tooltip content="View Details" placement="top" :enterable="false">
+                            <el-button 
+                              link 
+                              type="primary" 
+                              size="small" 
+                              @click.stop="handleRowSelect(row, item); item.showDetails = true"
+                            >
+                              <el-icon><View /></el-icon>
+                            </el-button>
+                          </el-tooltip>
+                        </template>
+                      </el-table-column>
                     </el-table>
                   </div>
 
@@ -330,6 +346,8 @@
                 
                 <div class="pagination-bar">
                   <el-pagination
+                    background
+                    small
                     v-model:current-page="item.page"
                     v-model:page-size="item.pageSize"
                     :page-sizes="[20, 50, 100, 200, 500]"
@@ -814,12 +832,18 @@ const getSizeChartOption = (data: any[]) => {
 
   return {
     tooltip: { trigger: 'item', formatter: '{b}: {c} Bytes ({d}%)' },
-    legend: { orient: 'vertical', left: 'left', type: 'scroll' },
+    legend: { 
+      orient: 'vertical', 
+      left: 'right', // Move legend to right
+      top: 'center', // Vertically center it
+      type: 'scroll' 
+    },
     series: [
       {
         name: 'Storage Size',
         type: 'pie',
         radius: ['40%', '70%'],
+        center: ['35%', '50%'], // Move pie chart to left
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 10,
