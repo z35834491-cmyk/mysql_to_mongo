@@ -28,6 +28,7 @@ def monitor_tasks(request):
             s3_secret_key=data.get('s3_secret_key', ''),
             s3_endpoint=data.get('s3_endpoint', ''),
             retention_days=data.get('retention_days', 3),
+            alert_enabled=data.get('alert_enabled', True),
             slack_webhook_url=data.get('slack_webhook_url', ''),
             poll_interval_seconds=data.get('poll_interval_seconds', 60),
             alert_keywords=data.get('alert_keywords', []),
@@ -57,7 +58,7 @@ def monitor_task_detail(request, pk):
         for field in [
             "name", "enabled", "k8s_namespace", "k8s_kubeconfig", 
             "s3_archive_enabled", "s3_bucket", "s3_region", "s3_access_key", "s3_secret_key", "s3_endpoint",
-            "retention_days", "slack_webhook_url", "poll_interval_seconds",
+            "retention_days", "alert_enabled", "slack_webhook_url", "poll_interval_seconds",
             "alert_keywords", "ignore_keywords", "record_only_keywords",
             "immediate_keywords", "alert_threshold_count", "alert_threshold_window", "alert_silence_minutes"
         ]:

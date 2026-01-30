@@ -103,6 +103,24 @@ class MonitorEngine:
                 time.sleep(10)
 
     def _process_task(self, task):
+        try:
+            task.refresh_from_db(fields=[
+                'enabled',
+                'k8s_namespace',
+                'k8s_kubeconfig',
+                'alert_enabled',
+                'slack_webhook_url',
+                'poll_interval_seconds',
+                'alert_keywords',
+                'immediate_keywords',
+                'ignore_keywords',
+                'record_only_keywords',
+                'alert_threshold_count',
+                'alert_threshold_window',
+                'alert_silence_minutes',
+            ])
+        except Exception:
+            pass
         # 1. Fetch Logs
         self._fetch_k8s_logs(task)
         
@@ -535,6 +553,10 @@ class MonitorEngine:
         pass
 
     def _send_slack_alert(self, alerts, task, source, log_dir, error_filename=None):
+        try:
+            task.refresh_from_db(fields=['alert_enabled', 'slack_webhook_url', 'alert_silence_minutes', 'alert_state'])
+        except Exception:
+            pass
         if not task.alert_enabled:
             return
             
