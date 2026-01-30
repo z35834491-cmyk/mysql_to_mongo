@@ -10,6 +10,9 @@
           <el-radio-button label="calendar">Calendar</el-radio-button>
           <el-radio-button label="list">List</el-radio-button>
         </el-radio-group>
+        <el-button @click="openPhoneAlertConfig" class="action-btn">
+          Phone Alert Config
+        </el-button>
         <el-button @click="fetchData" :loading="loading" class="action-btn">
           <el-icon><Refresh /></el-icon> Refresh
         </el-button>
@@ -95,19 +98,69 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="phoneAlertDialogVisible" title="Phone Alert Config" width="600px">
+      <el-form :model="phoneAlertForm" label-position="top" v-loading="phoneAlertLoading">
+        <el-form-item label="Public URL (for Slack links)">
+          <el-input v-model="phoneAlertForm.public_url" placeholder="https://ubest-ops.test.exc888.org" />
+        </el-form-item>
+        <el-form-item label="Slack Webhook URL">
+          <el-input v-model="phoneAlertForm.slack_webhook_url" placeholder="https://hooks.slack.com/services/..." />
+        </el-form-item>
+        <el-form-item label="External API URL">
+          <el-input v-model="phoneAlertForm.external_api_url" placeholder="https://example.com/api/alert/status" />
+        </el-form-item>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="External API Username">
+              <el-input v-model="phoneAlertForm.external_api_username" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="External API Password">
+              <el-input v-model="phoneAlertForm.external_api_password" type="password" show-password placeholder="Leave blank to keep existing" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="Incoming Token (optional, X-Phone-Alert-Token)">
+          <el-input v-model="phoneAlertForm.incoming_token" placeholder="Optional shared secret" />
+        </el-form-item>
+        <el-form-item label="Auto Complete Minutes">
+          <el-input-number v-model="phoneAlertForm.auto_complete_minutes" :min="1" :max="240" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="phoneAlertDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="phoneAlertSaving" @click="savePhoneAlert">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { UserFilled, Refresh } from '@element-plus/icons-vue'
-import { getSchedules, type BizShiftRespVO } from '@/api/schedules'
+import { getSchedules, getPhoneAlertConfig, savePhoneAlertConfig, type BizShiftRespVO, type PhoneAlertConfig } from '@/api/schedules'
+import { ElMessage } from 'element-plus'
 
 const schedules = ref<BizShiftRespVO[]>([])
 const loading = ref(false)
 const viewMode = ref('calendar')
 const dialogVisible = ref(false)
 const currentShift = ref<BizShiftRespVO | null>(null)
+
+const phoneAlertDialogVisible = ref(false)
+const phoneAlertLoading = ref(false)
+const phoneAlertSaving = ref(false)
+const phoneAlertForm = ref<PhoneAlertConfig>({
+  public_url: '',
+  slack_webhook_url: '',
+  external_api_url: '',
+  external_api_username: '',
+  external_api_password: '',
+  incoming_token: '',
+  auto_complete_minutes: 30
+})
 
 const fetchData = async () => {
   loading.value = true
@@ -162,6 +215,42 @@ const showShiftDetail = (shift: BizShiftRespVO) => {
 onMounted(() => {
   fetchData()
 })
+
+const openPhoneAlertConfig = async () => {
+  phoneAlertDialogVisible.value = true
+  phoneAlertLoading.value = true
+  try {
+    const cfg = await getPhoneAlertConfig()
+    phoneAlertForm.value = {
+      public_url: cfg.public_url || '',
+      slack_webhook_url: cfg.slack_webhook_url || '',
+      external_api_url: cfg.external_api_url || '',
+      external_api_username: cfg.external_api_username || '',
+      external_api_password: '',
+      incoming_token: cfg.incoming_token || '',
+      auto_complete_minutes: cfg.auto_complete_minutes || 30,
+      has_external_api_password: cfg.has_external_api_password
+    }
+  } catch (e) {
+    console.error(e)
+  } finally {
+    phoneAlertLoading.value = false
+  }
+}
+
+const savePhoneAlert = async () => {
+  phoneAlertSaving.value = true
+  try {
+    await savePhoneAlertConfig(phoneAlertForm.value)
+    ElMessage.success('Saved')
+    phoneAlertDialogVisible.value = false
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('Save failed')
+  } finally {
+    phoneAlertSaving.value = false
+  }
+}
 </script>
 
 <style scoped>

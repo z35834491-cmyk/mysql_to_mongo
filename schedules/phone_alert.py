@@ -1,0 +1,107 @@
+import datetime
+import os
+from django.utils import timezone
+from django.conf import settings
+import requests
+
+from .models import PhoneAlertConfig, PhoneAlert, Schedule
+
+
+def load_phone_alert_config():
+    return PhoneAlertConfig.load()
+
+
+def _parse_time(value):
+    try:
+        parts = [int(x) for x in value.split(':')]
+        while len(parts) < 3:
+            parts.append(0)
+        return datetime.time(parts[0], parts[1], parts[2])
+    except Exception:
+        return None
+
+
+def find_current_oncall(now=None):
+    now = now or timezone.localtime()
+    today = now.date()
+    current_time = now.time()
+
+    schedules = Schedule.objects.filter(shift_date=today)
+    for s in schedules:
+        st = _parse_time(s.start_time)
+        et = _parse_time(s.end_time)
+        if not st or not et:
+            continue
+
+        in_range = False
+        if et >= st:
+            in_range = st <= current_time <= et
+        else:
+            in_range = current_time >= st or current_time <= et
+
+        if not in_range:
+            continue
+
+        if not s.staff_list:
+            continue
+
+        staff = s.staff_list[0]
+        mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
+        name = staff.get('name') or ''
+        if mention:
+            if mention.startswith('<@') and mention.endswith('>'):
+                return mention
+            if mention.startswith('U') and len(mention) > 3:
+                return f"<@{mention}>"
+            return mention
+        if name:
+            return name
+    return ''
+
+
+def build_public_url(config: PhoneAlertConfig):
+    url = (config.public_url or '').strip()
+    if url:
+        return url.rstrip('/')
+    env_url = os.environ.get('PUBLIC_URL')
+    if env_url:
+        return env_url.rstrip('/')
+    setting_url = getattr(settings, 'PUBLIC_URL', '')
+    if setting_url:
+        return str(setting_url).rstrip('/')
+    return 'http://localhost:5173'
+
+
+def post_slack_blocks(config: PhoneAlertConfig, blocks):
+    webhook = (config.slack_webhook_url or '').strip()
+    if not webhook:
+        return False, 'missing webhook'
+    try:
+        resp = requests.post(webhook, json={"blocks": blocks}, timeout=5)
+        return resp.ok, f"{resp.status_code}"
+    except Exception as e:
+        return False, str(e)
+
+
+def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: str):
+    url = (config.external_api_url or '').strip()
+    if not url:
+        return None, 'missing external_api_url'
+    auth = None
+    if config.external_api_username or config.external_api_password:
+        auth = (config.external_api_username or '', config.external_api_password or '')
+    payload = {
+        "alert_id": alert.id,
+        "action": action,
+        "status": alert.status,
+        "oncall": alert.oncall,
+        "processing_at": alert.processing_at.isoformat() if alert.processing_at else None,
+        "done_at": alert.done_at.isoformat() if alert.done_at else None,
+        "created_at": alert.created_at.isoformat() if alert.created_at else None,
+        "payload": alert.payload,
+    }
+    try:
+        resp = requests.post(url, json=payload, auth=auth, timeout=10)
+        return resp.status_code, resp.text[:1000]
+    except Exception as e:
+        return None, str(e)

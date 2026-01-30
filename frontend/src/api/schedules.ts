@@ -25,3 +25,22 @@ export interface ScheduleResponse {
 export function getSchedules() {
   return request.get<ScheduleResponse>('/schedules/')
 }
+
+export interface PhoneAlertConfig {
+  public_url: string
+  slack_webhook_url: string
+  external_api_url: string
+  external_api_username: string
+  external_api_password?: string
+  incoming_token: string
+  auto_complete_minutes: number
+  has_external_api_password?: boolean
+}
+
+export function getPhoneAlertConfig() {
+  return request.get<PhoneAlertConfig>('/schedules/phone-alert/config')
+}
+
+export function savePhoneAlertConfig(config: PhoneAlertConfig) {
+  return request.post<{ msg: string }>('/schedules/phone-alert/config', config)
+}
