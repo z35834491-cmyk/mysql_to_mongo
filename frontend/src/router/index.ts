@@ -45,6 +45,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Connections', icon: 'Link', viewPerm: 'view_tasks' }
       },
       {
+        path: 'database-manager',
+        name: 'DatabaseManager',
+        component: () => import('@/views/DatabaseManager/Index.vue'),
+        meta: { title: 'Database Manager', icon: 'Coin' }
+      },
+      {
         path: 'logs',
         name: 'Logs',
         component: () => import('@/views/LogMonitor/Index.vue'),

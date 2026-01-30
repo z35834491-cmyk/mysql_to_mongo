@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'tasks',
     'schedules',
     'ai_ops',
+    'db_manager',
 ]
 
 MIDDLEWARE = [
