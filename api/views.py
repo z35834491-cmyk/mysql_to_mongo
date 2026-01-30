@@ -251,13 +251,14 @@ def user_detail(request, pk):
 def role_list(request):
     _ensure_custom_permissions()
     if request.method == 'GET':
+        allowed = {p["codename"] for p in _ensure_custom_permissions()}
         groups = Group.objects.all().prefetch_related('permissions')
         data = []
         for g in groups:
             data.append({
                 "id": g.id,
                 "name": g.name,
-                "permissions": [p.codename for p in g.permissions.all()]
+                "permissions": [p.codename for p in g.permissions.filter(codename__in=allowed)]
             })
         return Response({"roles": data})
     
@@ -279,10 +280,22 @@ def role_list(request):
             group, created = Group.objects.get_or_create(name=data['name'])
             
         if 'permissions' in data:
-            ct = _custom_permission_content_type()
-            perms = Permission.objects.filter(content_type=ct, codename__in=data['permissions'])
+            requested = list(data['permissions'] or [])
+            perms = Permission.objects.filter(codename__in=requested)
+            existing = set(perms.values_list('codename', flat=True))
+            if requested:
+                mapping = {p["codename"]: p["name"] for p in _ensure_custom_permissions()}
+                missing = [c for c in requested if c not in existing]
+                for codename in missing:
+                    Permission.objects.get_or_create(
+                        content_type=_custom_permission_content_type(),
+                        codename=codename,
+                        defaults={"name": mapping.get(codename, codename)},
+                    )
+                perms = Permission.objects.filter(codename__in=requested)
             group.permissions.set(perms)
-        return Response({"msg": "saved", "id": group.id})
+        saved = [p.codename for p in group.permissions.all()]
+        return Response({"msg": "saved", "id": group.id, "permissions": saved})
 
 @api_view(['GET'])
 @permission_classes([HasRolePermission])

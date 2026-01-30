@@ -618,7 +618,8 @@ class MonitorEngine:
             # Slack requires valid URL.
             # Let's use a standard Env Var or Setting for PUBLIC_URL.
             
-            base_url = getattr(settings, 'PUBLIC_URL', 'http://localhost:5173')
+            base_url = os.environ.get('PUBLIC_URL') or getattr(settings, 'PUBLIC_URL', None) or 'http://localhost:5173'
+            base_url = base_url.rstrip('/')
             log_url = f"{base_url}/logs?taskId={task.id}&filename={error_filename}"
             
             blocks.append({
