@@ -40,7 +40,7 @@
               class="custom-tree-item" 
               :class="{ 
                 'is-conn': data.type === 'conn', 
-                'is-active': data.type === 'conn' && node.expanded,
+                'is-active': data.type === 'conn' && (node.expanded || node.isCurrent),
                 'is-db': data.type === 'db' 
               }"
             >
@@ -48,23 +48,23 @@
               <div class="tree-icon-container">
                 <template v-if="data.type === 'conn'">
                    <!-- MySQL Icon -->
-                   <div v-if="data.dbType === 'mysql'" class="db-icon mysql" :class="{ 'active': node.expanded }">
+                   <div v-if="data.dbType === 'mysql'" class="db-icon mysql" :class="{ 'active': node.expanded || node.isCurrent }">
                       <img src="@/assets/images/mysql-logo.svg" alt="MySQL" />
                    </div>
                    <!-- Redis Icon -->
-                   <div v-else-if="data.dbType === 'redis'" class="db-icon redis" :class="{ 'active': node.expanded }">
+                   <div v-else-if="data.dbType === 'redis'" class="db-icon redis" :class="{ 'active': node.expanded || node.isCurrent }">
                       <img src="@/assets/images/redis-logo.svg" alt="Redis" />
                    </div>
                    <!-- Mongo Icon -->
-                   <div v-else-if="data.dbType === 'mongo'" class="db-icon mongo" :class="{ 'active': node.expanded }">
+                   <div v-else-if="data.dbType === 'mongo'" class="db-icon mongo" :class="{ 'active': node.expanded || node.isCurrent }">
                       <img src="@/assets/images/mongo-logo.svg" alt="Mongo" />
                    </div>
                    <!-- RabbitMQ Icon -->
-                   <div v-else-if="data.dbType === 'rabbitmq'" class="db-icon rabbitmq" :class="{ 'active': node.expanded }">
+                   <div v-else-if="data.dbType === 'rabbitmq'" class="db-icon rabbitmq" :class="{ 'active': node.expanded || node.isCurrent }">
                       <img src="@/assets/images/rabbitmq-logo.svg" alt="RabbitMQ" />
                    </div>
                    <!-- Default Icon -->
-                   <div v-else class="db-icon default" :class="{ 'active': node.expanded }">
+                   <div v-else class="db-icon default" :class="{ 'active': node.expanded || node.isCurrent }">
                       <el-icon><Connection /></el-icon>
                    </div>
                 </template>
@@ -1113,21 +1113,18 @@ const handleConnectionClose = (connId: string) => {
 }
 
 const testConnection = async () => {
-  console.log('Testing connection...', form)
   testing.value = true
   try {
     const payload: any = { ...form }
     payload.extra_config = {}
     if (form.type === 'redis') payload.extra_config.mode = formMode.value
-    // @ts-ignore
-    console.log('Sending payload:', payload)
+    
     const res = await dbApi.testConnection(payload)
-    console.log('Test result:', res)
+    
     // @ts-ignore
     if (res.ok) ElMessage.success(res.msg)
     else ElMessage.error(res.msg)
   } catch (e: any) {
-    console.error('Test failed:', e)
     ElMessage.error(e.message)
   } finally {
     testing.value = false
@@ -1265,6 +1262,46 @@ const saveConnection = async () => {
 
 .db-icon.redis img {
   transform: scale(1.05); /* Redis cube benefits from tiny boost */
+}
+
+/* Active States - High Contrast Colors */
+/* No heavy filters or transforms for better performance and cleaner look */
+.db-icon.active {
+  opacity: 1;
+}
+
+/* Tree Selection Styles - Brand Colors */
+.custom-tree-item.is-active.is-conn {
+  background-color: transparent !important; /* Reset default background */
+}
+
+/* Specific Active Backgrounds for Connections */
+/* MySQL */
+.custom-tree-item.is-active:has(.mysql) {
+  background-color: #E6F7FF !important;
+  color: #00758F !important;
+  border-right: 3px solid #00758F;
+}
+
+/* Redis */
+.custom-tree-item.is-active:has(.redis) {
+  background-color: #FFF1F0 !important;
+  color: #DC382D !important;
+  border-right: 3px solid #DC382D;
+}
+
+/* Mongo */
+.custom-tree-item.is-active:has(.mongo) {
+  background-color: #F6FFED !important;
+  color: #47A248 !important;
+  border-right: 3px solid #47A248;
+}
+
+/* RabbitMQ */
+.custom-tree-item.is-active:has(.rabbitmq) {
+  background-color: #FFF7E6 !important;
+  color: #FF6600 !important;
+  border-right: 3px solid #FF6600;
 }
 
 /* Right Tab Icons */
