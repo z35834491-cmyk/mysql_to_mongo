@@ -198,6 +198,8 @@ class MonitorEngine:
     def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
         alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }
         error_lines = [] # List of strings for aggregated error log
+        namespace = source_name.split('_', 1)[0] if source_name else ''
+        record_all = namespace == 'flink-system'
         
         # Load persistent threshold state from task if available, or init new
         threshold_state = task.threshold_state or {}
@@ -253,7 +255,8 @@ class MonitorEngine:
         log_file_handle = None
         try:
             error_file_handle = open(error_file_path, "a", encoding="utf-8")
-            log_file_handle = open(log_file_path, "a", encoding="utf-8")
+            if record_all:
+                log_file_handle = open(log_file_path, "a", encoding="utf-8")
             
             for line_bytes in stream:
                 if not line_bytes:
@@ -263,7 +266,8 @@ class MonitorEngine:
                 line = line_bytes.decode('utf-8', errors='replace')
                 
                 # Write to raw log
-                log_file_handle.write(line)
+                if log_file_handle:
+                    log_file_handle.write(line)
 
                 # --- Analysis Logic Per Line ---
                 if any(k in line for k in clean_ignore_keywords):
