@@ -29,6 +29,7 @@ def find_current_oncall(now=None):
     current_time = now.time()
 
     schedules = Schedule.objects.filter(shift_date=today)
+    mentions = []
     for s in schedules:
         st = _parse_time(s.start_time)
         et = _parse_time(s.end_time)
@@ -47,7 +48,6 @@ def find_current_oncall(now=None):
         if not s.staff_list:
             continue
 
-        mentions = []
         for staff in s.staff_list:
             mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
             name = staff.get('name') or ''
@@ -68,15 +68,15 @@ def find_current_oncall(now=None):
                 if cleaned:
                     mentions.append(cleaned)
 
-        if mentions:
-            seen = set()
-            uniq = []
-            for m in mentions:
-                if m in seen:
-                    continue
-                seen.add(m)
-                uniq.append(m)
-            return ' '.join(uniq)
+    if mentions:
+        seen = set()
+        uniq = []
+        for m in mentions:
+            if m in seen:
+                continue
+            seen.add(m)
+            uniq.append(m)
+        return ' '.join(uniq)
     return ''
 
 
