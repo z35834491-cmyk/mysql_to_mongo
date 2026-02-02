@@ -306,7 +306,7 @@
                       </el-table-column>
                       
                       <!-- Fixed Actions Column for Rightmost Visibility -->
-                      <el-table-column label="Action" width="70" fixed="right" align="center">
+                      <el-table-column label="Action" width="70" align="center">
                         <template #default="{ row }">
                           <el-tooltip content="View Details" placement="top" :enterable="false">
                             <el-button 
