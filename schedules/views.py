@@ -91,6 +91,13 @@ def phone_alert_receive(request):
     oncall = payload.get('oncall') or ''
     if not oncall:
         oncall = find_current_oncall()
+    else:
+        raw = str(oncall).strip()
+        if raw.startswith('<@') and raw.endswith('>'):
+            oncall = raw
+        else:
+            cleaned = raw.lstrip('@').strip()
+            oncall = f"@{cleaned}" if cleaned else ''
 
     alert = PhoneAlert.objects.create(
         status=PhoneAlert.STATUS_NEW,

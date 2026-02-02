@@ -50,14 +50,17 @@ def find_current_oncall(now=None):
         staff = s.staff_list[0]
         mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
         name = staff.get('name') or ''
-        if mention:
-            if mention.startswith('<@') and mention.endswith('>'):
-                return mention
-            if mention.startswith('U') and len(mention) > 3:
-                return f"<@{mention}>"
-            return mention
         if name:
-            return name
+            cleaned = str(name).lstrip('@').strip()
+            return f"@{cleaned}" if cleaned else ''
+        if mention:
+            m = str(mention).strip()
+            if m.startswith('<@') and m.endswith('>'):
+                return m
+            if m.startswith('U') and len(m) > 3:
+                return f"<@{m}>"
+            cleaned = m.lstrip('@').strip()
+            return f"@{cleaned}" if cleaned else ''
     return ''
 
 
@@ -86,7 +89,7 @@ def post_slack_blocks(config: PhoneAlertConfig, blocks):
 
 
 def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: str):
-    url = (config.external_api_url or '').strip().strip('`').strip('"').strip("'")
+    url = (config.external_api_url or '').strip().strip('"').strip("'").replace('`', '').strip()
     if not url:
         print(f"[phone_alert] external callback skipped: missing external_api_url alert_id={alert.id} action={action}", flush=True)
         return None, 'missing external_api_url'
@@ -109,12 +112,22 @@ def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: st
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
         body_preview = (resp.text or "")[:500]
+        effective_status = resp.status_code
+        app_code = None
+        try:
+            data = resp.json()
+            if isinstance(data, dict) and 'code' in data:
+                app_code = data.get('code')
+                if isinstance(app_code, int) and app_code and resp.status_code == 200:
+                    effective_status = app_code
+        except Exception:
+            pass
         print(
             f"[phone_alert] external callback response: alert_id={alert.id} action={action} http_status={resp.status_code} "
-            f"body_preview={body_preview}",
+            f"app_code={app_code} effective_status={effective_status} body_preview={body_preview}",
             flush=True,
         )
-        return resp.status_code, body_preview
+        return effective_status, body_preview
     except Exception as e:
         print(f"[phone_alert] external callback exception: alert_id={alert.id} action={action} url={url} err={e}", flush=True)
         return None, str(e)
