@@ -90,16 +90,8 @@ def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: st
     auth = None
     if config.external_api_username or config.external_api_password:
         auth = (config.external_api_username or '', config.external_api_password or '')
-    payload = {
-        "alert_id": alert.id,
-        "action": action,
-        "status": alert.status,
-        "oncall": alert.oncall,
-        "processing_at": alert.processing_at.isoformat() if alert.processing_at else None,
-        "done_at": alert.done_at.isoformat() if alert.done_at else None,
-        "created_at": alert.created_at.isoformat() if alert.created_at else None,
-        "payload": alert.payload,
-    }
+    status = "PROCESSING" if action == "processing" else "COMPLETED"
+    payload = {"status": status}
     try:
         resp = requests.post(url, json=payload, auth=auth, timeout=10)
         return resp.status_code, resp.text[:1000]
