@@ -34,6 +34,7 @@ export interface PhoneAlertConfig {
   external_api_password?: string
   incoming_token: string
   auto_complete_minutes: number
+  oncall_slack_map?: Record<string, string>
   has_external_api_password?: boolean
 }
 

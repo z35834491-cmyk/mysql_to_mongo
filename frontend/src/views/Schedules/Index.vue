@@ -128,6 +128,27 @@
         <el-form-item label="Auto Complete Minutes">
           <el-input-number v-model="phoneAlertForm.auto_complete_minutes" :min="1" :max="240" />
         </el-form-item>
+        <el-divider>Oncall Slack Mapping</el-divider>
+        <el-table :data="oncallMappings" border size="small" style="width: 100%">
+          <el-table-column label="Name" min-width="180">
+            <template #default="{ row }">
+              <el-input v-model="row.name" placeholder="追风" />
+            </template>
+          </el-table-column>
+          <el-table-column label="Slack User ID" min-width="220">
+            <template #default="{ row }">
+              <el-input v-model="row.slackId" placeholder="U12345678 或 <@U12345678>" />
+            </template>
+          </el-table-column>
+          <el-table-column label="Actions" width="120">
+            <template #default="{ $index }">
+              <el-button type="danger" link @click="oncallMappings.splice($index, 1)">Remove</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div style="margin-top: 8px">
+          <el-button @click="oncallMappings.push({ name: '', slackId: '' })">Add Mapping</el-button>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="phoneAlertDialogVisible = false">Cancel</el-button>
@@ -159,8 +180,11 @@ const phoneAlertForm = ref<PhoneAlertConfig>({
   external_api_username: '',
   external_api_password: '',
   incoming_token: '',
-  auto_complete_minutes: 30
+  auto_complete_minutes: 30,
+  oncall_slack_map: {}
 })
+
+const oncallMappings = ref<Array<{ name: string; slackId: string }>>([])
 
 const fetchData = async () => {
   loading.value = true
@@ -221,6 +245,12 @@ const openPhoneAlertConfig = async () => {
   phoneAlertLoading.value = true
   try {
     const cfg = await getPhoneAlertConfig()
+    const mappingEntries: Array<{ name: string; slackId: string }> = []
+    const mapping = (cfg.oncall_slack_map || {}) as Record<string, string>
+    Object.keys(mapping).forEach((k) => {
+      mappingEntries.push({ name: k, slackId: mapping[k] })
+    })
+    oncallMappings.value = mappingEntries
     phoneAlertForm.value = {
       public_url: cfg.public_url || '',
       slack_webhook_url: cfg.slack_webhook_url || '',
@@ -229,6 +259,7 @@ const openPhoneAlertConfig = async () => {
       external_api_password: '',
       incoming_token: cfg.incoming_token || '',
       auto_complete_minutes: cfg.auto_complete_minutes || 30,
+      oncall_slack_map: cfg.oncall_slack_map || {},
       has_external_api_password: cfg.has_external_api_password
     }
   } catch (e) {
@@ -241,6 +272,13 @@ const openPhoneAlertConfig = async () => {
 const savePhoneAlert = async () => {
   phoneAlertSaving.value = true
   try {
+    const map: Record<string, string> = {}
+    oncallMappings.value.forEach((row) => {
+      const name = (row.name || '').trim().replace(/^@+/, '')
+      const slackId = (row.slackId || '').trim().replace(/^@+/, '')
+      if (name && slackId) map[name] = slackId
+    })
+    phoneAlertForm.value.oncall_slack_map = map
     await savePhoneAlertConfig(phoneAlertForm.value)
     ElMessage.success('Saved')
     phoneAlertDialogVisible.value = false

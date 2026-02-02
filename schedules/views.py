@@ -65,12 +65,16 @@ def phone_alert_config(request):
             "external_api_username": cfg.external_api_username,
             "incoming_token": cfg.incoming_token,
             "auto_complete_minutes": cfg.auto_complete_minutes,
+            "oncall_slack_map": cfg.oncall_slack_map or {},
             "has_external_api_password": bool(cfg.external_api_password),
         })
     data = request.data or {}
-    for key in ["public_url", "slack_webhook_url", "external_api_url", "external_api_username", "incoming_token", "auto_complete_minutes"]:
+    for key in ["public_url", "slack_webhook_url", "external_api_url", "external_api_username", "incoming_token", "auto_complete_minutes", "oncall_slack_map"]:
         if key in data:
-            setattr(cfg, key, data.get(key) or '')
+            if key == 'oncall_slack_map':
+                cfg.oncall_slack_map = data.get(key) or {}
+            else:
+                setattr(cfg, key, data.get(key) or '')
     if 'external_api_password' in data and data.get('external_api_password'):
         cfg.external_api_password = data.get('external_api_password')
     cfg.save()
@@ -97,7 +101,24 @@ def phone_alert_receive(request):
             oncall = raw
         else:
             cleaned = raw.lstrip('@').strip()
-            oncall = f"@{cleaned}" if cleaned else ''
+            if cleaned.startswith('U') and len(cleaned) > 3:
+                oncall = f"<@{cleaned}>"
+            else:
+                oncall = cleaned
+
+    if oncall and not (str(oncall).startswith('<@') and str(oncall).endswith('>')):
+        key = str(oncall).lstrip('@').strip()
+        mapped = (cfg.oncall_slack_map or {}).get(key)
+        if mapped:
+            mapped_str = str(mapped).strip()
+            if mapped_str.startswith('<@') and mapped_str.endswith('>'):
+                oncall = mapped_str
+            else:
+                mapped_clean = mapped_str.lstrip('@').strip()
+                if mapped_clean.startswith('U') and len(mapped_clean) > 3:
+                    oncall = f"<@{mapped_clean}>"
+                else:
+                    oncall = mapped_clean
 
     alert = PhoneAlert.objects.create(
         status=PhoneAlert.STATUS_NEW,

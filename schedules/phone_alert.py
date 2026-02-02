@@ -50,9 +50,6 @@ def find_current_oncall(now=None):
         staff = s.staff_list[0]
         mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
         name = staff.get('name') or ''
-        if name:
-            cleaned = str(name).lstrip('@').strip()
-            return f"@{cleaned}" if cleaned else ''
         if mention:
             m = str(mention).strip()
             if m.startswith('<@') and m.endswith('>'):
@@ -60,7 +57,9 @@ def find_current_oncall(now=None):
             if m.startswith('U') and len(m) > 3:
                 return f"<@{m}>"
             cleaned = m.lstrip('@').strip()
-            return f"@{cleaned}" if cleaned else ''
+            return cleaned
+        if name:
+            return str(name).lstrip('@').strip()
     return ''
 
 

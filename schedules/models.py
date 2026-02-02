@@ -33,6 +33,7 @@ class PhoneAlertConfig(models.Model):
     external_api_password = models.CharField(max_length=255, blank=True, default='')
     incoming_token = models.CharField(max_length=255, blank=True, default='')
     auto_complete_minutes = models.IntegerField(default=30)
+    oncall_slack_map = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
