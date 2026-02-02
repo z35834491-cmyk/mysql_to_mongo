@@ -1,5 +1,6 @@
 import datetime
 import os
+import base64
 from django.utils import timezone
 from django.conf import settings
 import requests
@@ -84,16 +85,19 @@ def post_slack_blocks(config: PhoneAlertConfig, blocks):
 
 
 def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: str):
-    url = (config.external_api_url or '').strip()
+    url = (config.external_api_url or '').strip().strip('`').strip('"').strip("'")
     if not url:
         return None, 'missing external_api_url'
-    auth = None
-    if config.external_api_username or config.external_api_password:
-        auth = (config.external_api_username or '', config.external_api_password or '')
+    headers = {"Content-Type": "application/json"}
+    username = (config.external_api_username or '').strip()
+    password = config.external_api_password or ''
+    if username or password:
+        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
     status = "PROCESSING" if action == "processing" else "COMPLETED"
     payload = {"status": status}
     try:
-        resp = requests.post(url, json=payload, auth=auth, timeout=10)
+        resp = requests.post(url, json=payload, headers=headers, timeout=10, allow_redirects=False)
         return resp.status_code, resp.text[:1000]
     except Exception as e:
         return None, str(e)

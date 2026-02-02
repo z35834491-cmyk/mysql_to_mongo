@@ -145,7 +145,10 @@ def prometheus_webhook(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def incident_list(request):
-    incidents = Incident.objects.all().order_by('-created_at')
+    cutoff = timezone.now() - timezone.timedelta(days=7)
+    Incident.objects.filter(status='resolved', resolved_at__isnull=False, resolved_at__lt=cutoff).delete()
+
+    incidents = Incident.objects.exclude(status='resolved').order_by('-created_at')
     data = []
     for inc in incidents:
         data.append({
