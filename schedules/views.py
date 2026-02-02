@@ -92,33 +92,73 @@ def phone_alert_receive(request):
             return Response({"detail": "unauthorized"}, status=401)
 
     payload = request.data or {}
-    oncall = payload.get('oncall') or ''
-    if not oncall:
-        oncall = find_current_oncall()
-    else:
-        raw = str(oncall).strip()
-        if raw.startswith('<@') and raw.endswith('>'):
-            oncall = raw
-        else:
-            cleaned = raw.lstrip('@').strip()
-            if cleaned.startswith('U') and len(cleaned) > 3:
-                oncall = f"<@{cleaned}>"
-            else:
-                oncall = cleaned
+    raw_oncall = payload.get('oncall')
+    if not raw_oncall:
+        raw_oncall = find_current_oncall()
 
-    if oncall and not (str(oncall).startswith('<@') and str(oncall).endswith('>')):
-        key = str(oncall).lstrip('@').strip()
-        mapped = (cfg.oncall_slack_map or {}).get(key)
+    oncall_items = []
+    if isinstance(raw_oncall, list):
+        oncall_items = [str(x).strip() for x in raw_oncall if str(x).strip()]
+    else:
+        raw_str = str(raw_oncall).strip()
+        if '<@' in raw_str and '>' in raw_str:
+            parts = []
+            buf = raw_str
+            while True:
+                start = buf.find('<@')
+                if start == -1:
+                    break
+                end = buf.find('>', start)
+                if end == -1:
+                    break
+                parts.append(buf[start:end + 1])
+                buf = buf[end + 1:]
+            oncall_items = parts if parts else [raw_str]
+        else:
+            seps = [',', '，', ';', '；', '\n', '\t', ' ']
+            tokens = [raw_str]
+            for sep in seps:
+                next_tokens = []
+                for t in tokens:
+                    next_tokens.extend([x for x in t.split(sep)])
+                tokens = next_tokens
+            oncall_items = [t.strip() for t in tokens if t.strip()]
+
+    mapped_items = []
+    mapping = cfg.oncall_slack_map or {}
+    for item in oncall_items:
+        raw = str(item).strip()
+        if raw.startswith('<@') and raw.endswith('>'):
+            mapped_items.append(raw)
+            continue
+        cleaned = raw.lstrip('@').strip()
+        if cleaned.startswith('U') and len(cleaned) > 3:
+            mapped_items.append(f"<@{cleaned}>")
+            continue
+        mapped = mapping.get(cleaned)
         if mapped:
             mapped_str = str(mapped).strip()
             if mapped_str.startswith('<@') and mapped_str.endswith('>'):
-                oncall = mapped_str
-            else:
-                mapped_clean = mapped_str.lstrip('@').strip()
-                if mapped_clean.startswith('U') and len(mapped_clean) > 3:
-                    oncall = f"<@{mapped_clean}>"
-                else:
-                    oncall = mapped_clean
+                mapped_items.append(mapped_str)
+                continue
+            mapped_clean = mapped_str.lstrip('@').strip()
+            if mapped_clean.startswith('U') and len(mapped_clean) > 3:
+                mapped_items.append(f"<@{mapped_clean}>")
+                continue
+            mapped_items.append(f"@{mapped_clean}" if mapped_clean else '')
+        else:
+            mapped_items.append(f"@{cleaned}" if cleaned else '')
+
+    uniq = []
+    seen = set()
+    for x in mapped_items:
+        if not x:
+            continue
+        if x in seen:
+            continue
+        seen.add(x)
+        uniq.append(x)
+    oncall = ' '.join(uniq)
 
     alert = PhoneAlert.objects.create(
         status=PhoneAlert.STATUS_NEW,

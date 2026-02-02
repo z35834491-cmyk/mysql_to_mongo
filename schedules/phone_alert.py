@@ -47,19 +47,36 @@ def find_current_oncall(now=None):
         if not s.staff_list:
             continue
 
-        staff = s.staff_list[0]
-        mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
-        name = staff.get('name') or ''
-        if mention:
-            m = str(mention).strip()
-            if m.startswith('<@') and m.endswith('>'):
-                return m
-            if m.startswith('U') and len(m) > 3:
-                return f"<@{m}>"
-            cleaned = m.lstrip('@').strip()
-            return cleaned
-        if name:
-            return str(name).lstrip('@').strip()
+        mentions = []
+        for staff in s.staff_list:
+            mention = staff.get('slack') or staff.get('slack_id') or staff.get('slackUserId') or staff.get('slack_user_id') or ''
+            name = staff.get('name') or ''
+            if mention:
+                m = str(mention).strip()
+                if m.startswith('<@') and m.endswith('>'):
+                    mentions.append(m)
+                    continue
+                if m.startswith('U') and len(m) > 3:
+                    mentions.append(f"<@{m}>")
+                    continue
+                cleaned = m.lstrip('@').strip()
+                if cleaned:
+                    mentions.append(cleaned)
+                    continue
+            if name:
+                cleaned = str(name).lstrip('@').strip()
+                if cleaned:
+                    mentions.append(cleaned)
+
+        if mentions:
+            seen = set()
+            uniq = []
+            for m in mentions:
+                if m in seen:
+                    continue
+                seen.add(m)
+                uniq.append(m)
+            return ' '.join(uniq)
     return ''
 
 
