@@ -34,11 +34,53 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(data=input_data, many=is_many)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        
+
+        items = serializer.validated_data if is_many else [serializer.validated_data]
+        saved = []
+        saved_ids = set()
+        for item in items:
+            shift_date = item.get('shift_date')
+            start_time = item.get('start_time')
+            end_time = item.get('end_time')
+            staff_ids = item.get('staff_ids') or ''
+            staff_list = item.get('staff_list') or []
+            rule_id = item.get('rule_id', None)
+            create_time = item.get('create_time') or ''
+
+            filter_kwargs = {
+                'shift_date': shift_date,
+                'start_time': start_time,
+                'end_time': end_time,
+                'staff_ids': staff_ids,
+                'staff_list': staff_list,
+            }
+            if rule_id is not None:
+                filter_kwargs['rule_id'] = rule_id
+
+            qs = Schedule.objects.filter(**filter_kwargs).order_by('-updated_at', '-id')
+            if qs.exists():
+                target = qs.first()
+                extras = qs[1:]
+                if extras:
+                    Schedule.objects.filter(id__in=[x.id for x in extras]).delete()
+                target.rule_id = rule_id
+                target.staff_ids = staff_ids
+                target.staff_list = staff_list
+                target.create_time = create_time
+                target.save()
+                if target.id not in saved_ids:
+                    saved_ids.add(target.id)
+                    saved.append(target)
+            else:
+                created = Schedule.objects.create(**filter_kwargs, create_time=create_time)
+                if created.id not in saved_ids:
+                    saved_ids.add(created.id)
+                    saved.append(created)
+
+        out = self.get_serializer(saved, many=True)
         return Response({
             "code": 0,
-            "data": serializer.data,
+            "data": out.data if is_many else out.data[0],
             "msg": "success"
         }, status=status.HTTP_201_CREATED)
 
