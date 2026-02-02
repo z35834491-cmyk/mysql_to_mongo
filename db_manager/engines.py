@@ -247,6 +247,15 @@ class RedisEngine(BaseEngine):
                 if mode != 'cluster':
                     r.select(db_idx)
                 
+                # Get Stats
+                try:
+                    db_size = r.dbsize()
+                    mem_info = r.info('memory')
+                    used_mem = mem_info.get('used_memory_human', '-')
+                except:
+                    db_size = 0
+                    used_mem = '-'
+
                 # Scan a sample of keys (limit to avoid blocking)
                 # We use a larger count to get a good representative sample
                 cursor = '0'
@@ -266,22 +275,43 @@ class RedisEngine(BaseEngine):
                         prefix = k.split(':')[0]
                         groups.add(f"{prefix}:*")
                     else:
-                        # Or just add the key itself if no separator
-                        # But to avoid clutter, maybe we can group them as "Others"?
-                        # For now, let's just add the key, but if too many, maybe ignore?
-                        # Let's add them.
                         groups.add(k)
                 
                 # If no keys found, add a placeholder
                 if not groups:
                     groups.add('Keys')
                 
-                # Convert to list and sort
-                tree[db_key] = sorted(list(groups))
+                # Convert to objects
+                group_list = sorted(list(groups))
+                result_list = []
+                
+                # If we only have one group (Keys or similar) or it's just a few,
+                # we can try to distribute stats? 
+                # Actually, accurate per-prefix count is hard. 
+                # But if we just have 'Keys', we can show total.
+                
+                for g in group_list:
+                    item = {
+                        "name": g,
+                        "rows": "-",
+                        "size": "-",
+                        "engine": "Redis",
+                        "created": "-",
+                        "updated": "-"
+                    }
+                    
+                    # If it's the generic 'Keys' placeholder or we only have one group, assume it's the whole DB
+                    if g == 'Keys' and len(group_list) == 1:
+                        item['rows'] = db_size
+                        item['size'] = used_mem
+                    
+                    result_list.append(item)
+                
+                tree[db_key] = result_list
 
         except Exception as e:
             # Fallback
-            tree['db0'] = ['Keys']
+            tree['db0'] = [{"name": "Keys", "rows": 0, "size": "-", "engine": "Redis"}]
         finally:
             r.close()
         return tree
