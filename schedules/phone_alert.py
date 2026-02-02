@@ -1,7 +1,6 @@
 import datetime
 import os
 import base64
-import logging
 import hashlib
 from django.utils import timezone
 from django.conf import settings
@@ -9,7 +8,6 @@ import requests
 
 from .models import PhoneAlertConfig, PhoneAlert, Schedule
 
-logger = logging.getLogger(__name__)
 
 def load_phone_alert_config():
     return PhoneAlertConfig.load()
@@ -90,7 +88,7 @@ def post_slack_blocks(config: PhoneAlertConfig, blocks):
 def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: str):
     url = (config.external_api_url or '').strip().strip('`').strip('"').strip("'")
     if not url:
-        logger.info("phone_alert external callback skipped: missing external_api_url (alert_id=%s action=%s)", alert.id, action)
+        print(f"[phone_alert] external callback skipped: missing external_api_url alert_id={alert.id} action={action}", flush=True)
         return None, 'missing external_api_url'
     headers = {"Content-Type": "application/json"}
     username = (config.external_api_username or '').strip()
@@ -103,27 +101,20 @@ def post_external_action(config: PhoneAlertConfig, alert: PhoneAlert, action: st
 
     auth_header = headers.get("Authorization", "")
     auth_fingerprint = hashlib.sha256(auth_header.encode("utf-8")).hexdigest()[:12] if auth_header else ""
-    logger.info(
-        "phone_alert external callback request: url=%s method=POST alert_id=%s action=%s payload=%s auth_user=%s auth_present=%s auth_fp=%s",
-        url,
-        alert.id,
-        action,
-        payload,
-        username,
-        bool(auth_header),
-        auth_fingerprint,
+    print(
+        f"[phone_alert] external callback request: url={url} method=POST alert_id={alert.id} action={action} "
+        f"payload={payload} auth_user={username} auth_present={bool(auth_header)} auth_fp={auth_fingerprint}",
+        flush=True,
     )
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
         body_preview = (resp.text or "")[:500]
-        logger.info(
-            "phone_alert external callback response: alert_id=%s action=%s http_status=%s body_preview=%s",
-            alert.id,
-            action,
-            resp.status_code,
-            body_preview,
+        print(
+            f"[phone_alert] external callback response: alert_id={alert.id} action={action} http_status={resp.status_code} "
+            f"body_preview={body_preview}",
+            flush=True,
         )
         return resp.status_code, body_preview
     except Exception as e:
-        logger.exception("phone_alert external callback exception: alert_id=%s action=%s url=%s", alert.id, action, url)
+        print(f"[phone_alert] external callback exception: alert_id={alert.id} action={action} url={url} err={e}", flush=True)
         return None, str(e)

@@ -142,22 +142,29 @@ def phone_alert_processing(request, alert_id: int):
         alert = PhoneAlert.objects.get(id=alert_id)
     except PhoneAlert.DoesNotExist:
         return _render_action_result("Alert not found")
+    print(f"[phone_alert] processing endpoint hit: alert_id={alert_id} status={alert.status}", flush=True)
     if str(alert.action_token) != str(token):
+        print(f"[phone_alert] processing invalid token: alert_id={alert_id}", flush=True)
         return _render_action_result("Invalid token")
     if alert.status in [PhoneAlert.STATUS_DONE, PhoneAlert.STATUS_AUTO_DONE]:
+        print(f"[phone_alert] processing ignored (already completed): alert_id={alert_id} status={alert.status}", flush=True)
         return _render_action_result("Already completed")
     if alert.status != PhoneAlert.STATUS_PROCESSING:
         alert.status = PhoneAlert.STATUS_PROCESSING
         alert.processing_at = timezone.now()
         alert.save(update_fields=['status', 'processing_at', 'updated_at'])
         cfg = load_phone_alert_config()
+        print(f"[phone_alert] processing -> calling external: alert_id={alert_id}", flush=True)
         code, detail = post_external_action(cfg, alert, 'processing')
+        print(f"[phone_alert] processing external done: alert_id={alert_id} http_status={code} detail={detail}", flush=True)
         alert.external_last_action = 'processing'
         alert.external_last_http_status = code
         alert.external_last_error = '' if code is not None else (detail or '')
         alert.external_last_at = timezone.now()
         alert.save(update_fields=['external_last_action', 'external_last_http_status', 'external_last_error', 'external_last_at', 'updated_at'])
         post_slack_blocks(cfg, [{"type": "section", "text": {"type": "mrkdwn", "text": f"🟦 Alert #{alert.id} marked as processing. ({alert.oncall})"}}])
+    else:
+        print(f"[phone_alert] processing skipped (already processing): alert_id={alert_id}", flush=True)
     return _render_action_result("Marked as processing")
 
 
@@ -169,9 +176,12 @@ def phone_alert_done(request, alert_id: int):
         alert = PhoneAlert.objects.get(id=alert_id)
     except PhoneAlert.DoesNotExist:
         return _render_action_result("Alert not found")
+    print(f"[phone_alert] done endpoint hit: alert_id={alert_id} status={alert.status}", flush=True)
     if str(alert.action_token) != str(token):
+        print(f"[phone_alert] done invalid token: alert_id={alert_id}", flush=True)
         return _render_action_result("Invalid token")
     if alert.status in [PhoneAlert.STATUS_DONE, PhoneAlert.STATUS_AUTO_DONE]:
+        print(f"[phone_alert] done ignored (already completed): alert_id={alert_id} status={alert.status}", flush=True)
         return _render_action_result("Already completed")
     alert.status = PhoneAlert.STATUS_DONE
     alert.done_at = timezone.now()
@@ -179,7 +189,9 @@ def phone_alert_done(request, alert_id: int):
         alert.processing_at = alert.done_at
     alert.save(update_fields=['status', 'done_at', 'processing_at', 'updated_at'])
     cfg = load_phone_alert_config()
+    print(f"[phone_alert] done -> calling external: alert_id={alert_id}", flush=True)
     code, detail = post_external_action(cfg, alert, 'done')
+    print(f"[phone_alert] done external done: alert_id={alert_id} http_status={code} detail={detail}", flush=True)
     alert.external_last_action = 'done'
     alert.external_last_http_status = code
     alert.external_last_error = '' if code is not None else (detail or '')
