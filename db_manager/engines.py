@@ -296,11 +296,12 @@ class RedisEngine(BaseEngine):
                 # Group keys and Count
                 groups = {}
                 
+                # Force flat mode for Redis as requested
                 # Heuristic: If we scanned few keys and they don't look like they have many common prefixes, just show them flat
                 # Or if the total sample is small, just show all keys.
                 # User preference: "Don't want folders".
-                # Let's say if we found < 200 keys, show them all.
-                show_flat = len(keys) < 200
+                # ALWAYS show flat for now unless overridden
+                show_flat = True 
                 
                 for k in keys:
                     if not show_flat and ':' in k:
