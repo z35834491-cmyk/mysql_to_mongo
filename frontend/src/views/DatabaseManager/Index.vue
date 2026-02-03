@@ -867,8 +867,10 @@ const refreshOverview = async (tab: any) => {
     
     // Update charts
     const isRedis = tab.dbType && tab.dbType.toLowerCase().includes('redis')
-    tab.chartRowOption = getRowChartOption(tableList)
-    tab.chartSizeOption = getSizeChartOption(tableList, isRedis ? 'rows' : 'size')
+    
+    // Force new object references to trigger reactivity
+    tab.chartRowOption = { ...getRowChartOption(tableList) }
+    tab.chartSizeOption = { ...getSizeChartOption(tableList, isRedis ? 'rows' : 'size') }
     
   } catch (e: any) {
     ElMessage.error(e.message || 'Failed to refresh overview')
@@ -889,17 +891,28 @@ const parseSize = (sizeStr: any) => {
   const str = String(sizeStr).trim().toUpperCase()
   if (str === '-' || str === '') return 0
   
-  // Extract number part (handle "16.00 KB" -> 16.00)
-  const numPart = parseFloat(str)
+  // Extract number part (handle "16.00 KB" -> 16.00, or "1,234.56 MB")
+  // Remove commas for safe parsing
+  const cleanStr = str.replace(/,/g, '')
+  const numPart = parseFloat(cleanStr)
   if (isNaN(numPart)) return 0
 
-  if (str.includes('TB')) return numPart * 1024 * 1024 * 1024 * 1024
-  if (str.includes('GB')) return numPart * 1024 * 1024 * 1024
-  if (str.includes('MB')) return numPart * 1024 * 1024
-  if (str.includes('KB')) return numPart * 1024
+  if (cleanStr.includes('TB')) return numPart * 1024 * 1024 * 1024 * 1024
+  if (cleanStr.includes('GB')) return numPart * 1024 * 1024 * 1024
+  if (cleanStr.includes('MB')) return numPart * 1024 * 1024
+  if (cleanStr.includes('KB')) return numPart * 1024
   
   // If just a number string or "B", return as bytes
   return numPart
+}
+
+// Helper to parse numbers safely (e.g. "1,234" -> 1234)
+const parseNumber = (val: any) => {
+  if (typeof val === 'number') return val
+  if (!val) return 0
+  const str = String(val).replace(/,/g, '').trim()
+  const num = parseFloat(str)
+  return isNaN(num) ? 0 : num
 }
 
 const hasData = (option: any) => {
@@ -911,19 +924,20 @@ const hasData = (option: any) => {
   return data.some((d: any) => {
       let val = 0
       if (typeof d === 'object' && d !== null) {
-          val = parseFloat(d.value)
+          val = parseNumber(d.value)
       } else {
-          val = parseFloat(d)
+          val = parseNumber(d)
       }
-      return !isNaN(val) && val > 0
+      return val > 0
   })
 }
 
 const getRowChartOption = (data: any[]) => {
   // Top 10 tables by rows
   const sorted = [...data]
-    .filter(t => t.rows !== '-' && t.rows > 0)
-    .sort((a, b) => b.rows - a.rows)
+    .map(t => ({ ...t, rowsNum: parseNumber(t.rows) }))
+    .filter(t => t.rows !== '-' && t.rowsNum > 0)
+    .sort((a, b) => b.rowsNum - a.rowsNum)
     .slice(0, 10)
     
   return {
@@ -935,7 +949,7 @@ const getRowChartOption = (data: any[]) => {
       {
         name: 'Row Count',
         type: 'bar',
-        data: sorted.map(t => t.rows).reverse(),
+        data: sorted.map(t => t.rowsNum).reverse(),
         itemStyle: { color: '#409EFF' },
         barWidth: '60%'
       }
