@@ -169,6 +169,13 @@
 
               <!-- VIEW: DB OVERVIEW -->
               <div v-if="item.type === 'overview'" class="tab-view overview-view">
+                <!-- Context Breadcrumb -->
+                <div class="context-breadcrumb">
+                   <el-tag size="small" type="info" effect="plain">{{ item.connName }}</el-tag>
+                   <span class="breadcrumb-separator">/</span>
+                   <span class="breadcrumb-current">{{ item.dbName }}</span>
+                </div>
+
                 <div class="view-toolbar">
                    <div class="editor-info">
                       <el-icon><Coin /></el-icon>
@@ -353,7 +360,7 @@
                     small
                     v-model:current-page="item.page"
                     v-model:page-size="item.pageSize"
-                    :page-sizes="[20, 50, 100, 200, 500]"
+                    :page-sizes="[10, 20, 50, 100, 500]"
                     layout="total, sizes, prev, pager, next, jumper"
                     :total="item.total"
                     @size-change="refreshTab(item)"
@@ -364,14 +371,7 @@
 
               <!-- VIEW: QUERY CONSOLE -->
               <div v-if="item.type === 'query'" class="tab-view query-view">
-                <div class="query-editor-container">
-                  <div class="editor-toolbar">
-                    <div class="editor-info">
-                      <el-icon><Monitor /></el-icon>
-                      <span class="editor-title">{{ item.dbType.toUpperCase() }} Console</span>
-                      <span class="editor-subtitle">Target: {{ item.dbName || 'Server' }}</span>
-                    </div>
-                    <el-button type="success" size="small" @click="runQuery(item)" :loading="item.loading">
+                <-<div  ad>on type="success" size="small" @click="runQuery(item)" :loading="item.loading">
                       <el-icon><VideoPlay /></el-icon> Run Query
                     </el-button>
                   </div>
@@ -905,18 +905,24 @@ const getSizeChartOption = (data: any[]) => {
     tooltip: { trigger: 'item', formatter: '{b}: {c} Bytes ({d}%)' },
     legend: { 
       orient: 'vertical', 
-      left: '0', // Left aligned
-      top: 'middle', // Vertically center it
+      left: '0', 
+      top: 'middle', 
       align: 'left',
       itemGap: 10,
-      type: 'scroll' 
+      type: 'scroll',
+      width: '45%', // Restrict width to avoid overlap
+      formatter: (name: string) => {
+         // Truncate long names in legend
+         return name.length > 20 ? name.substring(0, 18) + '...' : name
+      },
+      tooltip: { show: true } // Show full name on hover
     },
     series: [
       {
         name: 'Storage Size',
         type: 'pie',
         radius: ['40%', '70%'],
-        center: ['70%', '50%'], // Move pie chart to right
+        center: ['75%', '50%'], // Move pie chart further right
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 10,
@@ -951,10 +957,17 @@ const openTab = (data: any) => {
   const tabName = data.id
   const existing = tabs.value.find(t => t.name === tabName)
   
+  // Always switch to the target connection first
   activeConnectionId.value = data.connId
+  // Then activate the tab within that connection
   connActiveTabs[data.connId] = tabName
   
   if (existing) {
+    // If tab exists but has no data (and not loading), refresh it
+    // This solves the "manual refresh" issue if a previous load failed
+    if (!existing.loading && (!existing.data || existing.data.length === 0)) {
+       refreshTab(existing)
+    }
     return
   }
   
@@ -1534,6 +1547,19 @@ const saveConnection = async () => {
   align-items: center;
   gap: 8px;
   padding: 0 4px;
+  opacity: 0.7; /* Default dim */
+  transition: opacity 0.2s, font-weight 0.2s;
+}
+
+.conn-tab-label.is-conn-active {
+  opacity: 1;
+}
+
+.conn-tab-label.is-conn-active .conn-name {
+  font-weight: 800; /* Bolder text for active */
+  color: #000;
+  text-decoration: underline; /* Underline for emphasis */
+  text-underline-offset: 4px;
 }
 
 .conn-name {
@@ -1595,6 +1621,26 @@ const saveConnection = async () => {
 .tab-conn-indicator.redis { background-color: #DC382D; }
 .tab-conn-indicator.mongo { background-color: #47A248; }
 .tab-conn-indicator.rabbitmq { background-color: #FF6600; }
+
+.tab-conn-badge {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  padding: 2px;
+}
+.tab-conn-badge img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.tab-conn-badge.mysql { background-color: #E6F7FF; border: 1px solid rgba(0, 117, 143, 0.2); }
+.tab-conn-badge.redis { background-color: #FFF1F0; border: 1px solid rgba(220, 56, 45, 0.2); }
+.tab-conn-badge.mongo { background-color: #F6FFED; border: 1px solid rgba(71, 162, 72, 0.2); }
+.tab-conn-badge.rabbitmq { background-color: #FFF7E6; border: 1px solid rgba(255, 102, 0, 0.2); }
 
 .tab-icon-wrapper {
   display: flex;
@@ -1857,7 +1903,8 @@ const saveConnection = async () => {
   flex: 1;
   display: flex;
   overflow: hidden; /* Important for scroll */
-  height: 100%;
+  /* height: 100%; REMOVED to prevent flex overflow */
+  min-height: 0; /* Important: Ensures container doesn't grow beyond flex parent, allowing children to scroll */
 }
 
 .table-wrapper {
@@ -1865,6 +1912,7 @@ const saveConnection = async () => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0; /* Important for horizontal scroll in flex items */
 }
 
 /* Details Panel */
@@ -1877,6 +1925,8 @@ const saveConnection = async () => {
   transition: width 0.3s;
   box-shadow: -2px 0 8px rgba(0,0,0,0.05);
   z-index: 10;
+  height: 100%; /* Ensure it matches parent height to enable internal scrolling */
+  overflow: hidden;
 }
 
 .details-header {
@@ -1887,6 +1937,7 @@ const saveConnection = async () => {
   justify-content: space-between;
   padding: 0 12px;
   background: #fcfcfc;
+  flex-shrink: 0; /* Prevent header from shrinking */
 }
 
 .details-title {
@@ -1899,6 +1950,7 @@ const saveConnection = async () => {
   flex: 1;
   overflow-y: auto;
   padding: 0;
+  min-height: 0; /* Important for flex child scroll */
 }
 
 .details-list {
@@ -1935,5 +1987,30 @@ const saveConnection = async () => {
   height: 16px;
   background: #dcdfe6;
   margin: 0 8px;
+}
+
+/* Breadcrumb Styling */
+.context-breadcrumb {
+  padding: 6px 12px;
+  background: #fdfdfd;
+  border-bottom: 1px solid #f0f2f5;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.breadcrumb-separator {
+  margin: 0 6px;
+  color: #c0c4cc;
+}
+
+.breadcrumb-current {
+  color: #606266;
+  font-weight: 500;
+}
+
+.breadcrumb-active {
+  color: #303133;
+  font-weight: 700;
 }
 </style>

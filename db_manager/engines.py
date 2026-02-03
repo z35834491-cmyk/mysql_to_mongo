@@ -414,9 +414,12 @@ class RedisEngine(BaseEngine):
                 # If we haven't finished scanning, total must be larger than what we have
                 # We can use dbsize as an upper bound estimate, or just say "many"
                 try:
-                    total = r.dbsize()
+                    db_size = r.dbsize()
+                    # Ensure total is at least enough to show the next page button
+                    # If we found keys up to target_count, we need total > target_count
+                    total = max(db_size, len(keys) + 100)
                 except:
-                    total = len(keys) + 1000 # Fake it to allow next page
+                    total = len(keys) + 100 # Fake it to allow next page
             
             rows = []
             for k in page_keys:
@@ -562,7 +565,7 @@ class MongoEngine(BaseEngine):
                 # Optimized: count_documents is slow with filter, use limit if possible or explain
                 # For UX, we just say "50+" if we hit limit? 
                 # Or use count_documents with limit.
-                total = col.count_documents(query_filter, limit=1000)
+                total = col.count_documents(query_filter)
             else:
                 # Optimization: Sort by _id desc (LIFO) by default for better usability
                 # Most users want to see the latest data first
