@@ -234,9 +234,7 @@ class MonitorEngine:
         count_info = 0
         count_other = 0
         
-        # Context Management
-        # Keep last N lines for context
-        CONTEXT_LINES = 5
+        CONTEXT_LINES = 20
         context_buffer = [] # list of strings
         
         # When an error occurs, we need to record:
@@ -245,7 +243,39 @@ class MonitorEngine:
         # 3. The following N lines (future)
         # To handle multiple errors close to each other, we use a counter "lines_to_record_counter"
         
-        lines_to_record_counter = 0
+        after_context_counter = 0
+        stack_capture_active = False
+
+        def _strip_leading_timestamp(s: str) -> str:
+            try:
+                if len(s) >= 21 and s[4] == '-' and s[7] == '-' and ('T' in s[:12]):
+                    parts = s.split(' ', 1)
+                    if len(parts) == 2 and parts[0].count(':') >= 2:
+                        return parts[1]
+            except Exception:
+                pass
+            return s
+
+        def _is_stack_line(s: str) -> bool:
+            payload = _strip_leading_timestamp(s).rstrip('\n')
+            t = payload.lstrip()
+            if not t:
+                return True
+            if t.startswith('at '):
+                return True
+            if t.startswith('Caused by:') or t.startswith('Suppressed:'):
+                return True
+            if t.startswith('...') and t.endswith('more'):
+                return True
+            if t.startswith('Traceback (most recent call last):'):
+                return True
+            if t.startswith('During handling of the above exception') or t.startswith('The above exception was the direct cause'):
+                return True
+            if t.startswith('goroutine ') or t.startswith('panic:'):
+                return True
+            if t.startswith('File "') or t.startswith('File '):
+                return True
+            return False
         
         # Separate file for errors: pod_name_YYYY-MM-DD_error.log
         today_str = datetime.date.today().isoformat()
@@ -372,41 +402,49 @@ class MonitorEngine:
                              alerts = [a for a in alerts if a['msg'].find(line) == -1]
                              is_alert = False # Reset flag so it doesn't prefix [ALERT] in log file
 
-                # --- Context Recording Logic ---
-                # Trigger condition: Alert OR Error OR Record
                 should_trigger_context = is_alert or is_error or is_record
-                
+                capture_active = stack_capture_active or after_context_counter > 0
+
                 if should_trigger_context:
-                    # Add to error_lines for aggregated log
                     error_lines.append(line.strip())
 
-                    # If we are not already recording, dump context first
-                    if lines_to_record_counter <= 0:
-                        # Write separator if needed
+                    if not capture_active:
                         error_file_handle.write("-" * 40 + "\n")
-                        # Write context buffer
                         for ctx_line in context_buffer:
                             error_file_handle.write(f"[CTX] {ctx_line}")
-                            if not ctx_line.endswith('\n'): error_file_handle.write('\n')
-                    
-                    # Reset counter to capture next N lines
-                    lines_to_record_counter = CONTEXT_LINES
-                    
-                    # Write current line with prefix
+                            if not ctx_line.endswith('\n'):
+                                error_file_handle.write('\n')
+
                     prefix = ""
-                    if is_alert: prefix += "[ALERT]"
-                    if is_error: prefix += "[ERROR]"
-                    if is_record: prefix += "[RECORD]"
+                    if is_alert:
+                        prefix += "[ALERT]"
+                    if is_error:
+                        prefix += "[ERROR]"
+                    if is_record:
+                        prefix += "[RECORD]"
                     error_file_handle.write(f"{prefix} {line}")
-                    if not line.endswith('\n'): error_file_handle.write('\n')
-                    
+                    if not line.endswith('\n'):
+                        error_file_handle.write('\n')
+
+                    stack_capture_active = bool(is_error)
+                    after_context_counter = 0
+
                 else:
-                    # Normal line
-                    if lines_to_record_counter > 0:
-                        # We are in the "after" window
+                    if stack_capture_active:
+                        if _is_stack_line(line):
+                            error_lines.append(line.strip())
+                            error_file_handle.write(f"[STACK] {line}")
+                            if not line.endswith('\n'):
+                                error_file_handle.write('\n')
+                        else:
+                            stack_capture_active = False
+                            after_context_counter = CONTEXT_LINES
+
+                    if not stack_capture_active and after_context_counter > 0:
                         error_file_handle.write(f"[CTX] {line}")
-                        if not line.endswith('\n'): error_file_handle.write('\n')
-                        lines_to_record_counter -= 1
+                        if not line.endswith('\n'):
+                            error_file_handle.write('\n')
+                        after_context_counter -= 1
                 
                 # Update context buffer (always keep last N lines)
                 context_buffer.append(line)
@@ -415,7 +453,7 @@ class MonitorEngine:
                     
                 # Flush error file periodically or on write? 
                 # Python's file object is buffered, let's flush on trigger to be safe
-                if should_trigger_context:
+                if should_trigger_context or stack_capture_active:
                     error_file_handle.flush()
 
         finally:
