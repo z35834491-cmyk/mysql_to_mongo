@@ -182,6 +182,9 @@
                       <span class="editor-title" style="margin-left: 8px">{{ item.dbName }} Overview</span>
                    </div>
                    <div class="right-tools">
+                     <el-button type="primary" plain size="small" @click="refreshOverview(item)" :loading="item.loading" style="margin-right: 12px">
+                        <el-icon><Refresh /></el-icon> Refresh
+                     </el-button>
                      <el-tag type="info">{{ item.data.length }} Tables / Collections</el-tag>
                    </div>
                 </div>
@@ -1397,30 +1400,30 @@ const saveConnection = async () => {
   background-color: transparent !important; /* Reset default background */
 }
 
-/* Specific Active Backgrounds for Connections */
+/* Specific Active Backgrounds for Connections - Fix Selectors */
 /* MySQL */
-.custom-tree-item.is-active:has(.mysql) {
+.custom-tree-item:has(.mysql.active) {
   background-color: #E6F7FF !important;
   color: #00758F !important;
   border-right: 3px solid #00758F;
 }
 
 /* Redis */
-.custom-tree-item.is-active:has(.redis) {
+.custom-tree-item:has(.redis.active) {
   background-color: #FFF1F0 !important;
   color: #DC382D !important;
   border-right: 3px solid #DC382D;
 }
 
 /* Mongo */
-.custom-tree-item.is-active:has(.mongo) {
+.custom-tree-item:has(.mongo.active) {
   background-color: #F6FFED !important;
   color: #47A248 !important;
   border-right: 3px solid #47A248;
 }
 
 /* RabbitMQ */
-.custom-tree-item.is-active:has(.rabbitmq) {
+.custom-tree-item:has(.rabbitmq.active) {
   background-color: #FFF7E6 !important;
   color: #FF6600 !important;
   border-right: 3px solid #FF6600;
@@ -1910,18 +1913,57 @@ const saveConnection = async () => {
 .data-view-container {
   flex: 1;
   display: flex;
-  overflow: hidden; /* Important for scroll */
-  /* height: 100%; REMOVED to prevent flex overflow */
-  min-height: 0; /* Important: Ensures container doesn't grow beyond flex parent, allowing children to scroll */
+  flex-direction: column; /* Changed to column to stack table and pagination if needed, but wait, layout is row for details */
+  /* Actually, the layout is: data-view-container { table-wrapper (flex 1) + details-panel } */
+  /* The pagination is OUTSIDE data-view-container in the HTML structure above? No, it is INSIDE table-view but AFTER data-view-container? */
+  /* Let's check the HTML structure in the file content I read */
+  overflow: hidden;
+  min-height: 0;
+  position: relative; /* For absolute positioning if needed */
+}
+
+/* 
+   HTML Structure based on read:
+   <div class="tab-view table-view">
+      <div class="view-toolbar">...</div>
+      <div class="data-view-container">
+         <div class="table-wrapper">...</div>
+         <div class="details-panel">...</div>
+      </div>
+      <div class="pagination-bar">...</div>
+   </div>
+*/
+
+/* So Pagination IS at the bottom of .table-view, outside .data-view-container */
+/* The issue "moving with table" implies table height changes. */
+/* .table-view needs to be height: 100% */
+
+.tab-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Ensure no scroll on the view itself */
 }
 
 .table-wrapper {
   flex: 1;
-  overflow: hidden;
+  overflow: auto; /* Allow table to scroll internally */
   display: flex;
   flex-direction: column;
-  min-width: 0; /* Important for horizontal scroll in flex items */
+  min-width: 0;
+  min-height: 0; /* Critical for nested flex scroll */
 }
+
+.pagination-bar {
+  padding: 8px 12px;
+  border-top: 1px solid #ebeef5;
+  display: flex;
+  justify-content: flex-end;
+  background: #fafafa;
+  flex-shrink: 0; /* Never shrink */
+  z-index: 5; /* Ensure above content */
+}
+
 
 /* Details Panel */
 .details-panel {
