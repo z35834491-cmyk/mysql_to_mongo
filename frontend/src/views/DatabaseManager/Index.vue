@@ -194,11 +194,17 @@
                   <div class="charts-row" v-if="item.chartRowOption && item.chartSizeOption">
                     <el-card shadow="never" class="chart-card">
                        <template #header><span class="chart-title">{{ item.rowChartTitle || 'Top Tables by Rows' }}</span></template>
-                       <v-chart class="chart" :option="item.chartRowOption" autoresize />
+                       <div class="chart-container">
+                         <v-chart v-if="hasData(item.chartRowOption)" class="chart" :option="item.chartRowOption" autoresize />
+                         <el-empty v-else description="No Data" :image-size="80" />
+                       </div>
                     </el-card>
                     <el-card shadow="never" class="chart-card">
                        <template #header><span class="chart-title">{{ item.sizeChartTitle || 'Storage Distribution' }}</span></template>
-                       <v-chart class="chart" :option="item.chartSizeOption" autoresize />
+                       <div class="chart-container">
+                         <v-chart v-if="hasData(item.chartSizeOption)" class="chart" :option="item.chartSizeOption" autoresize />
+                         <el-empty v-else description="No Data" :image-size="80" />
+                       </div>
                     </el-card>
                   </div>
 
@@ -872,9 +878,23 @@ const refreshOverview = async (tab: any) => {
 }
 
 // --- Chart Helpers ---
-const parseSize = (sizeStr: string) => {
+const hasData = (option: any) => {
+  if (!option || !option.series || option.series.length === 0) return false
+  const data = option.series[0].data
+  return data && data.length > 0 && data.some((d: any) => {
+      // For Pie: { value: 123, name: '...' }
+      // For Bar: d might be a number
+      if (typeof d === 'object') return d.value > 0
+      return d > 0
+  })
+}
+
+const parseSize = (sizeStr: any) => {
+  if (typeof sizeStr === 'number') return sizeStr
   if (!sizeStr || sizeStr === '-') return 0
   const num = parseFloat(sizeStr.split(' ')[0])
+  if (sizeStr.includes('TB')) return num * 1024 * 1024 * 1024 * 1024
+  if (sizeStr.includes('GB')) return num * 1024 * 1024 * 1024
   if (sizeStr.includes('MB')) return num * 1024 * 1024
   if (sizeStr.includes('KB')) return num * 1024
   return num
@@ -889,7 +909,7 @@ const getRowChartOption = (data: any[]) => {
     
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    grid: { left: '3%', right: '8%', bottom: '3%', containLabel: true },
     xAxis: { type: 'value', name: 'Rows' },
     yAxis: { type: 'category', data: sorted.map(t => t.name).reverse(), axisLabel: { width: 100, overflow: 'truncate' } },
     series: [
@@ -904,16 +924,16 @@ const getRowChartOption = (data: any[]) => {
   }
 }
 
-const getSizeChartOption = (data: any[]) => {
-  // Top tables by size
+const getSizeChartOption = (data: any[], valueKey: string = 'size') => {
+  // Top tables by size/rows
   const sorted = [...data]
-    .map(t => ({ ...t, sizeBytes: parseSize(t.size) }))
-    .filter(t => t.sizeBytes > 0)
-    .sort((a, b) => b.sizeBytes - a.sizeBytes)
+    .map(t => ({ ...t, sortValue: parseSize(t[valueKey]) }))
+    .filter(t => t.sortValue > 0)
+    .sort((a, b) => b.sortValue - a.sortValue)
     .slice(0, 8)
 
   return {
-    tooltip: { trigger: 'item', formatter: '{b}: {c} Bytes ({d}%)' },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     legend: { 
       orient: 'vertical', 
       left: '0', 
@@ -921,31 +941,30 @@ const getSizeChartOption = (data: any[]) => {
       align: 'left',
       itemGap: 10,
       type: 'scroll',
-      width: '45%', // Restrict width to avoid overlap
+      width: '40%', 
       formatter: (name: string) => {
-         // Truncate long names in legend
-         return name.length > 20 ? name.substring(0, 18) + '...' : name
+         return name.length > 18 ? name.substring(0, 16) + '...' : name
       },
-      tooltip: { show: true } // Show full name on hover
+      tooltip: { show: true } 
     },
     series: [
       {
-        name: 'Storage Size',
+        name: valueKey === 'rows' ? 'Row Count' : 'Storage Size',
         type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['75%', '50%'], // Move pie chart further right
-        avoidLabelOverlap: false,
+        radius: ['35%', '65%'],
+        center: ['70%', '50%'], 
+        avoidLabelOverlap: true,
         itemStyle: {
-          borderRadius: 10,
+          borderRadius: 5,
           borderColor: '#fff',
           borderWidth: 2
         },
         label: { show: false, position: 'center' },
         emphasis: {
-          label: { show: true, fontSize: '14', fontWeight: 'bold' }
+          label: { show: true, fontSize: '12', fontWeight: 'bold' }
         },
         labelLine: { show: false },
-        data: sorted.map(t => ({ value: t.value, name: t.name }))
+        data: sorted.map(t => ({ value: t.sortValue, name: t.name }))
       }
     ]
   }
@@ -1400,36 +1419,38 @@ const saveConnection = async () => {
   background-color: transparent !important; /* Reset default background */
 }
 
-/* Specific Active Backgrounds for Connections - Fix Selectors */
-/* MySQL */
-.custom-tree-item:has(.mysql.active) {
-  background-color: #E6F7FF !important;
-  color: #00758F !important;
-  border-right: 3px solid #00758F;
+/* 
+   Standardized High-Contrast Active State for ALL Connections and Tables
+   Requirements: Transparent background (white/gray), Blue Underline, Bold Text
+*/
+
+.custom-tree-item.is-active {
+  background-color: #f0f7ff !important; /* Light blue background for visibility */
+  color: #1890ff !important; /* Standard Blue */
+  font-weight: 700 !important;
+  border-right: 3px solid #1890ff !important; /* Blue indicator line */
 }
 
-/* Redis */
-.custom-tree-item:has(.redis.active) {
-  background-color: #FFF1F0 !important;
-  color: #DC382D !important;
-  border-right: 3px solid #DC382D;
+/* Override specific connection colors if needed, OR keep them uniform as requested */
+/* User requested "Standardize Styles" and "Blue line for all" */
+/* So we remove the specific color overrides for is-active */
+
+.custom-tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #606266;
 }
 
-/* Mongo */
-.custom-tree-item:has(.mongo.active) {
-  background-color: #F6FFED !important;
-  color: #47A248 !important;
-  border-right: 3px solid #47A248;
+.custom-tree-item.is-active .custom-tree-label {
+    color: #1890ff !important;
+    font-weight: 700 !important;
 }
 
-/* RabbitMQ */
-.custom-tree-item:has(.rabbitmq.active) {
-  background-color: #FFF7E6 !important;
-  color: #FF6600 !important;
-  border-right: 3px solid #FF6600;
-}
-
-/* Right Tab Icons */
+/* Badge Styling */
 .conn-tab-icon {
   width: 20px;
   height: 20px;
@@ -1833,7 +1854,7 @@ const saveConnection = async () => {
 .charts-row {
   display: flex;
   gap: 16px;
-  height: 320px;
+  height: 340px; /* Slightly taller */
   flex-shrink: 0;
 }
 
@@ -1847,8 +1868,18 @@ const saveConnection = async () => {
 
 .chart-card :deep(.el-card__body) {
   flex: 1;
-  padding: 12px;
+  padding: 0; /* Remove padding to let chart fill */
   min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-container {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 12px;
 }
 
 .chart-title {
