@@ -75,9 +75,11 @@
                 </div>
                 
                 <!-- Table Icon -->
-                <div v-else-if="data.type === 'table'" class="sub-icon table">
-                   <el-icon><Grid /></el-icon>
-                </div>
+              <div v-else-if="data.type === 'table'" class="sub-icon table">
+                 <!-- Special Icon for Redis "Folders" -->
+                 <el-icon v-if="data.dbType === 'redis' && data.label.endsWith(':*')"><Folder /></el-icon>
+                 <el-icon v-else><Grid /></el-icon>
+              </div>
               </div>
               
               <span class="custom-tree-label" :title="node.label">{{ node.label }}</span>
@@ -181,11 +183,11 @@
                   <!-- Charts Section -->
                   <div class="charts-row" v-if="item.chartRowOption && item.chartSizeOption">
                     <el-card shadow="never" class="chart-card">
-                       <template #header><span class="chart-title">Top Tables by Rows</span></template>
+                       <template #header><span class="chart-title">{{ item.rowChartTitle || 'Top Tables by Rows' }}</span></template>
                        <v-chart class="chart" :option="item.chartRowOption" autoresize />
                     </el-card>
                     <el-card shadow="never" class="chart-card">
-                       <template #header><span class="chart-title">Storage Distribution</span></template>
+                       <template #header><span class="chart-title">{{ item.sizeChartTitle || 'Storage Distribution' }}</span></template>
                        <v-chart class="chart" :option="item.chartSizeOption" autoresize />
                     </el-card>
                   </div>
@@ -277,6 +279,7 @@
                         :min-width="getColumnWidth(col, item.data)"
                         show-overflow-tooltip
                         sortable
+                        :fixed="isIdColumn(col) ? 'left' : false"
                       >
                         <template #default="{ row }">
                           <!-- Status/Level Tags -->
@@ -306,7 +309,7 @@
                       </el-table-column>
                       
                       <!-- Fixed Actions Column for Rightmost Visibility -->
-                      <el-table-column label="Action" width="70" align="center">
+                      <el-table-column label="Action" width="70" align="center" fixed="right">
                         <template #default="{ row }">
                           <el-tooltip content="View Details" placement="top" :enterable="false">
                             <el-button 
@@ -566,11 +569,13 @@ const form = reactive<DBConnection>({
 })
 const formMode = ref('standalone')
 const useUri = ref(false)
+const useSSL = ref(false)
 
 // Watch type change to reset defaults
 watch(() => form.type, (newType) => {
   formMode.value = 'standalone'
   useUri.value = false
+  useSSL.value = false
   
   if (newType === 'mysql') form.port = 3306
   if (newType === 'redis') form.port = 6379
@@ -664,6 +669,10 @@ const restoreTabs = () => {
   if (savedTabs) {
     try {
       tabs.value = JSON.parse(savedTabs)
+      // Enforce minimum pageSize of 50 for legacy tabs
+      tabs.value.forEach(t => {
+          if (!t.pageSize || t.pageSize < 50) t.pageSize = 50
+      })
     } catch {}
   }
   
@@ -676,6 +685,17 @@ const restoreTabs = () => {
       Object.assign(connActiveTabs, JSON.parse(savedConnTabs))
     } catch {}
   }
+
+  // Auto-refresh tabs that were saved without data (lazy reload)
+  nextTick(() => {
+    tabs.value.forEach(tab => {
+       if (!tab.loading && (!tab.data || (Array.isArray(tab.data) && tab.data.length === 0))) {
+          if (tab.type === 'table' || tab.type === 'overview') {
+             refreshTab(tab)
+          }
+       }
+    })
+  })
 }
 
 onMounted(() => {
@@ -758,12 +778,17 @@ const openDbOverviewTab = (data: any) => {
   connActiveTabs[data.connId] = tabName
 
   if (existing) {
+    // If the existing tab has no data (e.g. from a previous failed load), refresh it
+    if (!existing.data || existing.data.length === 0) {
+       refreshOverview(existing)
+    }
     return
   }
 
   const connNode = treeData.value.find((c: any) => c.id === data.connId)
   const connName = connNode ? connNode.name : ''
-  const dbType = connNode ? connNode.dbType : 'mysql'
+  // Use data.dbType if available (it was added to the node), otherwise fallback to connection type
+  const dbType = data.dbType || (connNode ? connNode.dbType : 'mysql')
 
   // ... data processing ...
   const tableList = (data.tables || []).map((t: any) => {
@@ -771,7 +796,10 @@ const openDbOverviewTab = (data: any) => {
     return t
   })
 
-  const newTab = {
+  // Normalize dbType for checking
+  const isRedis = dbType && dbType.toLowerCase().includes('redis')
+
+  const newTab = reactive({
     name: tabName,
     title: `Overview: ${data.label}`,
     type: 'overview',
@@ -782,11 +810,54 @@ const openDbOverviewTab = (data: any) => {
     data: tableList,
     loading: false,
     chartRowOption: getRowChartOption(tableList),
-    chartSizeOption: getSizeChartOption(tableList)
-  }
+    chartSizeOption: getSizeChartOption(tableList, isRedis ? 'rows' : 'size'),
+    rowChartTitle: isRedis ? 'Top Prefixes by Count' : 'Top Tables by Rows',
+    sizeChartTitle: isRedis ? 'Key Distribution' : 'Storage Distribution'
+  })
   
   tabs.value.push(newTab)
   connActiveTabs[data.connId] = tabName
+  
+  // If data is empty (initial load failed or just empty), try to fetch fresh structure
+  if (tableList.length === 0 || (tableList.length === 1 && tableList[0].name.includes('Enter Queue Name'))) {
+      refreshOverview(newTab)
+  }
+}
+
+const refreshOverview = async (tab: any) => {
+  tab.loading = true
+  try {
+    // Re-fetch structure for the connection
+    const res = await dbApi.getStructure(tab.connId)
+    
+    // Extract specific DB data
+    let newTables = []
+    if (res[tab.dbName]) {
+        newTables = res[tab.dbName]
+    } else if (tab.dbType.includes('redis') || tab.dbType === 'rabbitmq') {
+        // Redis/RabbitMQ often return single keys like 'db0' or 'Queues'
+        // If tab.dbName matches, use it.
+        newTables = res[tab.dbName] || []
+    }
+
+    // Process data
+    const tableList = newTables.map((t: any) => {
+        if (typeof t === 'string') return { name: t }
+        return t
+    })
+    
+    tab.data = tableList
+    
+    // Update charts
+    const isRedis = tab.dbType && tab.dbType.toLowerCase().includes('redis')
+    tab.chartRowOption = getRowChartOption(tableList)
+    tab.chartSizeOption = getSizeChartOption(tableList, isRedis ? 'rows' : 'size')
+    
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to refresh overview')
+  } finally {
+    tab.loading = false
+  }
 }
 
 // --- Chart Helpers ---
@@ -834,8 +905,10 @@ const getSizeChartOption = (data: any[]) => {
     tooltip: { trigger: 'item', formatter: '{b}: {c} Bytes ({d}%)' },
     legend: { 
       orient: 'vertical', 
-      left: 'right', // Move legend to right
-      top: 'center', // Vertically center it
+      left: '0', // Left aligned
+      top: 'middle', // Vertically center it
+      align: 'left',
+      itemGap: 10,
       type: 'scroll' 
     },
     series: [
@@ -843,7 +916,7 @@ const getSizeChartOption = (data: any[]) => {
         name: 'Storage Size',
         type: 'pie',
         radius: ['40%', '70%'],
-        center: ['35%', '50%'], // Move pie chart to left
+        center: ['70%', '50%'], // Move pie chart to right
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 10,
@@ -855,7 +928,7 @@ const getSizeChartOption = (data: any[]) => {
           label: { show: true, fontSize: '14', fontWeight: 'bold' }
         },
         labelLine: { show: false },
-        data: sorted.map(t => ({ value: t.sizeBytes, name: t.name }))
+        data: sorted.map(t => ({ value: t.value, name: t.name }))
       }
     ]
   }
@@ -1161,6 +1234,10 @@ const saveConnection = async () => {
     const payload: any = { ...form }
     payload.extra_config = {}
     if (form.type === 'redis') payload.extra_config.mode = formMode.value
+    if (form.type === 'mysql' && useSSL.value) {
+       payload.extra_config.ssl = true
+    }
+
     await dbApi.createConnection(payload)
     ElMessage.success('Connection saved')
     showAddDialog.value = false
@@ -1176,7 +1253,7 @@ const saveConnection = async () => {
 <style scoped>
 .db-manager-layout {
   display: flex;
-  height: calc(100vh - 80px);
+  height: calc(100vh - 130px); /* Adjusted for AppLayout header (70px) + padding (48px) */
   background-color: #f0f2f5;
   padding: 12px;
   gap: 12px;
