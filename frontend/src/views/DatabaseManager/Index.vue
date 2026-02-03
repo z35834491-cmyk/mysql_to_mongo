@@ -878,26 +878,45 @@ const refreshOverview = async (tab: any) => {
 }
 
 // --- Chart Helpers ---
+const parseSize = (sizeStr: any) => {
+  // If undefined/null, return 0
+  if (!sizeStr) return 0
+  
+  // If already a number, return it
+  if (typeof sizeStr === 'number') return sizeStr
+  
+  // Clean string
+  const str = String(sizeStr).trim().toUpperCase()
+  if (str === '-' || str === '') return 0
+  
+  // Extract number part (handle "16.00 KB" -> 16.00)
+  const numPart = parseFloat(str)
+  if (isNaN(numPart)) return 0
+
+  if (str.includes('TB')) return numPart * 1024 * 1024 * 1024 * 1024
+  if (str.includes('GB')) return numPart * 1024 * 1024 * 1024
+  if (str.includes('MB')) return numPart * 1024 * 1024
+  if (str.includes('KB')) return numPart * 1024
+  
+  // If just a number string or "B", return as bytes
+  return numPart
+}
+
 const hasData = (option: any) => {
   if (!option || !option.series || option.series.length === 0) return false
   const data = option.series[0].data
-  return data && data.length > 0 && data.some((d: any) => {
-      // For Pie: { value: 123, name: '...' }
-      // For Bar: d might be a number
-      if (typeof d === 'object') return d.value > 0
-      return d > 0
+  if (!data || data.length === 0) return false
+  
+  // Check if ANY value is > 0
+  return data.some((d: any) => {
+      let val = 0
+      if (typeof d === 'object' && d !== null) {
+          val = parseFloat(d.value)
+      } else {
+          val = parseFloat(d)
+      }
+      return !isNaN(val) && val > 0
   })
-}
-
-const parseSize = (sizeStr: any) => {
-  if (typeof sizeStr === 'number') return sizeStr
-  if (!sizeStr || sizeStr === '-') return 0
-  const num = parseFloat(sizeStr.split(' ')[0])
-  if (sizeStr.includes('TB')) return num * 1024 * 1024 * 1024 * 1024
-  if (sizeStr.includes('GB')) return num * 1024 * 1024 * 1024
-  if (sizeStr.includes('MB')) return num * 1024 * 1024
-  if (sizeStr.includes('KB')) return num * 1024
-  return num
 }
 
 const getRowChartOption = (data: any[]) => {
