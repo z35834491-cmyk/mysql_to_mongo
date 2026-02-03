@@ -6,209 +6,168 @@
 [![Element Plus](https://img.shields.io/badge/Element_Plus-2.0-blue.svg)](https://element-plus.org/)
 [![Docker](https://img.shields.io/badge/Docker-Enabled-blue.svg)](https://www.docker.com/)
 
-**Shark Platform** 是一个现代化的综合运维管理平台，集成了 **MySQL → MongoDB 数据同步**、**K8s 日志监控告警**、**系统巡检**、**服务部署** 以及 **排班管理** 等核心能力。
+综合运维管理平台（Django REST Framework + Vue 3），包含：
 
-平台采用前后端分离架构（Django REST Framework + Vue 3），提供直观的可视化控制台，旨在简化复杂的运维任务与数据管道管理。
+- MySQL → MongoDB 同步（全量 + Binlog 增量）
+- K8s 日志监控与 Slack 告警（多 namespace）
+- AIOps（接收 Alertmanager webhook、自动分析与展示）
+- 巡检（定时任务/报告）
+- 排班（值班表 + 电话告警/回调）
+- 服务器部署（批量执行/分发）
 
----
-
-## ✨ 核心功能
-
-### 1. 🔄 数据同步 (Data Sync)
-提供高性能、高可靠的 MySQL 到 MongoDB 实时同步解决方案，支持**全链路自启动**与**断点续传**。
-*   **全量 + 增量同步**：自动执行存量数据全量搬运，随后无缝切换至基于 Binlog (CDC) 的增量实时同步。
-*   **高可靠性**：
-    *   **自动断点续传**：精确记录 Binlog 位点，服务重启后自动恢复同步，确保数据零丢失。
-    *   **自启动机制**：任务配置持久化，系统重启后自动拉起所有运行中的任务。
-*   **多种同步模式**：
-    *   **History Retention (Append)**：保留变更历史，适用于审计与时光机查询。
-    *   **Mirror Mode (In-Place)**：目标端与源端保持完全一致（覆盖更新/物理删除）。
-*   **智能特性**：
-    *   **主键探测**：自动识别非 `id` 主键，解决全量同步排序问题。
-    *   **Schema 漂移处理**：自动适应源端表结构变更（新增列/新表）。
-
-### 2. 🛡️ 日志监控 (Log Monitor)
-基于 Kubernetes 环境的智能化日志监控方案，支持**多 Namespace** 绑定与**精细化告警**。
-*   **灵活采集**：
-    *   **多 Namespace 支持**：单个监控任务可同时绑定多个 K8s Namespace（逗号分隔）。
-    *   **实时流式处理**：基于 K8s Watch API 实时分析日志流，低延迟、低内存占用。
-*   **三级告警策略**：
-    1.  **Immediate Alert (立即告警)**：针对 `Panic`, `Fatal` 等严重错误，发现即发送，**不静默**。
-    2.  **Threshold Alert (阈值告警)**：针对 `Error`, `Exception` 等常规错误，支持配置阈值（如 60秒内 5次）触发。支持**智能静默**，相同错误 1 小时内仅发送一次。
-    3.  **Record Only (仅记录)**：针对已知噪音，仅记录上下文但不发送告警（优先级最高）。
-*   **便捷运维**：
-    *   **Deep Link 跳转**：Slack 告警消息附带详情链接，一键跳转 Web 控制台查看完整日志（支持自定义域名）。
-    *   **错误上下文捕获**：自动截取错误发生前后的日志（各 5 行）独立存储，无需翻阅海量日志。
-    *   **日志归档**：支持自动上传至 S3 存储，满足合规留存需求。
-
-### 3. 🤖 智能故障分析 (AI Ops)
-基于大语言模型 (LLM) 的故障根因分析与自动化诊断系统。
-*   **事件驱动分析**：
-    *   接收 Prometheus Alertmanager 告警 Webhook，自动触发分析流程。
-    *   支持配置 **AI 分析开关**，灵活选择全自动 AI 诊断或基于规则的快速诊断。
-*   **全景上下文收集**：
-    *   **指标关联**：根据告警类型（CPU/Memory/IO）自动生成并执行 PromQL 查询，获取故障发生时的指标快照。
-    *   **K8s 现场还原**：自动抓取相关 Pod 的状态、Events 事件流以及最近的日志片段。
-*   **智能诊断报告**：
-    *   调用 LLM (OpenAI/DeepSeek) 生成结构化分析报告，包含：**故障现象**、**根本原因** (定位到具体进程/Pod)、**紧急缓解措施**、**长期预防建议**及**可执行修复命令**。
-
-### 4. 🔍 系统巡检 (Inspection)
-全自动化的系统健康度分析引擎。
-*   **自动化执行**：内置调度器，每日 **08:00** 自动执行全系统健康检查。
-*   **多维评估**：
-    *   **动态评分**：基于资源利用率、服务状态、告警数量动态计算健康分 (0-100)。
-    *   **趋势预测**：分析历史巡检报告，预测未来 7/15/30 天的健康趋势。
-*   **深度报告**：自动生成包含资源热点、异常 Pod、Top 慢查询的详细巡检报告。
-
-### 5. 📅 排班管理 (Schedules)
-*   **可视化排班**：日历视图管理每日值班人员，支持早/中/晚多班次。
-*   **开放集成**：提供标准 API 供监控系统查询当前 On-Call 人员，实现告警精准路由。
-
-### 6. 🚀 服务器部署 (Server Deploy)
-*   **资产管理**：统一管理主机清单与 SSH 密钥。
-*   **批量执行**：支持向多台服务器并行分发文件、执行 Shell 脚本，实时回显执行日志。
+生产部署与所有人工操作请以 [K8S_RBAC_GUIDE.md](file:///Users/chenshun/Desktop/mysql_to_mongo/K8S_RBAC_GUIDE.md) 为准（包含 RBAC、PVC/gp3、Ingress、生产 kubeconfig、上线后初始化）。本文 README 作为“项目总览 + 快速入口 + 常见运维”。
 
 ---
 
-## 🏗 系统架构
+## 目录
 
-```mermaid
-flowchart TD
-    User[User Browser Vue3] -->|HTTP REST API| Web[Django Web]
-    
-    subgraph Backend
-        Web -->|Manage| TM[Task Manager]
-        Web -->|Query Save| DB[(SQLite State DB)]
-        
-        subgraph DataSync
-            TM -->|Spawn Thread| Worker[Sync Worker]
-            Worker -->|Read Binlog| MySQL[(MySQL Source)]
-            Worker -->|Write Docs| Mongo[(MongoDB Target)]
-        end
-        
-        subgraph LogMonitor
-            Web -->|Config| MonEngine[Monitor Engine]
-            MonEngine -->|Tail Logs| K8s[K8s Cluster]
-            MonEngine -->|Archive| S3[S3 Storage]
-            MonEngine -->|Alert| Slack[Slack Webhook]
-        end
-        
-        subgraph AIOps
-            Web -->|Webhook| FaultAnalyzer[Fault Analyzer]
-            FaultAnalyzer -->|Query| Prom[Prometheus]
-            FaultAnalyzer -->|Context| K8s
-            FaultAnalyzer -->|Diagnose| LLM[LLM Service]
-        end
+- 快速开始（Compose / K8s / 本地开发）
+- 配置清单（环境变量 / Web UI 配置）
+- 常用运维（排班去重、查看日志、升级）
+- 常见问题（鉴权/告警/@人/排班重复）
+- 项目结构
 
-        subgraph Inspection
-            Web -->|Schedule| InspEngine[Inspection Engine]
-            InspEngine -->|Analyze| Prom
-            InspEngine -->|Predict| LLM
-        end
-        
-        subgraph Schedules
-            Web -->|CRUD| SchedDB[Schedule Tables]
-        end
-    end
+---
+
+## 快速开始
+
+### 方式一：Docker Compose（本地/测试推荐）
+
+1) 准备挂载目录（否则 MySQL 容器可能因挂载失败启动异常）
+
+```bash
+mkdir -p mysql_conf mysql_init
+```
+
+2) 启动
+
+```bash
+docker-compose up -d --build
+```
+
+3) 访问
+
+- Web：`http://localhost:8000/`
+- 默认账号：`admin`
+- 默认密码：`admin`（首次启动自动创建，务必改密）
+
+说明：
+- `docker-compose.yml` 里默认挂载 `./mysql_conf/my.cnf` 和 `./mysql_init/`，可以按需要补充初始化脚本/配置。
+
+### 方式二：Kubernetes（生产推荐）
+
+- **生产部署**：直接按 [K8S_RBAC_GUIDE.md](file:///Users/chenshun/Desktop/mysql_to_mongo/K8S_RBAC_GUIDE.md) 的“一体 YAML + 傻瓜式步骤”执行（包含 RBAC、PVC/gp3、Ingress、生产 kubeconfig、上线后初始化）。
+- **示例清单试跑**：`k8s/` 目录可快速验证流程（注意是示例值，需要自行改 namespace/镜像/域名）。
+
+```bash
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/pvc.yaml
+kubectl apply -f k8s/shark-platform.yaml
+```
+
+说明：
+- 仓库里没有 `k8s/secrets.yaml`，Secret 已合并在 [k8s/configmap.yaml](file:///Users/chenshun/Desktop/mysql_to_mongo/k8s/configmap.yaml)。
+
+### 方式三：本地开发
+
+后端：
+
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver 0.0.0.0:8000
+```
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 ---
 
-## 🚀 快速开始
+## 配置清单
 
-### 方式一：Docker Compose 部署（推荐）
+### 环境变量（K8s ConfigMap / Compose environment）
 
-最简单的方式是使用 Docker Compose 一键启动所有服务。
+- `DJANGO_SECRET_KEY`：必须设置（生产请随机生成后 base64）
+- `DEBUG`：`False/True`
+- `ALLOWED_HOSTS`：例如 `*` 或指定域名
+- `CSRF_TRUSTED_ORIGINS`：逗号分隔 URL 列表（不要带反引号/多余空格）
+- `PUBLIC_URL`：用于 Slack deep link（例如 `https://ubest-ops.prd.exc888.org`）
+- `DEFAULT_MONITOR_NAMESPACE`：日志监控默认 namespace（可选）
 
-1.  **启动服务**
-    ```bash
-    docker-compose up -d --build
-    ```
+### Web UI（上线后必配）
 
-2.  **配置环境变量 (可选)**
-    在 `docker-compose.yml` 中配置 `PUBLIC_URL` 以启用告警链接跳转功能：
-    ```yaml
-    environment:
-      - PUBLIC_URL=http://your-domain.com
-    ```
+1) 修改默认管理员密码（首次启动默认 `admin/admin`）。
 
-3.  **访问应用**
-    打开浏览器访问：[http://localhost:8000/](http://localhost:8000/)
-    *   **默认账号**：`admin`
-    *   **默认密码**：`admin` (首次启动自动创建)
+2) Schedules → Phone Alert Config
 
-### 方式二：Kubernetes 部署
+- External 回调只发送两种状态：`PROCESSING` / `COMPLETED`
+- Oncall Slack Mapping：配置“姓名 → Slack 用户 ID（Uxxxx）”，系统会转成 `<@Uxxxx>` 真正@人
+- 同一时间段多个值班人员会合并为多个 `<@U...>` 一起发送
 
-项目提供了标准的 K8s 部署配置文件，位于 `k8s/` 目录下。
+3) Log Monitor
 
-1.  **构建并推送镜像**
-    ```bash
-    docker build -t your-registry/shark-platform:v1 .
-    docker push your-registry/shark-platform:v1
-    ```
-
-2.  **部署到集群**
-    ```bash
-    kubectl apply -f k8s/configmap.yaml
-    kubectl apply -f k8s/secrets.yaml
-    kubectl apply -f k8s/pvc.yaml
-    kubectl apply -f k8s/shark-platform.yaml
-    ```
-
-3.  **权限配置**
-    如果需要监控其他 Namespace，请确保 ServiceAccount 拥有相应的 `view` 权限：
-    ```bash
-    kubectl create rolebinding monitor-user-view-binding \
-      --clusterrole=view \
-      --serviceaccount=default:monitor-user \
-      --namespace=target-namespace
-    ```
-
-### 方式三：本地开发运行
-
-1.  **依赖准备**
-    *   Python 3.9+
-    *   Node.js 16+
-    *   MySQL 5.7+ (开启 Binlog ROW 模式)
-    *   MongoDB 4.4+
-
-2.  **后端启动**
-    ```bash
-    pip install -r requirements.txt
-    python manage.py migrate
-    python manage.py createsuperuser
-    python manage.py runserver 0.0.0.0:8000
-    ```
-
-3.  **前端启动**
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
+- 同集群部署：任务 kubeconfig 留空即可（走 in-cluster config），但 RBAC 必须允许 `pods`/`pods/log`
+- 多 namespace：任务支持逗号分隔
 
 ---
 
-## 📂 项目结构
+## 常用运维
+
+### 查看应用日志（K8s）
+
+```bash
+kubectl logs -f -n middleware-system deploy/shark-platform
+```
+
+### 清理历史重复排班（只需一次）
+
+排班接口已做幂等 upsert，但历史重复数据需要手动清理一次：
+
+```bash
+kubectl exec -n middleware-system deploy/shark-platform -- python3 manage.py dedup_schedules
+kubectl exec -n middleware-system deploy/shark-platform -- python3 manage.py dedup_schedules --apply
+```
+
+可选按日期范围：
+
+```bash
+kubectl exec -n middleware-system deploy/shark-platform -- \
+  python3 manage.py dedup_schedules --from-date 2026-02-01 --to-date 2026-02-10 --apply
+```
+
+---
+
+## 常见问题
+
+- **排班重复推送导致列表越变越多**：已修复为幂等写入；历史数据用 `dedup_schedules --apply` 清理一次。
+- **Slack 没有真实@到人**：必须使用 `<@Uxxxx>`；请在 Phone Alert Config 配 Oncall Slack Mapping（姓名→U-id）。
+- **外部回调看着 200 但业务提示 unauthorized**：对方可能用 JSON `code` 表示错误；系统已记录 `app_code/effective_status` 便于排查。
+
+---
+
+## 项目结构
 
 ```text
 mysql_to_mongo/
-├── api/                     # 基础 API 模块
-├── core/                    # 核心组件 (Logging, Utils)
-├── deploy/                  # [Server Deploy] 部署模块
-├── frontend/                # [Frontend] Vue 3 前端源码
-├── inspection/              # [Inspection] 巡检模块
-├── monitor/                 # [Log Monitor] 监控模块
-├── schedules/               # [Schedules] 排班模块
-├── shark_platform/          # Django 项目配置
-├── tasks/                   # [Data Sync] 同步引擎
-├── state/                   # 运行时状态存储
-├── logs/                    # 应用运行日志
-└── manage.py                # Django 管理入口
+├── ai_ops/                  # AIOps（webhook、事件、分析报告）
+├── deploy/                  # 服务器部署
+├── inspection/              # 巡检
+├── monitor/                 # K8s 日志监控
+├── schedules/               # 排班 + 电话告警
+├── tasks/                   # MySQL → Mongo 同步引擎
+├── frontend/                # Vue 3 前端
+├── k8s/                     # 示例 K8s 清单（生产以 K8S_RBAC_GUIDE 为准）
+├── entrypoint.sh            # 容器启动脚本（自动 migrate + 默认 admin）
+└── manage.py
 ```
 
 ---
 
-## 📄 许可证
+## 许可证
 
 本项目仅供学习与研究使用。

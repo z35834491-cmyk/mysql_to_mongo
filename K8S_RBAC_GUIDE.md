@@ -129,7 +129,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: shark-platform
-        image: etz/ops:v1.0
+        image: 197461532043.dkr.ecr.ap-northeast-1.amazonaws.com/etz/ops:v1.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
