@@ -369,9 +369,17 @@
                 </div>
               </div>
 
-              <!-- VIEW: QUERY CONSOLE -->
               <div v-if="item.type === 'query'" class="tab-view query-view">
-                <-<div  ad>on type="success" size="small" @click="runQuery(item)" :loading="item.loading">
+                <div class="query-editor-container">
+                  <div class="editor-toolbar">
+                    <div class="editor-info">
+                      <el-icon><Monitor /></el-icon>
+                      <div style="display: flex; flex-direction: column;">
+                        <span class="editor-title">{{ item.dbName || 'Global Console' }}</span>
+                        <span class="editor-subtitle">{{ item.connName }} ({{ item.dbType }})</span>
+                      </div>
+                    </div>
+                    <el-button type="success" size="small" @click="runQuery(item)" :loading="item.loading">
                       <el-icon><VideoPlay /></el-icon> Run Query
                     </el-button>
                   </div>
