@@ -129,7 +129,9 @@
         >
           <template #label>
              <div class="conn-tab-label">
+                <!-- Dynamic Indicator Dot -->
                 <span class="conn-indicator" :class="conn.dbType"></span>
+                
                 <!-- Synced SVG Icons for Right Tabs -->
                 <div class="conn-tab-icon" :class="conn.dbType">
                   <img v-if="conn.dbType === 'mysql'" src="@/assets/images/mysql-logo.svg" alt="MySQL" />
@@ -271,75 +273,138 @@
                 </div>
                 
                 <div class="data-view-container">
-                  <div class="table-wrapper">
-                    <el-table
-                      v-loading="item.loading"
-                      :data="item.data"
-                      border
-                      stripe
-                      height="100%"
-                      style="width: 100%"
-                      size="small"
-                      class="data-table"
-                      highlight-current-row
-                      @current-change="(val) => handleRowSelect(val, item)"
-                      :cell-style="{ padding: '4px 0' }"
-                      :header-cell-style="{ background: '#f5f7fa', color: '#606266', padding: '6px 0' }"
-                    >
-                      <el-table-column type="index" width="60" label="#" fixed align="center" />
-                      <el-table-column
-                        v-for="col in item.headers"
-                        :key="col"
-                        :prop="col"
-                        :label="col"
-                        :min-width="getColumnWidth(col, item.data)"
-                        show-overflow-tooltip
-                        sortable
-                        :fixed="isIdColumn(col) ? 'left' : false"
+                  <!-- Main Content Column (Table + Pagination) -->
+                  <div class="main-content-column">
+                    <div class="table-wrapper">
+                      <el-table
+                        v-loading="item.loading"
+                        :data="item.data"
+                        border
+                        stripe
+                        height="100%"
+                        style="width: 100%"
+                        size="small"
+                        class="data-table"
+                        highlight-current-row
+                        @current-change="(val) => handleRowSelect(val, item)"
+                        :cell-style="{ padding: '4px 0' }"
+                        :header-cell-style="{ background: '#f5f7fa', color: '#606266', padding: '6px 0' }"
                       >
-                        <template #default="{ row }">
-                          <!-- Status/Level Tags -->
-                          <el-tag 
-                            v-if="isStatusColumn(col) && row[col]" 
-                            :type="getStatusColor(row[col])" 
-                            size="small" 
-                            effect="plain"
-                            class="status-tag"
+                        <!-- Redis Specific View -->
+                        <template v-if="item.dbType && item.dbType.includes('redis')">
+                           <el-table-column type="index" width="60" label="#" fixed align="center" />
+                           <el-table-column prop="key" label="Key" min-width="200" show-overflow-tooltip sortable fixed="left">
+                              <template #default="{row}">
+                                 <div style="display: flex; align-items: center; gap: 6px;">
+                                   <el-icon class="id-text"><Key /></el-icon>
+                                   <span class="code-font id-text" style="font-weight: 600;">{{ row.key }}</span>
+                                 </div>
+                              </template>
+                           </el-table-column>
+                           <el-table-column prop="type" label="Type" width="100" sortable>
+                              <template #default="{row}">
+                                 <el-tag :type="getRedisTypeColor(row.type)" size="small" effect="dark" class="status-tag" style="min-width: 60px; text-align: center;">{{ row.type.toUpperCase() }}</el-tag>
+                              </template>
+                           </el-table-column>
+                           <el-table-column prop="ttl" label="TTL" width="120" sortable>
+                              <template #default="{row}">
+                                 <span :class="{'id-text': row.ttl < 0, 'status-tag': row.ttl > 0}">{{ formatTTL(row.ttl) }}</span>
+                              </template>
+                           </el-table-column>
+                           <el-table-column prop="value" label="Value" min-width="300" show-overflow-tooltip>
+                              <template #default="{row}">
+                                 <span class="code-font" style="color: #606266;">{{ formatRedisValue(row.value) }}</span>
+                              </template>
+                           </el-table-column>
+                           <el-table-column label="Action" width="80" align="center" fixed="right">
+                              <template #default="{ row }">
+                                <el-tooltip content="View Details" placement="top" :enterable="false">
+                                  <el-button 
+                                    link 
+                                    type="primary" 
+                                    size="small" 
+                                    @click.stop="handleRowSelect(row, item); item.showDetails = true"
+                                  >
+                                    <el-icon><View /></el-icon>
+                                  </el-button>
+                                </el-tooltip>
+                              </template>
+                           </el-table-column>
+                        </template>
+
+                        <!-- Standard View -->
+                        <template v-else>
+                          <el-table-column type="index" width="60" label="#" fixed align="center" />
+                          <el-table-column
+                            v-for="col in item.headers"
+                            :key="col"
+                            :prop="col"
+                            :label="col"
+                            :min-width="getColumnWidth(col, item.data)"
+                            show-overflow-tooltip
+                            sortable
+                            :fixed="isIdColumn(col) ? 'left' : false"
                           >
-                            {{ row[col] }}
-                          </el-tag>
+                            <template #default="{ row }">
+                              <!-- Status/Level Tags -->
+                              <el-tag 
+                                v-if="isStatusColumn(col) && row[col]" 
+                                :type="getStatusColor(row[col])" 
+                                size="small" 
+                                effect="plain"
+                                class="status-tag"
+                              >
+                                {{ row[col] }}
+                              </el-tag>
+                              
+                              <!-- JSON/Object formatting -->
+                              <span v-else-if="typeof row[col] === 'object' && row[col] !== null" class="code-font">
+                                {{ JSON.stringify(row[col]) }}
+                              </span>
+                              
+                              <!-- ID/Key formatting -->
+                              <span v-else-if="isIdColumn(col)" class="code-font id-text">
+                                {{ row[col] }}
+                              </span>
+                              
+                              <!-- Standard Text -->
+                              <span v-else>{{ row[col] }}</span>
+                            </template>
+                          </el-table-column>
                           
-                          <!-- JSON/Object formatting -->
-                          <span v-else-if="typeof row[col] === 'object' && row[col] !== null" class="code-font">
-                            {{ JSON.stringify(row[col]) }}
-                          </span>
-                          
-                          <!-- ID/Key formatting -->
-                          <span v-else-if="isIdColumn(col)" class="code-font id-text">
-                            {{ row[col] }}
-                          </span>
-                          
-                          <!-- Standard Text -->
-                          <span v-else>{{ row[col] }}</span>
+                          <!-- Fixed Actions Column for Rightmost Visibility -->
+                          <el-table-column label="Action" width="70" align="center" fixed="right">
+                            <template #default="{ row }">
+                              <el-tooltip content="View Details" placement="top" :enterable="false">
+                                <el-button 
+                                  link 
+                                  type="primary" 
+                                  size="small" 
+                                  @click.stop="handleRowSelect(row, item); item.showDetails = true"
+                                >
+                                  <el-icon><View /></el-icon>
+                                </el-button>
+                              </el-tooltip>
+                            </template>
+                          </el-table-column>
                         </template>
-                      </el-table-column>
-                      
-                      <!-- Fixed Actions Column for Rightmost Visibility -->
-                      <el-table-column label="Action" width="70" align="center" fixed="right">
-                        <template #default="{ row }">
-                          <el-tooltip content="View Details" placement="top" :enterable="false">
-                            <el-button 
-                              link 
-                              type="primary" 
-                              size="small" 
-                              @click.stop="handleRowSelect(row, item); item.showDetails = true"
-                            >
-                              <el-icon><View /></el-icon>
-                            </el-button>
-                          </el-tooltip>
-                        </template>
-                      </el-table-column>
-                    </el-table>
+                      </el-table>
+                    </div>
+
+                    <!-- Pagination Fixed at Bottom of Main Column -->
+                    <div class="pagination-bar">
+                      <el-pagination
+                        background
+                        small
+                        v-model:current-page="item.page"
+                        v-model:page-size="item.pageSize"
+                        :page-sizes="[10, 20, 50, 100, 500]"
+                        layout="total, sizes, prev, pager, next, jumper"
+                        :total="item.total"
+                        @size-change="refreshTab(item)"
+                        @current-change="refreshTab(item)"
+                      />
+                    </div>
                   </div>
 
                   <!-- Right Details Panel -->
@@ -361,20 +426,6 @@
                       </div>
                     </div>
                   </div>
-                </div>
-                
-                <div class="pagination-bar">
-                  <el-pagination
-                    background
-                    small
-                    v-model:current-page="item.page"
-                    v-model:page-size="item.pageSize"
-                    :page-sizes="[10, 20, 50, 100, 500]"
-                    layout="total, sizes, prev, pager, next, jumper"
-                    :total="item.total"
-                    @size-change="refreshTab(item)"
-                    @current-change="refreshTab(item)"
-                  />
                 </div>
               </div>
 
@@ -727,13 +778,53 @@ const loadNode = async (node: any, resolve: any) => {
   if (node.data.type === 'conn') {
     try {
       const res = await dbApi.getStructure(node.data.id)
+      
+      // Flatten Redis logic: If Redis and only 1 DB (or just db0), skip the DB node level
+      const isRedis = node.data.dbType === 'redis'
+      const dbKeys = Object.keys(res)
+      
+      if (isRedis && dbKeys.length === 1) {
+         // Direct keys mode
+         const dbName = dbKeys[0]
+         const tableList = res[dbName] || []
+         
+         const flatTables = tableList.map((t: any) => {
+           // Reuse table mapping logic
+           if (typeof t === 'string') {
+              return {
+                id: `${node.data.id}:${t}`,
+                label: t,
+                type: 'table',
+                connId: node.data.id,
+                dbName: dbName,
+                leaf: true,
+                dbType: 'redis' // Ensure dbType is passed
+              }
+           } else {
+              return {
+                id: `${node.data.id}:${t.name}`,
+                label: t.name,
+                type: 'table',
+                connId: node.data.id,
+                dbName: dbName,
+                leaf: true,
+                dbType: 'redis',
+                details: t
+              }
+           }
+         })
+         resolve(flatTables)
+         return
+      }
+
       const dbs = Object.keys(res).map(dbName => ({
         id: `${node.data.id}:${dbName}`,
         label: dbName,
         type: 'db',
         connId: node.data.id,
         leaf: false,
-        tables: res[dbName]
+        tables: res[dbName],
+        dbType: node.data.dbType // Pass down type
       }))
       resolve(dbs)
     } catch (e: any) {
@@ -815,6 +906,7 @@ const openDbOverviewTab = (data: any) => {
 
   // Normalize dbType for checking
   const isRedis = dbType && dbType.toLowerCase().includes('redis')
+  const isRabbit = dbType && dbType.toLowerCase().includes('rabbitmq')
 
   const newTab = reactive({
     name: tabName,
@@ -828,7 +920,7 @@ const openDbOverviewTab = (data: any) => {
     loading: false,
     chartRowOption: getRowChartOption(tableList),
     chartSizeOption: getSizeChartOption(tableList, isRedis ? 'rows' : 'size'),
-    rowChartTitle: isRedis ? 'Top Prefixes by Count' : 'Top Tables by Rows',
+    rowChartTitle: isRedis ? 'Top Prefixes by Count' : (isRabbit ? 'Top Queues by Messages' : 'Top Tables by Rows'),
     sizeChartTitle: isRedis ? 'Key Distribution' : 'Storage Distribution'
   })
   
@@ -867,10 +959,16 @@ const refreshOverview = async (tab: any) => {
     
     // Update charts
     const isRedis = tab.dbType && tab.dbType.toLowerCase().includes('redis')
+    const isRabbit = tab.dbType && tab.dbType.toLowerCase().includes('rabbitmq')
     
     // Force new object references to trigger reactivity
     tab.chartRowOption = { ...getRowChartOption(tableList) }
     tab.chartSizeOption = { ...getSizeChartOption(tableList, isRedis ? 'rows' : 'size') }
+    
+    // Update titles if needed (though usually static after creation, but good for consistency)
+    if (isRabbit) {
+       tab.rowChartTitle = 'Top Queues by Messages'
+    }
     
   } catch (e: any) {
     ElMessage.error(e.message || 'Failed to refresh overview')
@@ -909,7 +1007,7 @@ const parseSize = (sizeStr: any) => {
 // Helper to parse numbers safely (e.g. "1,234" -> 1234)
 const parseNumber = (val: any) => {
   if (typeof val === 'number') return val
-  if (!val) return 0
+  if (!val || val === '-') return 0 // Handle "-" case for rows
   const str = String(val).replace(/,/g, '').trim()
   const num = parseFloat(str)
   return isNaN(num) ? 0 : num
@@ -921,6 +1019,9 @@ const hasData = (option: any) => {
   if (!data || data.length === 0) return false
   
   // Check if ANY value is > 0
+  // Log data for debugging (will appear in console if opened)
+  // console.log('Checking chart data:', data)
+  
   return data.some((d: any) => {
       let val = 0
       if (typeof d === 'object' && d !== null) {
@@ -1026,9 +1127,9 @@ const openTab = (data: any) => {
   connActiveTabs[data.connId] = tabName
   
   if (existing) {
-    // If tab exists but has no data (and not loading), refresh it
-    // This solves the "manual refresh" issue if a previous load failed
-    if (!existing.loading && (!existing.data || existing.data.length === 0)) {
+    // If the tab exists, switch to it. 
+    // If the user clicked the sidebar explicitly, we should refresh the data to ensure it's up to date.
+    if (!existing.loading) {
        refreshTab(existing)
     }
     return
@@ -1238,6 +1339,30 @@ const getColumnWidth = (col: string, data: any[]) => {
   return 140
 }
 
+const getRedisTypeColor = (type: string) => {
+  switch(type) {
+    case 'string': return 'info'
+    case 'hash': return 'success'
+    case 'list': return 'warning'
+    case 'set': return 'danger'
+    case 'zset': return 'primary'
+    default: return ''
+  }
+}
+
+const formatTTL = (ttl: number) => {
+  if (ttl === -1) return 'No Limit'
+  if (ttl === -2) return 'Expired'
+  if (ttl < 60) return `${ttl}s`
+  if (ttl < 3600) return `${Math.floor(ttl/60)}m`
+  return `${Math.floor(ttl/3600)}h`
+}
+
+const formatRedisValue = (val: any) => {
+  if (typeof val === 'object') return JSON.stringify(val)
+  return String(val)
+}
+
 const handleRowSelect = (row: any, tab: any) => {
   tab.selectedRow = row
   // Auto-open details if not open? Optional. 
@@ -1374,6 +1499,11 @@ const saveConnection = async () => {
 }
 
 /* Tree Styling Refinement */
+:deep(.el-tree-node__content) {
+  height: 40px !important; /* Force taller rows to prevent overlap */
+  margin-bottom: 2px;
+}
+
 .custom-tree-item {
   display: flex;
   align-items: center;
@@ -1381,87 +1511,27 @@ const saveConnection = async () => {
   width: 100%;
   padding-right: 8px;
   overflow: hidden;
-  height: 40px; /* Comfortable height */
-  border-radius: 4px;
-  transition: background-color 0.2s;
+  height: 34px; /* Slightly smaller than row height for centering */
+  border-radius: 6px;
+  margin: 0 8px 0 0; /* Remove vertical margin, rely on row height */
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
 }
 
 .custom-tree-item:hover {
   background-color: #f5f7fa;
 }
 
-:deep(.el-tree-node__content) {
-  height: 40px; /* Match item height */
-}
-
-:deep(.el-tree--highlight-current .el-tree-node.is-current > .el-tree-node__content) {
-  background-color: #ecf5ff;
-  color: #409EFF;
-  font-weight: 500;
-}
-
-/* Tree Icon Container */
-.tree-icon-container {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 12px;
-  flex-shrink: 0;
-}
-
-/* Database Connection Icons - Clean & Lightweight */
-.db-icon {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.2s ease;
-  margin-right: 8px;
-}
-
-.db-icon img {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-}
-
-/* Specific scale adjustments for visual balance */
-.db-icon.mongo img {
-  transform: scale(1.3); /* Mongo leaf is naturally thin, needs boost */
-}
-
-.db-icon.rabbitmq img {
-  transform: scale(0.9); /* Rabbit is naturally blocky, needs slight reduction */
-}
-
-.db-icon.redis img {
-  transform: scale(1.05); /* Redis cube benefits from tiny boost */
-}
-
-/* Active States - High Contrast Colors */
-/* No heavy filters or transforms for better performance and cleaner look */
-.db-icon.active {
-  opacity: 1;
-}
-
-/* Tree Selection Styles - Brand Colors */
-.custom-tree-item.is-active.is-conn {
-  background-color: transparent !important; /* Reset default background */
-}
-
 /* 
-   Standardized High-Contrast Active State for ALL Connections and Tables
-   Requirements: Transparent background (white/gray), Blue Underline, Bold Text
+   Standardized High-Contrast Active State
 */
-
 .custom-tree-item.is-active {
-  background-color: #f0f7ff !important; /* Light blue background for visibility */
-  color: #1890ff !important; /* Standard Blue */
-  font-weight: 700 !important;
-  border-right: 3px solid #1890ff !important; /* Blue indicator line */
+  background-color: #e6f7ff !important;
+  color: #1890ff !important;
+  font-weight: 600 !important;
+  box-shadow: inset 3px 0 0 #1890ff; 
+  border-left: none !important; 
+  border-right: none !important;
 }
 
 /* Override specific connection colors if needed, OR keep them uniform as requested */
@@ -1512,6 +1582,27 @@ const saveConnection = async () => {
   font-size: 18px;
   color: #909399;
 }
+
+/* Sidebar DB Icons (Connection Type) */
+.db-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.db-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Specific adjustments if needed */
+.db-icon.mongo img { transform: scale(1.2); }
+.db-icon.rabbitmq img { transform: scale(0.9); }
 
 .sub-icon.table { color: #606266; }
 
@@ -1601,10 +1692,57 @@ const saveConnection = async () => {
 /* Connection Tabs (Top Level) */
 .connection-tabs {
   background: #f5f7fa;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 :deep(.el-tabs__header) {
   margin: 0;
+  border-bottom: 1px solid #e4e7ed;
+  background: #f5f7fa;
+  flex-shrink: 0;
+  padding: 6px 10px 0 10px; /* Add padding for better tab spacing */
+}
+
+/* Modern Tab Style */
+:deep(.el-tabs__item) {
+  border: 1px solid transparent !important;
+  margin-right: 4px;
+  border-radius: 6px 6px 0 0;
+  transition: all 0.2s ease;
+  background: transparent;
+  height: 36px;
+  line-height: 36px;
+  color: #606266;
+  font-weight: 500;
+  padding: 0 16px !important;
+  margin-bottom: -1px; /* Important for overlap */
+}
+
+:deep(.el-tabs__item:hover) {
+  background: #e6e8eb;
+  color: #303133;
+}
+
+:deep(.el-tabs__item.is-active) {
+  background-color: #fff !important;
+  border: 1px solid #e4e7ed !important;
+  border-bottom-color: #fff !important; /* Seamless merge */
+  color: #303133 !important;
+  font-weight: 600;
+  position: relative;
+  box-shadow: none; /* Remove floating shadow */
+}
+
+/* Remove the top blue line, use subtle shadow instead */
+:deep(.el-tabs__item.is-active)::after {
+  display: none;
+}
+
+:deep(.el-tabs__nav) {
+  border: none !important;
 }
 
 .conn-tab-label {
@@ -1612,37 +1750,45 @@ const saveConnection = async () => {
   align-items: center;
   gap: 8px;
   padding: 0 4px;
-  opacity: 0.7; /* Default dim */
-  transition: opacity 0.2s, font-weight 0.2s;
+  opacity: 0.8; 
+  transition: opacity 0.2s;
 }
 
-.conn-tab-label.is-conn-active {
-  opacity: 1;
-}
-
-.conn-tab-label.is-conn-active .conn-name {
-  font-weight: 800; /* Bolder text for active */
-  color: #000;
-  text-decoration: underline; /* Underline for emphasis */
-  text-underline-offset: 4px;
+:deep(.el-tabs__item.is-active) .conn-tab-label {
+  opacity: 1; 
 }
 
 .conn-name {
   font-weight: 600;
-  color: #303133;
+  color: #606266;
+}
+
+:deep(.el-tabs__item.is-active) .conn-name {
+  font-weight: 700; 
+  color: #303133; /* Dark text for active */
 }
 
 /* Indicator dot for top tabs */
 .conn-indicator {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background-color: #909399;
+  background-color: #c0c4cc; /* Default inactive gray */
+  margin-right: 8px;
+  opacity: 0.5;
+  transition: all 0.3s;
 }
-.conn-indicator.mysql { background-color: #00758F; box-shadow: 0 0 4px rgba(0, 117, 143, 0.4); }
-.conn-indicator.redis { background-color: #DC382D; box-shadow: 0 0 4px rgba(220, 56, 45, 0.4); }
-.conn-indicator.mongo { background-color: #47A248; box-shadow: 0 0 4px rgba(71, 162, 72, 0.4); }
-.conn-indicator.rabbitmq { background-color: #FF6600; box-shadow: 0 0 4px rgba(255, 102, 0, 0.4); }
+
+/* Active State: Bright & Colored */
+:deep(.el-tabs__item.is-active) .conn-indicator {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+:deep(.el-tabs__item.is-active) .conn-indicator.mysql { background-color: #409eff; box-shadow: 0 0 4px rgba(64, 158, 255, 0.6); }
+:deep(.el-tabs__item.is-active) .conn-indicator.redis { background-color: #f56c6c; box-shadow: 0 0 4px rgba(245, 108, 108, 0.6); }
+:deep(.el-tabs__item.is-active) .conn-indicator.mongo { background-color: #67c23a; box-shadow: 0 0 4px rgba(103, 194, 58, 0.6); }
+:deep(.el-tabs__item.is-active) .conn-indicator.rabbitmq { background-color: #e6a23c; box-shadow: 0 0 4px rgba(230, 162, 60, 0.6); }
 
 
 .main-tabs {
@@ -1973,59 +2119,45 @@ const saveConnection = async () => {
   border: none;
 }
 
-/* Data View Container (Table + Details) */
+/* Data View Container (Row: Main Content + Details) */
 .data-view-container {
   flex: 1;
   display: flex;
-  flex-direction: column; /* Changed to column to stack table and pagination if needed, but wait, layout is row for details */
-  /* Actually, the layout is: data-view-container { table-wrapper (flex 1) + details-panel } */
-  /* The pagination is OUTSIDE data-view-container in the HTML structure above? No, it is INSIDE table-view but AFTER data-view-container? */
-  /* Let's check the HTML structure in the file content I read */
+  flex-direction: row; /* Details Panel on the right */
   overflow: hidden;
   min-height: 0;
-  position: relative; /* For absolute positioning if needed */
+  position: relative; 
 }
 
-/* 
-   HTML Structure based on read:
-   <div class="tab-view table-view">
-      <div class="view-toolbar">...</div>
-      <div class="data-view-container">
-         <div class="table-wrapper">...</div>
-         <div class="details-panel">...</div>
-      </div>
-      <div class="pagination-bar">...</div>
-   </div>
-*/
-
-/* So Pagination IS at the bottom of .table-view, outside .data-view-container */
-/* The issue "moving with table" implies table height changes. */
-/* .table-view needs to be height: 100% */
-
-.tab-view {
-  height: 100%;
+/* Main Content Column (Table + Pagination) */
+.main-content-column {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* Ensure no scroll on the view itself */
+  overflow: hidden;
+  min-width: 0; 
+  position: relative;
 }
 
 .table-wrapper {
   flex: 1;
-  overflow: auto; /* Allow table to scroll internally */
+  width: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  min-height: 0; /* Critical for nested flex scroll */
+  min-height: 0; /* Crucial for nested flex scrolling */
 }
 
 .pagination-bar {
+  height: 48px;
   padding: 8px 12px;
   border-top: 1px solid #ebeef5;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   background: #fafafa;
-  flex-shrink: 0; /* Never shrink */
-  z-index: 5; /* Ensure above content */
+  flex-shrink: 0;
+  z-index: 10;
 }
 
 
