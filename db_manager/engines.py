@@ -4,6 +4,9 @@ from redis.cluster import RedisCluster
 from pymongo import MongoClient
 import pika
 import json
+import urllib.request
+import base64
+import ssl
 from bson import ObjectId
 from datetime import datetime
 from .models import DatabaseConnection
@@ -46,17 +49,40 @@ class BaseEngine:
 
 class MySQLEngine(BaseEngine):
     def _connect(self, db=None):
-        return pymysql.connect(
-            host=self.conn.host,
-            port=self.conn.port,
-            user=self.conn.user,
-            password=self.conn.password,
-            database=db or self.conn.database,
-            connect_timeout=5,
-            read_timeout=10,
-            write_timeout=10,
-            cursorclass=pymysql.cursors.DictCursor
-        )
+        connect_args = {
+            "host": self.conn.host,
+            "port": self.conn.port,
+            "user": self.conn.user,
+            "password": self.conn.password,
+            "database": db or self.conn.database,
+            "connect_timeout": 5,
+            "read_timeout": 10,
+            "write_timeout": 10,
+            "cursorclass": pymysql.cursors.DictCursor
+        }
+
+        # Handle SSL Configuration
+        extra = self.conn.extra_config or {}
+        if extra.get('ssl'):
+            ssl_conf = extra.get('ssl')
+            # If ssl is just True, use a default permissive context
+            if ssl_conf is True:
+                connect_args['ssl'] = {'check_hostname': False}
+            elif isinstance(ssl_conf, dict):
+                # If user provided a dict, use it. 
+                # Common keys: ca, cert, key, check_hostname, verify_mode
+                # We need to map 'verify_mode' string to ssl constant if present
+                if 'verify_mode' in ssl_conf and isinstance(ssl_conf['verify_mode'], str):
+                    mode_str = ssl_conf['verify_mode'].upper()
+                    if mode_str == 'CERT_NONE':
+                        ssl_conf['verify_mode'] = ssl.CERT_NONE
+                    elif mode_str == 'CERT_OPTIONAL':
+                        ssl_conf['verify_mode'] = ssl.CERT_OPTIONAL
+                    elif mode_str == 'CERT_REQUIRED':
+                        ssl_conf['verify_mode'] = ssl.CERT_REQUIRED
+                connect_args['ssl'] = ssl_conf
+            
+        return pymysql.connect(**connect_args)
 
     def test(self):
         try:
@@ -260,40 +286,51 @@ class RedisEngine(BaseEngine):
                 # We use a larger count to get a good representative sample
                 cursor = '0'
                 keys = []
-                # Scan up to 5000 keys to build the structure
-                for _ in range(5): 
+                # Scan up to 10000 keys to build the structure
+                for _ in range(10): 
                     cursor, partial = r.scan(cursor=cursor, count=1000)
                     keys.extend(partial)
-                    if cursor == 0 or len(keys) >= 5000:
+                    if cursor == 0 or len(keys) >= 10000:
                         break
                 
-                # Group keys
-                groups = set()
+                # Group keys and Count
+                groups = {}
+                
+                # Force flat mode for Redis as requested
+                # Heuristic: If we scanned few keys and they don't look like they have many common prefixes, just show them flat
+                # Or if the total sample is small, just show all keys.
+                # User preference: "Don't want folders".
+                # ALWAYS show flat for now unless overridden
+                show_flat = True 
+                
                 for k in keys:
-                    if ':' in k:
+                    if not show_flat and ':' in k:
                         # Use the first part as a folder
                         prefix = k.split(':')[0]
-                        groups.add(f"{prefix}:*")
+                        group_name = f"{prefix}:*"
                     else:
-                        groups.add(k)
+                        group_name = k
+                    
+                    groups[group_name] = groups.get(group_name, 0) + 1
                 
+                # Ensure db_size is int
+                if not isinstance(db_size, int): db_size = 0
+
                 # If no keys found, add a placeholder
                 if not groups:
-                    groups.add('Keys')
+                    # If we have db_size but scan found nothing (weird?), add Keys
+                    if db_size > 0:
+                        groups['Keys'] = db_size
+                    else:
+                        groups['Keys'] = 0
                 
                 # Convert to objects
-                group_list = sorted(list(groups))
                 result_list = []
                 
-                # If we only have one group (Keys or similar) or it's just a few,
-                # we can try to distribute stats? 
-                # Actually, accurate per-prefix count is hard. 
-                # But if we just have 'Keys', we can show total.
-                
-                for g in group_list:
+                for g, count in groups.items():
                     item = {
                         "name": g,
-                        "rows": "-",
+                        "rows": count,
                         "size": "-",
                         "engine": "Redis",
                         "created": "-",
@@ -301,11 +338,14 @@ class RedisEngine(BaseEngine):
                     }
                     
                     # If it's the generic 'Keys' placeholder or we only have one group, assume it's the whole DB
-                    if g == 'Keys' and len(group_list) == 1:
+                    if g == 'Keys' and len(groups) == 1:
                         item['rows'] = db_size
                         item['size'] = used_mem
                     
                     result_list.append(item)
+                
+                # Sort: Folders (*) first, then others
+                result_list.sort(key=lambda x: (0 if x['name'].endswith(':*') else 1, x['name']))
                 
                 tree[db_key] = result_list
 
@@ -345,18 +385,52 @@ class RedisEngine(BaseEngine):
             
             if not pattern: pattern = '*'
 
-            # Scan with pagination
-            cursor = params.get('cursor', 0) # Frontend can pass cursor for true pagination later
-            # For now we just scan from 0, but we can improve this.
-            # Current frontend doesn't support passing cursor back, it relies on "page".
-            # Redis SCAN is cursor based, not offset based. 
-            # To support offset-like behavior properly is hard without caching.
-            # We will stick to a simple scan for now, maybe increase count.
+            # Pagination Logic
+            page = int(params.get('page', 1))
+            page_size = int(params.get('pageSize', 50))
+            offset = (page - 1) * page_size
             
-            redis_cursor, keys = r.scan(cursor=0, match=pattern, count=1000)
+            # We need to scan enough keys to reach the offset + page_size
+            # This is "deep pagination" and can be slow, but it's the only way without stateful cursors.
+            target_count = offset + page_size
+            
+            cursor = '0'
+            keys = []
+            
+            # Safety limit: don't scan forever. 
+            # If user asks for page 1000, we might stop early.
+            max_scan = target_count + 1000 
+            
+            while True:
+                # Scan a batch
+                cursor, partial = r.scan(cursor=cursor, match=pattern, count=1000)
+                keys.extend(partial)
+                
+                # If we have enough keys or finished scanning
+                if len(keys) >= max_scan or cursor == 0:
+                    break
+            
+            # Slice the keys for the current page
+            page_keys = keys[offset : offset + page_size]
+            
+            # Calculate total
+            # If cursor is 0, we know the exact total (len(keys))
+            # If cursor is not 0, we estimate total as "dbsize" or "keys found so far + more"
+            if cursor == 0:
+                total = len(keys)
+            else:
+                # If we haven't finished scanning, total must be larger than what we have
+                # We can use dbsize as an upper bound estimate, or just say "many"
+                try:
+                    db_size = r.dbsize()
+                    # Ensure total is at least enough to show the next page button
+                    # If we found keys up to target_count, we need total > target_count
+                    total = max(db_size, len(keys) + 100)
+                except:
+                    total = len(keys) + 100 # Fake it to allow next page
             
             rows = []
-            for k in keys:
+            for k in page_keys:
                 try:
                     type_ = r.type(k)
                     val = "(large/complex)"
@@ -370,7 +444,7 @@ class RedisEngine(BaseEngine):
             return {
                 "headers": ["key", "type", "value"],
                 "rows": rows,
-                "total": len(rows), # Note: This is just the count of scanned keys in this batch
+                "total": total,
             }
         finally:
             r.close()
@@ -481,6 +555,11 @@ class MongoEngine(BaseEngine):
         try:
             col = c[db][collection]
             
+            # Common pagination params
+            page = int(params.get('page', 1))
+            page_size = int(params.get('pageSize', 50))
+            skip = (page - 1) * page_size
+
             if filter_str:
                 try:
                     query_filter = json.loads(filter_str)
@@ -489,17 +568,13 @@ class MongoEngine(BaseEngine):
                 
                 # Optimized: Add projection to limit fields if documents are huge?
                 # For now, just limiting limit
-                cursor = col.find(query_filter).limit(50)
+                cursor = col.find(query_filter).skip(skip).limit(page_size)
                 
                 # Optimized: count_documents is slow with filter, use limit if possible or explain
                 # For UX, we just say "50+" if we hit limit? 
                 # Or use count_documents with limit.
-                total = col.count_documents(query_filter, limit=1000)
+                total = col.count_documents(query_filter)
             else:
-                page = int(params.get('page', 1))
-                page_size = int(params.get('pageSize', 20))
-                skip = (page - 1) * page_size
-                
                 # Optimization: Sort by _id desc (LIFO) by default for better usability
                 # Most users want to see the latest data first
                 cursor = col.find().sort('_id', -1).skip(skip).limit(page_size)
@@ -549,11 +624,74 @@ class RabbitMQEngine(BaseEngine):
             return False, str(e)
     
     def get_structure(self):
-        # Optimized: Try to list actual queues if management plugin is not available
-        # Note: Pika (AMQP) cannot list queues directly easily without Management API (HTTP).
-        # Standard AMQP doesn't support "List Queues".
-        # But we can try to return a better hint or structure.
-        return {"Queues": ["(Enter Queue Name to Peek)"]}
+        # Try to fetch queue stats via Management API (http://host:15672/api/queues)
+        # This provides "messages" (rows) and "memory" (size) for the charts.
+        try:
+            host = self.conn.host
+            # Assume standard management port 15672. 
+            # In a real app, we might want to allow configuring this port.
+            mgmt_port = 15672
+            
+            # Handle vhost in URL
+            path = "/api/queues"
+            if self.conn.database and self.conn.database != '/':
+                vhost_enc = urllib.parse.quote(self.conn.database, safe='')
+                path = f"/api/queues/{vhost_enc}"
+                
+            url = f"http://{host}:{mgmt_port}{path}"
+            
+            req = urllib.request.Request(url)
+            
+            # Add Auth
+            if self.conn.user and self.conn.password:
+                auth_str = f"{self.conn.user}:{self.conn.password}"
+                b64_auth = base64.b64encode(auth_str.encode()).decode()
+                req.add_header("Authorization", f"Basic {b64_auth}")
+            
+            # 2 second timeout to avoid hanging if port is closed
+            try:
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read())
+                        queues = []
+                        for q in data:
+                            queues.append({
+                                "name": q.get('name'),
+                                "rows": q.get('messages', 0),
+                                "size": f"{q.get('memory', 0)} B",
+                                "engine": "RabbitMQ",
+                                "created": "-",
+                                "updated": "-"
+                            })
+                        
+                        if not queues:
+                            return {"Queues": []}
+                            
+                        return {"Queues": queues}
+            except urllib.error.HTTPError as e:
+                # Catch 401/403/etc explicitly and return friendly error item instead of letting view return 400
+                return {"Queues": [{
+                    "name": f"Error: {e.reason} (Auth/Permission)", 
+                    "rows": 0, 
+                    "size": "-", 
+                    "engine": f"Status {e.code}"
+                }]}
+            except Exception as e:
+                # Catch other URL errors
+                 return {"Queues": [{
+                    "name": "Note: Mgmt API Unreachable", 
+                    "rows": 0, 
+                    "size": "-", 
+                    "engine": "Check Port 15672"
+                }]}
+        except Exception as e:
+            # Catch all setup errors
+            return {"Queues": [{
+                "name": "Note: Mgmt API Error", 
+                "rows": 0, 
+                "size": "-", 
+                "engine": str(e)
+            }]}
         
     def query(self, db, target, params):
         queue_name = params.get('where') or target
@@ -563,25 +701,68 @@ class RabbitMQEngine(BaseEngine):
         conn = self._connect()
         try:
             channel = conn.channel()
+            
+            # Pagination
+            page = int(params.get('page', 1))
+            page_size = int(params.get('pageSize', 50))
+            offset = (page - 1) * page_size
+            
+            # 1. Get True Total via Passive Declare
+            # This allows accurate pagination numbers without fetching everything
+            true_total = 0
+            try:
+                q_res = channel.queue_declare(queue=queue_name, passive=True)
+                true_total = q_res.method.message_count
+            except:
+                pass
+
             rows = []
-            # Peek 10 messages
-            for _ in range(10):
-                method, props, body = channel.basic_get(queue_name, auto_ack=False)
-                if method:
-                    # Optimized: Truncate body if too long for preview
-                    body_str = body.decode('utf-8', 'ignore')
-                    if len(body_str) > 1000: body_str = body_str[:1000] + "... (truncated)"
-                    
-                    rows.append({
-                        "Exchange": method.exchange,
-                        "RoutingKey": method.routing_key,
-                        "Redelivered": method.redelivered,
-                        "Body": body_str,
-                        "Props": str(props)
-                    })
-                else:
-                    break
-            return {"headers": ["Exchange", "RoutingKey", "Body", "Redelivered", "Props"], "rows": rows, "total": len(rows)}
+            fetched_count = 0
+            
+            # 2. Fetch Loop
+            # Only fetch if we are within range
+            if true_total == 0 or offset < true_total:
+                # We iterate until we reach the limit (page_size + offset)
+                # or the queue is empty.
+                limit = offset + page_size
+                
+                # Safety break: don't loop too long
+                loop_limit = limit + 10
+                
+                for _ in range(loop_limit): 
+                    method, props, body = channel.basic_get(queue_name, auto_ack=False)
+                    if method:
+                        fetched_count += 1
+                        
+                        if fetched_count > offset and fetched_count <= limit:
+                            # Optimized: Truncate body if too long for preview
+                            body_str = body.decode('utf-8', 'ignore')
+                            if len(body_str) > 1000: body_str = body_str[:1000] + "... (truncated)"
+                            
+                            rows.append({
+                                "Exchange": method.exchange,
+                                "RoutingKey": method.routing_key,
+                                "Redelivered": method.redelivered,
+                                "Body": body_str,
+                                "Props": str(props)
+                            })
+                        
+                        if fetched_count >= limit:
+                            break
+                    else:
+                        break
+            
+            # 3. Final Total Calculation
+            # If we got a true total from the server, use it (unless we fetched more, which shouldn't happen)
+            # If true_total is 0 (failed to get), fallback to fetched count estimation
+            if true_total > 0:
+                total = true_total
+            else:
+                total = fetched_count
+                if fetched_count >= (offset + page_size):
+                     total = fetched_count + 100
+
+            return {"headers": ["Exchange", "RoutingKey", "Body", "Redelivered", "Props"], "rows": rows, "total": total}
         except Exception as e:
             return {"headers": ["Error"], "rows": [{"Error": str(e)}], "total": 0}
         finally:

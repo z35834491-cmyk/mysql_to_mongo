@@ -75,9 +75,11 @@
                 </div>
                 
                 <!-- Table Icon -->
-                <div v-else-if="data.type === 'table'" class="sub-icon table">
-                   <el-icon><Grid /></el-icon>
-                </div>
+              <div v-else-if="data.type === 'table'" class="sub-icon table">
+                 <!-- Special Icon for Redis "Folders" -->
+                 <el-icon v-if="data.dbType === 'redis' && data.label.endsWith(':*')"><Folder /></el-icon>
+                 <el-icon v-else><Grid /></el-icon>
+              </div>
               </div>
               
               <span class="custom-tree-label" :title="node.label">{{ node.label }}</span>
@@ -167,12 +169,22 @@
 
               <!-- VIEW: DB OVERVIEW -->
               <div v-if="item.type === 'overview'" class="tab-view overview-view">
+                <!-- Context Breadcrumb -->
+                <div class="context-breadcrumb">
+                   <el-tag size="small" type="info" effect="plain">{{ item.connName }}</el-tag>
+                   <span class="breadcrumb-separator">/</span>
+                   <span class="breadcrumb-current">{{ item.dbName }}</span>
+                </div>
+
                 <div class="view-toolbar">
                    <div class="editor-info">
                       <el-icon><Coin /></el-icon>
                       <span class="editor-title" style="margin-left: 8px">{{ item.dbName }} Overview</span>
                    </div>
                    <div class="right-tools">
+                     <el-button type="primary" plain size="small" @click="refreshOverview(item)" :loading="item.loading" style="margin-right: 12px">
+                        <el-icon><Refresh /></el-icon> Refresh
+                     </el-button>
                      <el-tag type="info">{{ item.data.length }} Tables / Collections</el-tag>
                    </div>
                 </div>
@@ -181,12 +193,18 @@
                   <!-- Charts Section -->
                   <div class="charts-row" v-if="item.chartRowOption && item.chartSizeOption">
                     <el-card shadow="never" class="chart-card">
-                       <template #header><span class="chart-title">Top Tables by Rows</span></template>
-                       <v-chart class="chart" :option="item.chartRowOption" autoresize />
+                       <template #header><span class="chart-title">{{ item.rowChartTitle || 'Top Tables by Rows' }}</span></template>
+                       <div class="chart-container">
+                         <v-chart v-if="hasData(item.chartRowOption)" class="chart" :option="item.chartRowOption" autoresize />
+                         <el-empty v-else description="No Data" :image-size="80" />
+                       </div>
                     </el-card>
                     <el-card shadow="never" class="chart-card">
-                       <template #header><span class="chart-title">Storage Distribution</span></template>
-                       <v-chart class="chart" :option="item.chartSizeOption" autoresize />
+                       <template #header><span class="chart-title">{{ item.sizeChartTitle || 'Storage Distribution' }}</span></template>
+                       <div class="chart-container">
+                         <v-chart v-if="hasData(item.chartSizeOption)" class="chart" :option="item.chartSizeOption" autoresize />
+                         <el-empty v-else description="No Data" :image-size="80" />
+                       </div>
                     </el-card>
                   </div>
 
@@ -277,6 +295,7 @@
                         :min-width="getColumnWidth(col, item.data)"
                         show-overflow-tooltip
                         sortable
+                        :fixed="isIdColumn(col) ? 'left' : false"
                       >
                         <template #default="{ row }">
                           <!-- Status/Level Tags -->
@@ -306,7 +325,7 @@
                       </el-table-column>
                       
                       <!-- Fixed Actions Column for Rightmost Visibility -->
-                      <el-table-column label="Action" width="70" align="center">
+                      <el-table-column label="Action" width="70" align="center" fixed="right">
                         <template #default="{ row }">
                           <el-tooltip content="View Details" placement="top" :enterable="false">
                             <el-button 
@@ -350,7 +369,7 @@
                     small
                     v-model:current-page="item.page"
                     v-model:page-size="item.pageSize"
-                    :page-sizes="[20, 50, 100, 200, 500]"
+                    :page-sizes="[10, 20, 50, 100, 500]"
                     layout="total, sizes, prev, pager, next, jumper"
                     :total="item.total"
                     @size-change="refreshTab(item)"
@@ -359,14 +378,15 @@
                 </div>
               </div>
 
-              <!-- VIEW: QUERY CONSOLE -->
               <div v-if="item.type === 'query'" class="tab-view query-view">
                 <div class="query-editor-container">
                   <div class="editor-toolbar">
                     <div class="editor-info">
                       <el-icon><Monitor /></el-icon>
-                      <span class="editor-title">{{ item.dbType.toUpperCase() }} Console</span>
-                      <span class="editor-subtitle">Target: {{ item.dbName || 'Server' }}</span>
+                      <div style="display: flex; flex-direction: column;">
+                        <span class="editor-title">{{ item.dbName || 'Global Console' }}</span>
+                        <span class="editor-subtitle">{{ item.connName }} ({{ item.dbType }})</span>
+                      </div>
                     </div>
                     <el-button type="success" size="small" @click="runQuery(item)" :loading="item.loading">
                       <el-icon><VideoPlay /></el-icon> Run Query
@@ -566,11 +586,13 @@ const form = reactive<DBConnection>({
 })
 const formMode = ref('standalone')
 const useUri = ref(false)
+const useSSL = ref(false)
 
 // Watch type change to reset defaults
 watch(() => form.type, (newType) => {
   formMode.value = 'standalone'
   useUri.value = false
+  useSSL.value = false
   
   if (newType === 'mysql') form.port = 3306
   if (newType === 'redis') form.port = 6379
@@ -664,6 +686,10 @@ const restoreTabs = () => {
   if (savedTabs) {
     try {
       tabs.value = JSON.parse(savedTabs)
+      // Enforce minimum pageSize of 50 for legacy tabs
+      tabs.value.forEach(t => {
+          if (!t.pageSize || t.pageSize < 50) t.pageSize = 50
+      })
     } catch {}
   }
   
@@ -676,6 +702,17 @@ const restoreTabs = () => {
       Object.assign(connActiveTabs, JSON.parse(savedConnTabs))
     } catch {}
   }
+
+  // Auto-refresh tabs that were saved without data (lazy reload)
+  nextTick(() => {
+    tabs.value.forEach(tab => {
+       if (!tab.loading && (!tab.data || (Array.isArray(tab.data) && tab.data.length === 0))) {
+          if (tab.type === 'table' || tab.type === 'overview') {
+             refreshTab(tab)
+          }
+       }
+    })
+  })
 }
 
 onMounted(() => {
@@ -758,12 +795,17 @@ const openDbOverviewTab = (data: any) => {
   connActiveTabs[data.connId] = tabName
 
   if (existing) {
+    // If the existing tab has no data (e.g. from a previous failed load), refresh it
+    if (!existing.data || existing.data.length === 0) {
+       refreshOverview(existing)
+    }
     return
   }
 
   const connNode = treeData.value.find((c: any) => c.id === data.connId)
   const connName = connNode ? connNode.name : ''
-  const dbType = connNode ? connNode.dbType : 'mysql'
+  // Use data.dbType if available (it was added to the node), otherwise fallback to connection type
+  const dbType = data.dbType || (connNode ? connNode.dbType : 'mysql')
 
   // ... data processing ...
   const tableList = (data.tables || []).map((t: any) => {
@@ -771,7 +813,10 @@ const openDbOverviewTab = (data: any) => {
     return t
   })
 
-  const newTab = {
+  // Normalize dbType for checking
+  const isRedis = dbType && dbType.toLowerCase().includes('redis')
+
+  const newTab = reactive({
     name: tabName,
     title: `Overview: ${data.label}`,
     type: 'overview',
@@ -782,39 +827,129 @@ const openDbOverviewTab = (data: any) => {
     data: tableList,
     loading: false,
     chartRowOption: getRowChartOption(tableList),
-    chartSizeOption: getSizeChartOption(tableList)
-  }
+    chartSizeOption: getSizeChartOption(tableList, isRedis ? 'rows' : 'size'),
+    rowChartTitle: isRedis ? 'Top Prefixes by Count' : 'Top Tables by Rows',
+    sizeChartTitle: isRedis ? 'Key Distribution' : 'Storage Distribution'
+  })
   
   tabs.value.push(newTab)
   connActiveTabs[data.connId] = tabName
+  
+  // If data is empty (initial load failed or just empty), try to fetch fresh structure
+  if (tableList.length === 0 || (tableList.length === 1 && tableList[0].name.includes('Enter Queue Name'))) {
+      refreshOverview(newTab)
+  }
+}
+
+const refreshOverview = async (tab: any) => {
+  tab.loading = true
+  try {
+    // Re-fetch structure for the connection
+    const res = await dbApi.getStructure(tab.connId)
+    
+    // Extract specific DB data
+    let newTables = []
+    if (res[tab.dbName]) {
+        newTables = res[tab.dbName]
+    } else if (tab.dbType.includes('redis') || tab.dbType === 'rabbitmq') {
+        // Redis/RabbitMQ often return single keys like 'db0' or 'Queues'
+        // If tab.dbName matches, use it.
+        newTables = res[tab.dbName] || []
+    }
+
+    // Process data
+    const tableList = newTables.map((t: any) => {
+        if (typeof t === 'string') return { name: t }
+        return t
+    })
+    
+    tab.data = tableList
+    
+    // Update charts
+    const isRedis = tab.dbType && tab.dbType.toLowerCase().includes('redis')
+    
+    // Force new object references to trigger reactivity
+    tab.chartRowOption = { ...getRowChartOption(tableList) }
+    tab.chartSizeOption = { ...getSizeChartOption(tableList, isRedis ? 'rows' : 'size') }
+    
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to refresh overview')
+  } finally {
+    tab.loading = false
+  }
 }
 
 // --- Chart Helpers ---
-const parseSize = (sizeStr: string) => {
-  if (!sizeStr || sizeStr === '-') return 0
-  const num = parseFloat(sizeStr.split(' ')[0])
-  if (sizeStr.includes('MB')) return num * 1024 * 1024
-  if (sizeStr.includes('KB')) return num * 1024
-  return num
+const parseSize = (sizeStr: any) => {
+  // If undefined/null, return 0
+  if (!sizeStr) return 0
+  
+  // If already a number, return it
+  if (typeof sizeStr === 'number') return sizeStr
+  
+  // Clean string
+  const str = String(sizeStr).trim().toUpperCase()
+  if (str === '-' || str === '') return 0
+  
+  // Extract number part (handle "16.00 KB" -> 16.00, or "1,234.56 MB")
+  // Remove commas for safe parsing
+  const cleanStr = str.replace(/,/g, '')
+  const numPart = parseFloat(cleanStr)
+  if (isNaN(numPart)) return 0
+
+  if (cleanStr.includes('TB')) return numPart * 1024 * 1024 * 1024 * 1024
+  if (cleanStr.includes('GB')) return numPart * 1024 * 1024 * 1024
+  if (cleanStr.includes('MB')) return numPart * 1024 * 1024
+  if (cleanStr.includes('KB')) return numPart * 1024
+  
+  // If just a number string or "B", return as bytes
+  return numPart
+}
+
+// Helper to parse numbers safely (e.g. "1,234" -> 1234)
+const parseNumber = (val: any) => {
+  if (typeof val === 'number') return val
+  if (!val) return 0
+  const str = String(val).replace(/,/g, '').trim()
+  const num = parseFloat(str)
+  return isNaN(num) ? 0 : num
+}
+
+const hasData = (option: any) => {
+  if (!option || !option.series || option.series.length === 0) return false
+  const data = option.series[0].data
+  if (!data || data.length === 0) return false
+  
+  // Check if ANY value is > 0
+  return data.some((d: any) => {
+      let val = 0
+      if (typeof d === 'object' && d !== null) {
+          val = parseNumber(d.value)
+      } else {
+          val = parseNumber(d)
+      }
+      return val > 0
+  })
 }
 
 const getRowChartOption = (data: any[]) => {
   // Top 10 tables by rows
   const sorted = [...data]
-    .filter(t => t.rows !== '-' && t.rows > 0)
-    .sort((a, b) => b.rows - a.rows)
+    .map(t => ({ ...t, rowsNum: parseNumber(t.rows) }))
+    .filter(t => t.rows !== '-' && t.rowsNum > 0)
+    .sort((a, b) => b.rowsNum - a.rowsNum)
     .slice(0, 10)
     
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    grid: { left: '3%', right: '8%', bottom: '3%', containLabel: true },
     xAxis: { type: 'value', name: 'Rows' },
     yAxis: { type: 'category', data: sorted.map(t => t.name).reverse(), axisLabel: { width: 100, overflow: 'truncate' } },
     series: [
       {
         name: 'Row Count',
         type: 'bar',
-        data: sorted.map(t => t.rows).reverse(),
+        data: sorted.map(t => t.rowsNum).reverse(),
         itemStyle: { color: '#409EFF' },
         barWidth: '60%'
       }
@@ -822,40 +957,47 @@ const getRowChartOption = (data: any[]) => {
   }
 }
 
-const getSizeChartOption = (data: any[]) => {
-  // Top tables by size
+const getSizeChartOption = (data: any[], valueKey: string = 'size') => {
+  // Top tables by size/rows
   const sorted = [...data]
-    .map(t => ({ ...t, sizeBytes: parseSize(t.size) }))
-    .filter(t => t.sizeBytes > 0)
-    .sort((a, b) => b.sizeBytes - a.sizeBytes)
+    .map(t => ({ ...t, sortValue: parseSize(t[valueKey]) }))
+    .filter(t => t.sortValue > 0)
+    .sort((a, b) => b.sortValue - a.sortValue)
     .slice(0, 8)
 
   return {
-    tooltip: { trigger: 'item', formatter: '{b}: {c} Bytes ({d}%)' },
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     legend: { 
       orient: 'vertical', 
-      left: 'right', // Move legend to right
-      top: 'center', // Vertically center it
-      type: 'scroll' 
+      left: '0', 
+      top: 'middle', 
+      align: 'left',
+      itemGap: 10,
+      type: 'scroll',
+      width: '40%', 
+      formatter: (name: string) => {
+         return name.length > 18 ? name.substring(0, 16) + '...' : name
+      },
+      tooltip: { show: true } 
     },
     series: [
       {
-        name: 'Storage Size',
+        name: valueKey === 'rows' ? 'Row Count' : 'Storage Size',
         type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['35%', '50%'], // Move pie chart to left
-        avoidLabelOverlap: false,
+        radius: ['35%', '65%'],
+        center: ['70%', '50%'], 
+        avoidLabelOverlap: true,
         itemStyle: {
-          borderRadius: 10,
+          borderRadius: 5,
           borderColor: '#fff',
           borderWidth: 2
         },
         label: { show: false, position: 'center' },
         emphasis: {
-          label: { show: true, fontSize: '14', fontWeight: 'bold' }
+          label: { show: true, fontSize: '12', fontWeight: 'bold' }
         },
         labelLine: { show: false },
-        data: sorted.map(t => ({ value: t.sizeBytes, name: t.name }))
+        data: sorted.map(t => ({ value: t.sortValue, name: t.name }))
       }
     ]
   }
@@ -878,10 +1020,17 @@ const openTab = (data: any) => {
   const tabName = data.id
   const existing = tabs.value.find(t => t.name === tabName)
   
+  // Always switch to the target connection first
   activeConnectionId.value = data.connId
+  // Then activate the tab within that connection
   connActiveTabs[data.connId] = tabName
   
   if (existing) {
+    // If tab exists but has no data (and not loading), refresh it
+    // This solves the "manual refresh" issue if a previous load failed
+    if (!existing.loading && (!existing.data || existing.data.length === 0)) {
+       refreshTab(existing)
+    }
     return
   }
   
@@ -1161,6 +1310,10 @@ const saveConnection = async () => {
     const payload: any = { ...form }
     payload.extra_config = {}
     if (form.type === 'redis') payload.extra_config.mode = formMode.value
+    if (form.type === 'mysql' && useSSL.value) {
+       payload.extra_config.ssl = true
+    }
+
     await dbApi.createConnection(payload)
     ElMessage.success('Connection saved')
     showAddDialog.value = false
@@ -1176,7 +1329,7 @@ const saveConnection = async () => {
 <style scoped>
 .db-manager-layout {
   display: flex;
-  height: calc(100vh - 80px);
+  height: calc(100vh - 130px); /* Adjusted for AppLayout header (70px) + padding (48px) */
   background-color: #f0f2f5;
   padding: 12px;
   gap: 12px;
@@ -1299,36 +1452,38 @@ const saveConnection = async () => {
   background-color: transparent !important; /* Reset default background */
 }
 
-/* Specific Active Backgrounds for Connections */
-/* MySQL */
-.custom-tree-item.is-active:has(.mysql) {
-  background-color: #E6F7FF !important;
-  color: #00758F !important;
-  border-right: 3px solid #00758F;
+/* 
+   Standardized High-Contrast Active State for ALL Connections and Tables
+   Requirements: Transparent background (white/gray), Blue Underline, Bold Text
+*/
+
+.custom-tree-item.is-active {
+  background-color: #f0f7ff !important; /* Light blue background for visibility */
+  color: #1890ff !important; /* Standard Blue */
+  font-weight: 700 !important;
+  border-right: 3px solid #1890ff !important; /* Blue indicator line */
 }
 
-/* Redis */
-.custom-tree-item.is-active:has(.redis) {
-  background-color: #FFF1F0 !important;
-  color: #DC382D !important;
-  border-right: 3px solid #DC382D;
+/* Override specific connection colors if needed, OR keep them uniform as requested */
+/* User requested "Standardize Styles" and "Blue line for all" */
+/* So we remove the specific color overrides for is-active */
+
+.custom-tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #606266;
 }
 
-/* Mongo */
-.custom-tree-item.is-active:has(.mongo) {
-  background-color: #F6FFED !important;
-  color: #47A248 !important;
-  border-right: 3px solid #47A248;
+.custom-tree-item.is-active .custom-tree-label {
+    color: #1890ff !important;
+    font-weight: 700 !important;
 }
 
-/* RabbitMQ */
-.custom-tree-item.is-active:has(.rabbitmq) {
-  background-color: #FFF7E6 !important;
-  color: #FF6600 !important;
-  border-right: 3px solid #FF6600;
-}
-
-/* Right Tab Icons */
+/* Badge Styling */
 .conn-tab-icon {
   width: 20px;
   height: 20px;
@@ -1457,6 +1612,19 @@ const saveConnection = async () => {
   align-items: center;
   gap: 8px;
   padding: 0 4px;
+  opacity: 0.7; /* Default dim */
+  transition: opacity 0.2s, font-weight 0.2s;
+}
+
+.conn-tab-label.is-conn-active {
+  opacity: 1;
+}
+
+.conn-tab-label.is-conn-active .conn-name {
+  font-weight: 800; /* Bolder text for active */
+  color: #000;
+  text-decoration: underline; /* Underline for emphasis */
+  text-underline-offset: 4px;
 }
 
 .conn-name {
@@ -1518,6 +1686,26 @@ const saveConnection = async () => {
 .tab-conn-indicator.redis { background-color: #DC382D; }
 .tab-conn-indicator.mongo { background-color: #47A248; }
 .tab-conn-indicator.rabbitmq { background-color: #FF6600; }
+
+.tab-conn-badge {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  padding: 2px;
+}
+.tab-conn-badge img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.tab-conn-badge.mysql { background-color: #E6F7FF; border: 1px solid rgba(0, 117, 143, 0.2); }
+.tab-conn-badge.redis { background-color: #FFF1F0; border: 1px solid rgba(220, 56, 45, 0.2); }
+.tab-conn-badge.mongo { background-color: #F6FFED; border: 1px solid rgba(71, 162, 72, 0.2); }
+.tab-conn-badge.rabbitmq { background-color: #FFF7E6; border: 1px solid rgba(255, 102, 0, 0.2); }
 
 .tab-icon-wrapper {
   display: flex;
@@ -1699,7 +1887,7 @@ const saveConnection = async () => {
 .charts-row {
   display: flex;
   gap: 16px;
-  height: 320px;
+  height: 340px; /* Slightly taller */
   flex-shrink: 0;
 }
 
@@ -1713,8 +1901,18 @@ const saveConnection = async () => {
 
 .chart-card :deep(.el-card__body) {
   flex: 1;
-  padding: 12px;
+  padding: 0; /* Remove padding to let chart fill */
   min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-container {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 12px;
 }
 
 .chart-title {
@@ -1779,16 +1977,57 @@ const saveConnection = async () => {
 .data-view-container {
   flex: 1;
   display: flex;
-  overflow: hidden; /* Important for scroll */
+  flex-direction: column; /* Changed to column to stack table and pagination if needed, but wait, layout is row for details */
+  /* Actually, the layout is: data-view-container { table-wrapper (flex 1) + details-panel } */
+  /* The pagination is OUTSIDE data-view-container in the HTML structure above? No, it is INSIDE table-view but AFTER data-view-container? */
+  /* Let's check the HTML structure in the file content I read */
+  overflow: hidden;
+  min-height: 0;
+  position: relative; /* For absolute positioning if needed */
+}
+
+/* 
+   HTML Structure based on read:
+   <div class="tab-view table-view">
+      <div class="view-toolbar">...</div>
+      <div class="data-view-container">
+         <div class="table-wrapper">...</div>
+         <div class="details-panel">...</div>
+      </div>
+      <div class="pagination-bar">...</div>
+   </div>
+*/
+
+/* So Pagination IS at the bottom of .table-view, outside .data-view-container */
+/* The issue "moving with table" implies table height changes. */
+/* .table-view needs to be height: 100% */
+
+.tab-view {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Ensure no scroll on the view itself */
 }
 
 .table-wrapper {
   flex: 1;
-  overflow: hidden;
+  overflow: auto; /* Allow table to scroll internally */
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0; /* Critical for nested flex scroll */
 }
+
+.pagination-bar {
+  padding: 8px 12px;
+  border-top: 1px solid #ebeef5;
+  display: flex;
+  justify-content: flex-end;
+  background: #fafafa;
+  flex-shrink: 0; /* Never shrink */
+  z-index: 5; /* Ensure above content */
+}
+
 
 /* Details Panel */
 .details-panel {
@@ -1800,6 +2039,8 @@ const saveConnection = async () => {
   transition: width 0.3s;
   box-shadow: -2px 0 8px rgba(0,0,0,0.05);
   z-index: 10;
+  height: 100%; /* Ensure it matches parent height to enable internal scrolling */
+  overflow: hidden;
 }
 
 .details-header {
@@ -1810,6 +2051,7 @@ const saveConnection = async () => {
   justify-content: space-between;
   padding: 0 12px;
   background: #fcfcfc;
+  flex-shrink: 0; /* Prevent header from shrinking */
 }
 
 .details-title {
@@ -1822,6 +2064,7 @@ const saveConnection = async () => {
   flex: 1;
   overflow-y: auto;
   padding: 0;
+  min-height: 0; /* Important for flex child scroll */
 }
 
 .details-list {
@@ -1858,5 +2101,30 @@ const saveConnection = async () => {
   height: 16px;
   background: #dcdfe6;
   margin: 0 8px;
+}
+
+/* Breadcrumb Styling */
+.context-breadcrumb {
+  padding: 6px 12px;
+  background: #fdfdfd;
+  border-bottom: 1px solid #f0f2f5;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.breadcrumb-separator {
+  margin: 0 6px;
+  color: #c0c4cc;
+}
+
+.breadcrumb-current {
+  color: #606266;
+  font-weight: 500;
+}
+
+.breadcrumb-active {
+  color: #303133;
+  font-weight: 700;
 }
 </style>
