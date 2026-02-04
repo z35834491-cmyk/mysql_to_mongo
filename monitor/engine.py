@@ -248,10 +248,26 @@ class MonitorEngine:
 
         def _strip_leading_timestamp(s: str) -> str:
             try:
-                if len(s) >= 21 and s[4] == '-' and s[7] == '-' and ('T' in s[:12]):
-                    parts = s.split(' ', 1)
+                payload = s.lstrip()
+                for prefix in ('[ERROR]', '[WARN]', '[INFO]', '[DEBUG]', '[TRACE]', '[FATAL]'):
+                    if payload.startswith(prefix):
+                        payload = payload[len(prefix):].lstrip()
+                        break
+
+                if len(payload) >= 21 and payload[4] == '-' and payload[7] == '-' and ('T' in payload[:12]):
+                    parts = payload.split(None, 1)
                     if len(parts) == 2 and parts[0].count(':') >= 2:
                         return parts[1]
+            except Exception:
+                pass
+            return payload if 'payload' in locals() else s
+
+        def _strip_level_prefix(s: str) -> str:
+            try:
+                payload = s.lstrip()
+                for prefix in ('[ERROR]', '[WARN]', '[INFO]', '[DEBUG]', '[TRACE]', '[FATAL]'):
+                    if payload.startswith(prefix):
+                        return payload[len(prefix):].lstrip()
             except Exception:
                 pass
             return s
@@ -304,6 +320,21 @@ class MonitorEngine:
                     continue
 
                 line_lower = line.lower()
+                is_stack_line = _is_stack_line(line)
+
+                if stack_capture_active and is_stack_line:
+                    error_lines.append(line.strip())
+                    line_for_write = _strip_level_prefix(line)
+                    error_file_handle.write(f"[STACK] {line_for_write}")
+                    if not line.endswith('\n'):
+                        error_file_handle.write('\n')
+
+                    context_buffer.append(line)
+                    if len(context_buffer) > CONTEXT_LINES:
+                        context_buffer.pop(0)
+
+                    error_file_handle.flush()
+                    continue
                 
                 # Simple counting
                 if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
@@ -402,6 +433,10 @@ class MonitorEngine:
                              alerts = [a for a in alerts if a['msg'].find(line) == -1]
                              is_alert = False # Reset flag so it doesn't prefix [ALERT] in log file
 
+                if stack_capture_active and not is_stack_line:
+                    stack_capture_active = False
+                    after_context_counter = CONTEXT_LINES
+
                 should_trigger_context = is_alert or is_error or is_record
                 capture_active = stack_capture_active or after_context_counter > 0
 
@@ -422,7 +457,8 @@ class MonitorEngine:
                         prefix += "[ERROR]"
                     if is_record:
                         prefix += "[RECORD]"
-                    error_file_handle.write(f"{prefix} {line}")
+                    line_for_write = _strip_level_prefix(line)
+                    error_file_handle.write(f"{prefix} {line_for_write}")
                     if not line.endswith('\n'):
                         error_file_handle.write('\n')
 
@@ -430,16 +466,6 @@ class MonitorEngine:
                     after_context_counter = 0
 
                 else:
-                    if stack_capture_active:
-                        if _is_stack_line(line):
-                            error_lines.append(line.strip())
-                            error_file_handle.write(f"[STACK] {line}")
-                            if not line.endswith('\n'):
-                                error_file_handle.write('\n')
-                        else:
-                            stack_capture_active = False
-                            after_context_counter = CONTEXT_LINES
-
                     if not stack_capture_active and after_context_counter > 0:
                         error_file_handle.write(f"[CTX] {line}")
                         if not line.endswith('\n'):
