@@ -279,7 +279,7 @@ class MonitorEngine:
                 return True
             if t.startswith('at '):
                 return True
-            if t.startswith('Caused by:') or t.startswith('Suppressed:'):
+            if t.startswith('Caused by') or t.startswith('Suppressed:'):
                 return True
             if t.startswith('...') and t.endswith('more'):
                 return True
@@ -290,6 +290,11 @@ class MonitorEngine:
             if t.startswith('goroutine ') or t.startswith('panic:'):
                 return True
             if t.startswith('File "') or t.startswith('File '):
+                return True
+            # Java/Spring/MyBatis specific patterns
+            if t.startswith('###') or t.startswith(';'):
+                return True
+            if 'nested exception is ' in t:
                 return True
             return False
         
@@ -324,9 +329,10 @@ class MonitorEngine:
 
                 if stack_capture_active and is_stack_line:
                     error_lines.append(line.strip())
-                    line_for_write = _strip_level_prefix(line)
+                    # Use _strip_leading_timestamp for cleaner stack trace in log file
+                    line_for_write = _strip_leading_timestamp(line)
                     error_file_handle.write(f"[STACK] {line_for_write}")
-                    if not line.endswith('\n'):
+                    if not line_for_write.endswith('\n'):
                         error_file_handle.write('\n')
 
                     context_buffer.append(line)
