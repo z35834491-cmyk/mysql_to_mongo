@@ -588,6 +588,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, computed, nextTick } from 'vue'
 import { dbApi, type DBConnection } from '@/api/db_manager'
+import { useSystemStore } from '@/stores/system'
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { PieChart, BarChart } from "echarts/charts";
