@@ -16,7 +16,7 @@
             </el-button>
           </el-tooltip>
           <el-tooltip content="New Connection" placement="bottom">
-            <el-button type="primary" text circle size="small" @click="showAddDialog = true">
+            <el-button type="primary" text circle size="small" @click="handleNewConnectionClick">
               <el-icon><Plus /></el-icon>
             </el-button>
           </el-tooltip>
@@ -614,6 +614,13 @@ use([
 
 
 // --- State ---
+const systemStore = useSystemStore()
+const isReadonly = computed(() => {
+  const u = systemStore.currentUser
+  if (!u) return false
+  if (u.is_superuser || u.is_staff) return false
+  return !(u.permissions || []).includes('db_manager.change_databaseconnection')
+})
 const showAddDialog = ref(false)
 const showQuerySelector = ref(false)
 const testing = ref(false)
@@ -690,21 +697,28 @@ const defaultProps = {
 
 // --- Persistence ---
 watch([tabs, activeConnectionId, connActiveTabs], () => {
+  const userId = systemStore.currentUser?.id
+  if (!userId) return
   try {
     const tabsToSave = tabs.value.map((t: any) => ({
       ...t,
-      data: t.data.length > 500 ? [] : t.data, // Limit saved data
+      data: t.data.length > 500 ? [] : t.data,
       loading: false
     }))
-    localStorage.setItem('db_manager_tabs_v4', JSON.stringify(tabsToSave))
-    localStorage.setItem('db_manager_active_conn_v4', activeConnectionId.value)
-    localStorage.setItem('db_manager_conn_active_tabs_v4', JSON.stringify(connActiveTabs))
-  } catch (e) {
-    // Ignore storage errors
-  }
+    localStorage.setItem(`db_manager_tabs_v4_${userId}`, JSON.stringify(tabsToSave))
+    localStorage.setItem(`db_manager_active_conn_v4_${userId}`, activeConnectionId.value)
+    localStorage.setItem(`db_manager_conn_active_tabs_v4_${userId}`, JSON.stringify(connActiveTabs))
+  } catch (e) {}
 }, { deep: true })
 
 // --- Methods ---
+const handleNewConnectionClick = () => {
+  if (isReadonly.value) {
+    ElMessage.warning('只读账号无新增连接权限')
+    return
+  }
+  showAddDialog.value = true
+}
 
 const loadConnections = async () => {
   try {
@@ -734,21 +748,21 @@ const loadConnections = async () => {
 }
 
 const restoreTabs = () => {
-  const savedTabs = localStorage.getItem('db_manager_tabs_v4')
+  const userId = systemStore.currentUser?.id
+  const savedTabs = localStorage.getItem(userId ? `db_manager_tabs_v4_${userId}` : 'db_manager_tabs_v4') || localStorage.getItem('db_manager_tabs_v4')
   if (savedTabs) {
     try {
       tabs.value = JSON.parse(savedTabs)
-      // Enforce minimum pageSize of 50 for legacy tabs
       tabs.value.forEach(t => {
           if (!t.pageSize || t.pageSize < 50) t.pageSize = 50
       })
     } catch {}
   }
   
-  const savedActiveConn = localStorage.getItem('db_manager_active_conn_v4')
+  const savedActiveConn = localStorage.getItem(userId ? `db_manager_active_conn_v4_${userId}` : 'db_manager_active_conn_v4') || localStorage.getItem('db_manager_active_conn_v4')
   if (savedActiveConn) activeConnectionId.value = savedActiveConn
   
-  const savedConnTabs = localStorage.getItem('db_manager_conn_active_tabs_v4')
+  const savedConnTabs = localStorage.getItem(userId ? `db_manager_conn_active_tabs_v4_${userId}` : 'db_manager_conn_active_tabs_v4') || localStorage.getItem('db_manager_conn_active_tabs_v4')
   if (savedConnTabs) {
     try {
       Object.assign(connActiveTabs, JSON.parse(savedConnTabs))
@@ -767,8 +781,11 @@ const restoreTabs = () => {
   })
 }
 
-onMounted(() => {
-  loadConnections()
+onMounted(async () => {
+  if (!systemStore.currentUser) {
+    await systemStore.fetchCurrentUser()
+  }
+  await loadConnections()
 })
 
 const loadNode = async (node: any, resolve: any) => {
@@ -1106,6 +1123,10 @@ const getSizeChartOption = (data: any[], valueKey: string = 'size') => {
 }
 
 const handleDeleteConn = async (data: any) => {
+  if (isReadonly.value) {
+    ElMessage.warning('只读账号无删除连接权限')
+    return
+  }
   try {
     await ElMessageBox.confirm('Are you sure you want to delete this connection?', 'Warning', {
       confirmButtonText: 'Delete',
@@ -1242,6 +1263,24 @@ const runQuery = async (tab: any) => {
   if (!tab.queryInput) {
     ElMessage.warning('Please enter a query')
     return
+  }
+  if (isReadonly.value) {
+    const text = String(tab.queryInput || '').trim().toUpperCase()
+    if (tab.dbType === 'mysql') {
+      const allowed = ['SELECT', 'SHOW', 'EXPLAIN', 'DESC', 'DESCRIBE']
+      const starts = text.split(/\s+/)[0] || ''
+      if (!allowed.includes(starts)) {
+        ElMessage.error('只读账号禁止执行写操作')
+        return
+      }
+    } else if (tab.dbType && tab.dbType.includes('redis')) {
+      const cmd = text.split(/\s+/)[0] || ''
+      const safe = ['GET','HGET','HGETALL','HMGET','LINDEX','LLEN','LRANGE','SCARD','SISMEMBER','SMEMBERS','SRANDMEMBER','ZCARD','ZCOUNT','ZRANGE','ZRANK','ZSCORE','TYPE','TTL','PTTL','EXISTS','STRLEN','KEYS','SCAN','HSCAN','SSCAN','ZSCAN','INFO','DBSIZE','PING','ECHO']
+      if (!safe.includes(cmd)) {
+        ElMessage.error('只读账号禁止执行写操作')
+        return
+      }
+    }
   }
   
   tab.loading = true
@@ -1431,6 +1470,10 @@ const testConnection = async () => {
 }
 
 const saveConnection = async () => {
+  if (isReadonly.value) {
+    ElMessage.warning('只读账号无保存连接权限')
+    return
+  }
   saving.value = true
   try {
     const payload: any = { ...form }

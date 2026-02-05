@@ -125,8 +125,8 @@ router.beforeEach(async (to, from, next) => {
       if (systemStore.hasPermission('view_inspection')) return next('/system')
       if (systemStore.hasPermission('view_dashboard')) return next('/dashboard')
       
-      // No permissions found
-      return next('/login')
+      // Fallback to a non-permission page for authenticated users
+      return next('/database-manager')
     }
   }
   next()
