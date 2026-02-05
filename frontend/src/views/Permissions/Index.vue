@@ -117,6 +117,15 @@
         <el-form-item label="Password" required v-if="!editMode">
           <el-input v-model="userForm.password" type="password" show-password />
         </el-form-item>
+        <el-form-item label="Module Permissions (Readonly)" v-if="!editMode">
+          <el-checkbox-group v-model="userCreatePerms">
+            <el-row :gutter="12">
+              <el-col :span="12" v-for="p in viewOnlyPermissions" :key="p.codename">
+                <el-checkbox :label="p.codename">{{ p.name }}</el-checkbox>
+              </el-col>
+            </el-row>
+          </el-checkbox-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">Cancel</el-button>
@@ -163,6 +172,9 @@ const pageSize = ref(10)
 const users = ref<any[]>([])
 const roles = ref<any[]>([])
 const allPermissions = ref<any[]>([])
+const viewOnlyPermissions = computed(() => {
+  return (allPermissions.value || []).filter((p: any) => String(p.codename || '').startsWith('view_'))
+})
 
 const dialogVisible = ref(false)
 const editMode = ref(false)
@@ -172,6 +184,7 @@ const userForm = ref({
   password: '',
   groups: [] as string[]
 })
+  const userCreatePerms = ref<string[]>([])
 
 const roleDialogVisible = ref(false)
 const roleForm = ref({
@@ -221,6 +234,7 @@ const getGroupTagType = (group: string) => {
 const handleAddUser = () => {
   editMode.value = false
   userForm.value = { id: null, username: '', password: '', groups: [] }
+    userCreatePerms.value = []
   dialogVisible.value = true
 }
 
@@ -236,6 +250,11 @@ const submitUserForm = async () => {
       await request.put(`/users/${userForm.value.id}`, userForm.value)
       ElMessage.success('Permissions updated')
     } else {
+        if (userCreatePerms.value && userCreatePerms.value.length > 0) {
+          const roleName = `Readonly:${userForm.value.username}`
+          await request.post('/roles', { name: roleName, permissions: userCreatePerms.value })
+          userForm.value.groups = [...(userForm.value.groups || []), roleName]
+        }
       await request.post('/users', userForm.value)
       ElMessage.success('User created')
     }
