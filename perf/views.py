@@ -839,15 +839,22 @@ def search_traces(request):
     if not cluster.tempo_url:
         return Response({"items": []})
 
-    url = cluster.tempo_url.rstrip("/") + f"/api/search?limit={limit}"
+    base = cluster.tempo_url.rstrip("/")
+    url = base + f"/api/search?limit={limit}"
     if service_name:
-        url += f"&tags=service.name={service_name}"
+        url = base + f"/api/search?limit={limit}&tags=service.name={service_name}"
     try:
         resp = requests.get(url, timeout=10)
-        if not resp.ok:
-            return Response({"items": []})
-        data = resp.json()
-        traces = data.get("traces") or []
+        traces = []
+        if resp.ok:
+            data = resp.json()
+            traces = data.get("traces") or []
+        # Fallback: if filtered search got nothing, try unfiltered recent traces
+        if (not traces) and service_name:
+            resp2 = requests.get(base + f"/api/search?limit={limit}", timeout=10)
+            if resp2.ok:
+                data2 = resp2.json()
+                traces = data2.get("traces") or []
         items = []
         for t in traces:
             items.append({

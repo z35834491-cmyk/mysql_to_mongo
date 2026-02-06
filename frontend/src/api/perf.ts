@@ -65,6 +65,6 @@ export const perfApi = {
 
   listHpa: (clusterId: number, namespace: string) => request.get<{ items: any[] }>('/perf/hpa', { params: { cluster_id: clusterId, namespace } }),
   applyHpa: (data: any) => request.post('/perf/hpa/apply', data),
-  setEbpfSampling: (clusterId: number, ratio: number, namespace?: string) =>
-    request.post('/perf/ebpf/sampling', { cluster_id: clusterId, ratio, namespace }),
+  setEbpfSampling: (clusterId: number, ratio: number, namespace?: string, daemonset?: string) =>
+    request.post('/perf/ebpf/sampling', { cluster_id: clusterId, ratio, namespace, daemonset }),
 }

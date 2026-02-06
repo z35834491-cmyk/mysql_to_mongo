@@ -90,6 +90,10 @@
                 <el-form-item label="CPU Query">
                   <el-input v-model="capForm.cpu_query" type="textarea" :rows="5" placeholder="PromQL for CPU cores usage (sum(rate(container_cpu_usage_seconds_total...)))" />
                 </el-form-item>
+                <el-form-item>
+                  <el-button @click="saveCapTemplate" :disabled="!capForm.cluster_id || !capForm.service_name">Save Template</el-button>
+                  <el-button @click="loadCapTemplate" :disabled="!capForm.cluster_id || !capForm.service_name">Load Saved</el-button>
+                </el-form-item>
               </el-form>
             </div>
           </div>
@@ -144,6 +148,12 @@
                 <el-option v-for="s in traceServices" :key="s" :label="s" :value="s" />
               </el-select>
             </el-form-item>
+            <el-form-item label="Namespace">
+              <el-input v-model="traceForm.sampling_ns" placeholder="trace-system" />
+            </el-form-item>
+            <el-form-item label="DaemonSet">
+              <el-input v-model="traceForm.sampling_ds" placeholder="beyla" />
+            </el-form-item>
             <el-form-item label="Sampling">
               <div style="display:flex;gap:8px">
                 <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
@@ -172,6 +182,7 @@
               <el-button type="primary" :loading="loadingTrace" @click="fetchTrace">Fetch</el-button>
             </el-form-item>
           </el-form>
+          <div v-if="traceError" class="error-bar">{{ traceError }}</div>
           <div v-if="traceChartOption" class="trace-chart">
             <v-chart :option="traceChartOption" autoresize />
           </div>
@@ -335,7 +346,7 @@ const loadingReports = ref(false)
 const reportDialogVisible = ref(false)
 const activeReport = ref<LoadTestReport | null>(null)
 
-const traceForm = ref<any>({ cluster_id: undefined, trace_id: '' })
+const traceForm = ref<any>({ cluster_id: undefined, trace_id: '', sampling_ns: 'trace-system', sampling_ds: 'beyla' })
 const loadingTrace = ref(false)
 const traceJson = ref('')
 const traceChartOption = ref<any>(null)
@@ -344,12 +355,14 @@ const recentTraces = ref<any[]>([])
 const loadingRecentTraces = ref(false)
 const traceServices = ref<string[]>([])
 const samplingPending = ref(false)
+const traceError = ref<string>('')
 
 const onSelectTraceCluster = () => {
   recentTraces.value = []
   traceForm.value.trace_id = ''
   traceForm.value.service_name = ''
   traceServices.value = []
+  traceError.value = ''
   // Wait for service selection to fetch recent traces
 }
 
@@ -357,7 +370,12 @@ const toggleSampling = async (ratio: number) => {
   if (!traceForm.value.cluster_id) return ElMessage.error('Select cluster')
   samplingPending.value = true
   try {
-    await perfApi.setEbpfSampling(Number(traceForm.value.cluster_id), Number(ratio))
+    await perfApi.setEbpfSampling(
+      Number(traceForm.value.cluster_id),
+      Number(ratio),
+      String(traceForm.value.sampling_ns || 'trace-system'),
+      String(traceForm.value.sampling_ds || 'beyla'),
+    )
     ElMessage.success(`Sampling set to ${Math.round(ratio * 100)}%`)
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.error || 'Sampling update failed')
@@ -386,8 +404,14 @@ const onSelectTraceService = async () => {
       traceForm.value.trace_id = recentTraces.value[0].traceID
       await fetchTrace()
     }
+    if (!recentTraces.value.length) {
+      traceError.value = 'No traces found for this service. Showing empty list.'
+    } else {
+      traceError.value = ''
+    }
   } catch {
     recentTraces.value = []
+    traceError.value = 'Failed to search traces (Tempo unreachable or misconfigured).'
   } finally {
     loadingRecentTraces.value = false
   }
@@ -398,8 +422,10 @@ const fetchRecentTraces = async () => {
   try {
     const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id), String(traceForm.value.service_name))
     recentTraces.value = res.items || []
+    traceError.value = recentTraces.value.length ? '' : 'No traces found.'
   } catch {
     // ignore
+    traceError.value = 'Failed to search traces.'
   } finally {
     loadingRecentTraces.value = false
   }
@@ -477,6 +503,8 @@ const onSelectService = async () => {
   templates.value = []
   selectedTemplateId.value = ''
   if (!capForm.value.cluster_id || !capForm.value.service_name) return
+  // Try load saved template first
+  loadCapTemplate()
   try {
     const res = await perfApi.listPromqlTemplates(
       Number(capForm.value.cluster_id),
@@ -588,10 +616,12 @@ const fetchTrace = async () => {
     traceJson.value = JSON.stringify(data, null, 2)
     traceChartOption.value = buildTraceWaterfallOption(data)
     traceInsights.value = await perfApi.getTraceInsights(traceForm.value.cluster_id, traceForm.value.trace_id)
+    traceError.value = ''
   } catch (e: any) {
     traceChartOption.value = null
     traceInsights.value = null
     traceJson.value = e?.response?.data?.detail || e?.response?.data?.error || 'Failed'
+    traceError.value = traceJson.value
   } finally {
     loadingTrace.value = false
   }
@@ -684,6 +714,36 @@ const setDefaultCapTimeRange = () => {
   const end = new Date()
   const start = new Date(end.getTime() - 30 * 60 * 1000)
   capTimeRange.value = [start, end]
+}
+
+const capTemplateKey = () => {
+  return `cap_template:${String(capForm.value.cluster_id)}:${String(capForm.value.namespace || 'default')}:${String(capForm.value.service_name || '')}`
+}
+const saveCapTemplate = () => {
+  try {
+    const key = capTemplateKey()
+    const payload = {
+      qps_query: String(capForm.value.qps_query || ''),
+      cpu_query: String(capForm.value.cpu_query || ''),
+      updated_at: new Date().toISOString(),
+    }
+    localStorage.setItem(key, JSON.stringify(payload))
+    ElMessage.success('Saved')
+  } catch {
+    ElMessage.error('Save failed')
+  }
+}
+const loadCapTemplate = () => {
+  try {
+    const key = capTemplateKey()
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const payload = JSON.parse(raw)
+    if (payload?.qps_query) capForm.value.qps_query = payload.qps_query
+    if (payload?.cpu_query) capForm.value.cpu_query = payload.cpu_query
+  } catch {
+    // ignore
+  }
 }
 
 const normalizeAttrs = (attrs: any): Record<string, any> => {

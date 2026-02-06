@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: perf-editor
+  namespace: trace-system
+rules:
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: perf-editor-binding
+  namespace: trace-system
+subjects:
+- kind: ServiceAccount
+  name: perf-reader
+  namespace: default
+roleRef:
+  kind: Role
+  name: perf-editor
+  apiGroup: rbac.authorization.k8s.io
