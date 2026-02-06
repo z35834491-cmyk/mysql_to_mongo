@@ -864,31 +864,31 @@ def search_traces(request):
     except ClusterConfig.DoesNotExist:
         return Response({"error": "cluster not found"}, status=404)
     if not cluster.tempo_url:
-        return Response({"items": []})
+        return Response({"error": "tempo_url missing in cluster config"}, status=400)
 
     base = cluster.tempo_url.rstrip("/")
     url = base + f"/api/search?limit={limit}"
+    urls = [url]
     if service_name:
-        url = base + f"/api/search?limit={limit}&tags=service.name={service_name}"
+        urls = [
+            base + f"/api/search?limit={limit}&tags=service.name={service_name}",
+            base + f"/api/search?limit={limit}&tags=rootServiceName={service_name}",
+        ]
     try:
-        logging.getLogger("perf").info(f"tempo_search url={url} cluster_id={cluster_id} service={service_name}")
-        resp = requests.get(url, timeout=10)
         traces = []
-        if resp.ok:
+        last_err = None
+        for u in urls:
+            logging.getLogger("perf").info(f"tempo_search url={u} cluster_id={cluster_id} service={service_name}")
+            resp = requests.get(u, timeout=10)
+            if not resp.ok:
+                last_err = {"error": f"tempo {resp.status_code}", "detail": (resp.text or "")[:2000]}
+                continue
             data = resp.json()
             traces = data.get("traces") or []
-        # Fallback: if filtered search got nothing, try unfiltered recent traces
-        if (not traces) and service_name:
-            # Try rootServiceName filter
-            resp1 = requests.get(base + f"/api/search?limit={limit}&tags=rootServiceName={service_name}", timeout=10)
-            if resp1.ok:
-                data1 = resp1.json()
-                traces = data1.get("traces") or []
-        if (not traces) and service_name:
-            resp2 = requests.get(base + f"/api/search?limit={limit}", timeout=10)
-            if resp2.ok:
-                data2 = resp2.json()
-                traces = data2.get("traces") or []
+            if traces:
+                break
+        if last_err and not traces:
+            return Response(last_err, status=502)
         items = []
         for t in traces:
             items.append({
@@ -902,7 +902,7 @@ def search_traces(request):
         return Response({"items": items})
     except Exception as e:
         logging.getLogger("perf").error(f"tempo_search error={e}")
-        return Response({"items": []})
+        return Response({"error": str(e)}, status=502)
 
 @api_view(["GET"])
 @permission_classes([HasRolePermission])

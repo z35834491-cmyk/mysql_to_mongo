@@ -194,11 +194,12 @@
 
             <div class="trace-right">
               <el-tabs v-model="traceView">
-                <el-tab-pane label="Service Map" name="map">
+                <el-tab-pane label="服务链路图" name="map">
                   <div v-if="traceMapOption" class="trace-map">
                     <v-chart :option="traceMapOption" autoresize />
                   </div>
-                  <div v-else class="trace-empty">No inter-service calls found for this trace.</div>
+                  <div v-else class="trace-empty">{{ traceMapHint || '当前 Trace 无法生成服务链路图。' }}</div>
+                  <div v-if="traceMapHint && traceMapOption" class="trace-hint">{{ traceMapHint }}</div>
                   <el-table v-if="traceEdges.length" :data="traceEdges" style="width: 100%; margin-top: 12px">
                     <el-table-column prop="from" label="From" min-width="160" />
                     <el-table-column prop="to" label="To" min-width="160" />
@@ -207,14 +208,14 @@
                   </el-table>
                 </el-tab-pane>
 
-                <el-tab-pane label="Waterfall" name="waterfall">
+                <el-tab-pane label="瀑布图" name="waterfall">
                   <div v-if="traceChartOption" class="trace-chart">
                     <v-chart :option="traceChartOption" autoresize />
                   </div>
-                  <div v-else class="trace-empty">No spans to render.</div>
+                  <div v-else class="trace-empty">当前 Trace 没有可渲染的 spans。</div>
                 </el-tab-pane>
 
-                <el-tab-pane label="Insights" name="insights">
+                <el-tab-pane label="洞察" name="insights">
                   <div v-if="traceInsights" class="trace-insights">
                     <el-descriptions :column="2" border>
                       <el-descriptions-item label="Duration (ms)">{{ traceInsights.trace?.duration_ms }}</el-descriptions-item>
@@ -231,10 +232,10 @@
                       <el-table-column prop="mem_mb_max" label="Mem Max(MB)" width="130" />
                     </el-table>
                   </div>
-                  <div v-else class="trace-empty">No insights.</div>
+                  <div v-else class="trace-empty">暂无洞察信息。</div>
                 </el-tab-pane>
 
-                <el-tab-pane label="Raw" name="raw">
+                <el-tab-pane label="原始数据" name="raw">
                   <pre class="json">{{ traceJson }}</pre>
                 </el-tab-pane>
               </el-tabs>
@@ -389,6 +390,7 @@ const traceJson = ref('')
 const traceChartOption = ref<any>(null)
 const traceMapOption = ref<any>(null)
 const traceEdges = ref<any[]>([])
+const traceMapHint = ref<string>('')
 const traceInsights = ref<any>(null)
 const recentTraces = ref<any[]>([])
 const loadingRecentTraces = ref(false)
@@ -466,18 +468,10 @@ const onSelectTraceService = async () => {
   try {
     const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id), String(traceForm.value.service_name))
     recentTraces.value = res.items || []
-    if (recentTraces.value.length > 0) {
-      traceForm.value.trace_id = recentTraces.value[0].traceID
-      await fetchTrace()
-    }
-    if (!recentTraces.value.length) {
-      traceError.value = 'No traces found for this service. Showing empty list.'
-    } else {
-      traceError.value = ''
-    }
+    traceError.value = recentTraces.value.length ? '' : '该服务当前没有可用 Trace（可点 List Recent 查看最近 Trace，或先产生一次真实请求）。'
   } catch {
     recentTraces.value = []
-    traceError.value = 'Failed to search traces (Tempo unreachable or misconfigured).'
+    traceError.value = '查询 Trace 失败（Tempo 不可用或查询接口报错）。'
   } finally {
     loadingRecentTraces.value = false
   }
@@ -690,12 +684,14 @@ const fetchTrace = async () => {
     const mapRes = buildTraceServiceMap(data)
     traceMapOption.value = mapRes?.option || null
     traceEdges.value = mapRes?.edges || []
+    traceMapHint.value = mapRes?.hint || ''
     traceInsights.value = await perfApi.getTraceInsights(traceForm.value.cluster_id, traceForm.value.trace_id)
     traceError.value = ''
   } catch (e: any) {
     traceChartOption.value = null
     traceMapOption.value = null
     traceEdges.value = []
+    traceMapHint.value = ''
     traceInsights.value = null
     traceJson.value = e?.response?.data?.detail || e?.response?.data?.error || 'Failed'
     traceError.value = traceJson.value
@@ -847,7 +843,7 @@ const extractTempoSpans = (data: any) => {
       const ils = b?.instrumentationLibrarySpans || b?.scopeSpans || []
       for (const s of ils) {
         const sl = s?.spans || []
-        for (const sp of sl) spans.push({ ...sp, __service: service })
+        for (const sp of sl) spans.push({ ...sp, __service: service, __attrs: normalizeAttrs(sp?.attributes || []) })
       }
     }
   }
@@ -859,7 +855,7 @@ const extractTempoSpans = (data: any) => {
       const scopeSpans = rs?.scopeSpans || rs?.instrumentationLibrarySpans || []
       for (const ss of scopeSpans) {
         const sl = ss?.spans || []
-        for (const sp of sl) spans.push({ ...sp, __service: service })
+        for (const sp of sl) spans.push({ ...sp, __service: service, __attrs: normalizeAttrs(sp?.attributes || []) })
       }
     }
   }
@@ -957,58 +953,176 @@ const buildTraceServiceMap = (data: any) => {
     idToSpan[id] = sp
   }
 
-  const edgeMap: Record<string, { from: string; to: string; count: number; totalMs: number }> = {}
+  const hash = (s: string) => {
+    let h = 0
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+    return h
+  }
+
+  const getHostFromUrl = (raw: string) => {
+    try {
+      const u = new URL(raw)
+      const host = u.host || u.hostname
+      return host || raw
+    } catch {
+      return raw
+    }
+  }
+
+  const inferDependency = (attrs: Record<string, any>) => {
+    const dbSystem = String(attrs['db.system'] || '').trim()
+    const messagingSystem = String(attrs['messaging.system'] || '').trim()
+    const peerService = String(attrs['peer.service'] || '').trim()
+    const peerName = String(attrs['net.peer.name'] || attrs['server.address'] || '').trim()
+    const peerPort = String(attrs['net.peer.port'] || attrs['server.port'] || '').trim()
+    const httpUrl = String(attrs['http.url'] || attrs['url.full'] || '').trim()
+    const httpHost = String(attrs['http.host'] || '').trim()
+    const dbName = String(attrs['db.name'] || '').trim()
+    const msgDest = String(
+      attrs['messaging.destination.name'] || attrs['messaging.destination'] || attrs['messaging.topic'] || attrs['messaging.queue'] || ''
+    ).trim()
+
+    if (peerService) {
+      return { kind: 'service', id: peerService, label: peerService }
+    }
+    if (dbSystem) {
+      const host = peerName || dbName || 'unknown'
+      const label = `${dbSystem}${host ? ` ${host}` : ''}${peerPort ? `:${peerPort}` : ''}`
+      return { kind: 'middleware', id: `db:${dbSystem}:${host}:${peerPort}`, label }
+    }
+    if (messagingSystem) {
+      const host = peerName || msgDest || 'unknown'
+      const label = `${messagingSystem}${host ? ` ${host}` : ''}${peerPort ? `:${peerPort}` : ''}`
+      return { kind: 'middleware', id: `mq:${messagingSystem}:${host}:${peerPort}`, label }
+    }
+    if (httpUrl || httpHost || peerName) {
+      const host = httpHost || (httpUrl ? getHostFromUrl(httpUrl) : '') || peerName || 'external'
+      const label = `${host}${peerPort ? `:${peerPort}` : ''}`
+      return { kind: 'external', id: `ext:${label}`, label }
+    }
+    return null
+  }
+
+  const edgeMap: Record<string, { from: string; to: string; count: number; totalMs: number; kind: string }> = {}
   const nodeCount: Record<string, number> = {}
+  const allServices: string[] = []
   for (const sp of spans) {
-    const sid = String(sp.spanId || sp.span_id || '')
     const pid = String(sp.parentSpanId || sp.parent_span_id || '')
     const svc = String(sp.__service || 'unknown') || 'unknown'
     const name = String(sp.name || '')
-    if (!svc || svc === 'unknown') continue
-    if (svc.startsWith('beyla')) continue
+    const attrs = (sp.__attrs || {}) as Record<string, any>
+    if (!svc) continue
+    allServices.push(svc)
     if (name.startsWith('runtime.') || name.includes('runtime.v1')) continue
-    nodeCount[svc] = (nodeCount[svc] || 0) + 1
+    if (svc !== 'unknown' && !svc.startsWith('beyla')) nodeCount[svc] = (nodeCount[svc] || 0) + 1
+
+    const dep = inferDependency(attrs)
+    if (dep && dep.kind !== 'service') {
+      const start = toNano(sp.startTimeUnixNano ?? sp.startTime ?? sp.start_time_unix_nano)
+      const end = toNano(sp.endTimeUnixNano ?? sp.endTime ?? sp.end_time_unix_nano)
+      const dur = start && end && end > start ? (end - start) / 1e6 : 0
+      const from = svc
+      const to = dep.id
+      const key = `${from}=>${to}`
+      if (!edgeMap[key]) edgeMap[key] = { from, to, count: 0, totalMs: 0, kind: dep.kind }
+      edgeMap[key].count += 1
+      edgeMap[key].totalMs += dur
+    }
+
     if (!pid || !idToSpan[pid]) continue
     const psvc = String(idToSpan[pid].__service || 'unknown') || 'unknown'
-    if (!psvc || psvc === 'unknown') continue
+    if (!psvc) continue
     if (psvc === svc) continue
-    if (psvc.startsWith('beyla')) continue
+    if (svc === 'unknown' || psvc === 'unknown') continue
+    if (svc.startsWith('beyla') || psvc.startsWith('beyla')) continue
     const start = toNano(sp.startTimeUnixNano ?? sp.startTime ?? sp.start_time_unix_nano)
     const end = toNano(sp.endTimeUnixNano ?? sp.endTime ?? sp.end_time_unix_nano)
     const dur = start && end && end > start ? (end - start) / 1e6 : 0
     const key = `${psvc}=>${svc}`
-    if (!edgeMap[key]) edgeMap[key] = { from: psvc, to: svc, count: 0, totalMs: 0 }
+    if (!edgeMap[key]) edgeMap[key] = { from: psvc, to: svc, count: 0, totalMs: 0, kind: 'service' }
     edgeMap[key].count += 1
     edgeMap[key].totalMs += dur
   }
 
   const edges = Object.values(edgeMap)
-    .map((e) => ({ from: e.from, to: e.to, count: e.count, avg_ms: e.count ? Number((e.totalMs / e.count).toFixed(2)) : 0 }))
+    .map((e) => ({ from: e.from, to: e.to, kind: e.kind, count: e.count, avg_ms: e.count ? Number((e.totalMs / e.count).toFixed(2)) : 0 }))
     .sort((a, b) => b.count - a.count)
-    .slice(0, 50)
+    .slice(0, 80)
 
-  const services = Array.from(new Set([...Object.keys(nodeCount), ...edges.flatMap((e) => [e.from, e.to])]))
-  if (services.length === 0) return { option: null, edges: [] }
+  const nodeIds = Array.from(new Set([...Object.keys(nodeCount), ...edges.flatMap((e) => [e.from, e.to])]))
+  const uniqAll = Array.from(new Set(allServices))
+  if (nodeIds.length === 0) {
+    if (uniqAll.length === 1 && uniqAll[0].startsWith('beyla')) {
+      return { option: null, edges: [], hint: '当前 Trace 只包含采集器自身 spans（beyla-agent），没有抓到业务服务调用。请对业务服务发起一次真实请求后再选 Trace。' }
+    }
+    return { option: null, edges: [], hint: '当前 Trace 没有可用的 service.name（或仅为 unknown），无法生成服务链路图。' }
+  }
 
-  const palette = ['#3b82f6', '#22c55e', '#f97316', '#a855f7', '#14b8a6', '#eab308', '#ef4444', '#64748b']
-  const colorMap: Record<string, string> = {}
-  services.forEach((s, idx) => (colorMap[s] = palette[idx % palette.length]))
+  const categories = [
+    { name: '服务', itemStyle: { color: '#60a5fa' } },
+    { name: '中间件', itemStyle: { color: '#f97316' } },
+    { name: '外部依赖', itemStyle: { color: '#a78bfa' } },
+  ]
 
-  const nodes = services.map((s) => {
-    const c = nodeCount[s] || 1
+  const nodeCategory = (id: string) => {
+    if (id.startsWith('db:') || id.startsWith('mq:')) return 1
+    if (id.startsWith('ext:')) return 2
+    return 0
+  }
+
+  const prettyName = (id: string) => {
+    if (id.startsWith('db:') || id.startsWith('mq:')) {
+      const parts = id.split(':')
+      const sys = parts[1] || ''
+      const host = parts[2] || ''
+      const port = parts[3] || ''
+      return `${sys}${host ? ` ${host}` : ''}${port ? `:${port}` : ''}`.trim()
+    }
+    if (id.startsWith('ext:')) return id.replace('ext:', '')
+    return id
+  }
+
+  const nodes = nodeIds.map((id) => {
+    const cat = nodeCategory(id)
+    const c = nodeCount[id] || 1
     const size = Math.min(60, 16 + Math.log10(c + 1) * 18)
-    return { id: s, name: s, symbolSize: size, itemStyle: { color: colorMap[s] } }
+    const w = cat === 0 ? Math.max(110, size * 2.7) : Math.max(140, size * 3.0)
+    const h = Math.max(34, size * 1.1)
+    return {
+      id,
+      name: prettyName(id),
+      category: cat,
+      symbol: 'roundRect',
+      symbolSize: [w, h],
+      itemStyle: { borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)', shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.35)' },
+      label: { show: true, color: '#e2e8f0' },
+    }
   })
-  const links = edges.map((e) => ({
-    source: e.from,
-    target: e.to,
-    value: e.count,
-    lineStyle: { width: Math.min(10, 1 + Math.log10(e.count + 1) * 4), opacity: 0.7 },
-  }))
 
+  const links = edges.map((e) => {
+    const curv = ((hash(`${e.from}|${e.to}`) % 7) - 3) / 10
+    const isMid = e.kind !== 'service' || e.to.startsWith('db:') || e.to.startsWith('mq:') || e.to.startsWith('ext:')
+    return {
+      source: e.from,
+      target: e.to,
+      value: e.count,
+      lineStyle: {
+        width: Math.min(10, 1 + Math.log10(e.count + 1) * 4),
+        opacity: 0.75,
+        curveness: curv,
+        type: isMid ? 'dashed' : 'solid',
+        color: isMid ? 'rgba(148,163,184,0.75)' : 'rgba(96,165,250,0.85)',
+      },
+    }
+  })
+
+  const hint = edges.length ? '' : `当前 Trace 仅包含单服务或无跨服务调用：${nodeIds.join(', ')}`
   return {
     edges,
+    hint,
     option: {
+      backgroundColor: '#0b1220',
+      legend: [{ data: categories.map((c) => c.name), textStyle: { color: '#cbd5e1' } }],
       tooltip: {
         formatter: (p: any) => {
           if (p?.dataType === 'edge') {
@@ -1027,10 +1141,13 @@ const buildTraceServiceMap = (data: any) => {
           layout: 'force',
           roam: true,
           draggable: true,
+          categories,
           label: { show: true },
-          force: { repulsion: 300, edgeLength: [80, 160] },
+          force: { repulsion: 420, edgeLength: [90, 180] },
           data: nodes,
           links,
+          edgeSymbol: ['none', 'arrow'],
+          edgeSymbolSize: 10,
         },
       ],
     },
@@ -1189,6 +1306,9 @@ onMounted(async () => {
 
 .trace-map {
   height: 520px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .trace-chart {
@@ -1198,6 +1318,11 @@ onMounted(async () => {
 .trace-empty {
   color: #64748b;
   padding: 12px 0;
+}
+
+.trace-hint {
+  color: #64748b;
+  margin-top: 8px;
 }
 
 .reports {
