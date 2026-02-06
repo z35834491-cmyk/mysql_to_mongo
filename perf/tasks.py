@@ -1,7 +1,6 @@
 from celery import shared_task
 from django.utils import timezone
 from .models import PerfJob, ClusterConfig
-from .views import _run_capacity_analysis
 
 @shared_task
 def analyze_capacity_task(job_id: int):
@@ -16,6 +15,7 @@ def analyze_capacity_task(job_id: int):
         job.started_at = timezone.now()
         job.error = ""
         job.save(update_fields=["status", "started_at", "error"])
+        from .views import _run_capacity_analysis
         result = _run_capacity_analysis(job.params or {})
         job.status = "success"
         job.result = result or {}
