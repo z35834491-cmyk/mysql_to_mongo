@@ -44,6 +44,9 @@
                   <el-option v-for="s in services" :key="s" :label="s" :value="s" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="Auto Template">
+                <el-switch v-model="capAutoTemplate" />
+              </el-form-item>
               <el-form-item label="PromQL Template">
                 <el-select v-model="selectedTemplateId" placeholder="Select template" style="width: 100%" @change="applyTemplate">
                   <el-option v-for="t in templates" :key="t.id" :label="t.name" :value="t.id" />
@@ -135,6 +138,17 @@
               <el-select v-model="traceForm.cluster_id" placeholder="Select cluster" style="width: 100%" @change="onSelectTraceCluster">
                 <el-option v-for="c in clusters" :key="c.id" :label="c.name" :value="c.id!" />
               </el-select>
+            </el-form-item>
+            <el-form-item label="Service">
+              <el-select v-model="traceForm.service_name" placeholder="Select service" style="width: 100%" filterable @focus="refreshTraceServices" @change="onSelectTraceService">
+                <el-option v-for="s in traceServices" :key="s" :label="s" :value="s" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Sampling">
+              <div style="display:flex;gap:8px">
+                <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
+                <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(0.01)">Normal 1%</el-button>
+              </div>
             </el-form-item>
             <el-form-item label="Trace ID">
               <el-select
@@ -314,6 +328,7 @@ const capChartOption = ref<any>(null)
 const services = ref<string[]>([])
 const templates = ref<any[]>([])
 const selectedTemplateId = ref<string>('')
+const capAutoTemplate = ref<boolean>(true)
 
 const reports = ref<LoadTestReport[]>([])
 const loadingReports = ref(false)
@@ -327,15 +342,58 @@ const traceChartOption = ref<any>(null)
 const traceInsights = ref<any>(null)
 const recentTraces = ref<any[]>([])
 const loadingRecentTraces = ref(false)
+const traceServices = ref<string[]>([])
+const samplingPending = ref(false)
 
 const onSelectTraceCluster = () => {
   recentTraces.value = []
   traceForm.value.trace_id = ''
+  traceForm.value.service_name = ''
+  traceServices.value = []
   if (traceForm.value.cluster_id) {
     fetchRecentTraces()
   }
 }
 
+const toggleSampling = async (ratio: number) => {
+  if (!traceForm.value.cluster_id) return ElMessage.error('Select cluster')
+  samplingPending.value = true
+  try {
+    await perfApi.setEbpfSampling(Number(traceForm.value.cluster_id), Number(ratio))
+    ElMessage.success(`Sampling set to ${Math.round(ratio * 100)}%`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || 'Sampling update failed')
+  } finally {
+    samplingPending.value = false
+  }
+}
+
+const refreshTraceServices = async () => {
+  if (!traceForm.value.cluster_id) return
+  try {
+    const res = await perfApi.listServices(Number(traceForm.value.cluster_id), 'default')
+    traceServices.value = res.items || []
+  } catch {
+    traceServices.value = []
+  }
+}
+
+const onSelectTraceService = async () => {
+  if (!traceForm.value.cluster_id || !traceForm.value.service_name) return
+  loadingRecentTraces.value = true
+  try {
+    const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id), String(traceForm.value.service_name))
+    recentTraces.value = res.items || []
+    if (recentTraces.value.length > 0) {
+      traceForm.value.trace_id = recentTraces.value[0].traceID
+      await fetchTrace()
+    }
+  } catch {
+    recentTraces.value = []
+  } finally {
+    loadingRecentTraces.value = false
+  }
+}
 const fetchRecentTraces = async () => {
   if (!traceForm.value.cluster_id) return
   loadingRecentTraces.value = true
@@ -405,6 +463,7 @@ const onSelectCluster = () => {
   if (capForm.value.cluster_id) {
     refreshServices()
   }
+  setDefaultCapTimeRange()
 }
 
 const refreshServices = async () => {
@@ -427,7 +486,7 @@ const onSelectService = async () => {
       String(capForm.value.service_name)
     )
     templates.value = res.items || []
-    if (templates.value.length > 0) {
+    if (templates.value.length > 0 && capAutoTemplate.value) {
       selectedTemplateId.value = templates.value[0].id
       applyTemplate()
     }
@@ -446,7 +505,9 @@ const applyTemplate = () => {
 const runAnalyze = async () => {
   if (!capForm.value.cluster_id) return ElMessage.error('Select cluster')
   if (!capForm.value.service_name) return ElMessage.error('Service name required')
-  if (!capTimeRange.value || capTimeRange.value.length !== 2) return ElMessage.error('Time range required')
+  if (!capTimeRange.value || capTimeRange.value.length !== 2) {
+    setDefaultCapTimeRange()
+  }
   if (!capForm.value.qps_query || !capForm.value.cpu_query) return ElMessage.error('PromQL required')
 
   analyzing.value = true
@@ -548,7 +609,7 @@ const sumSeriesByTs = (seriesList: any[]): [number, number][] => {
       map[t] = (map[t] || 0) + val
     }
   }
-  const items = Object.keys(map).map((k) => [Number(k), map[k]])
+  const items: [number, number][] = Object.keys(map).map((k) => [Number(k), map[k]] as [number, number])
   items.sort((a, b) => a[0] - b[0])
   return items
 }
@@ -619,6 +680,12 @@ const buildCapacityChart = () => {
       { type: 'line', name: 'fit', data: lineData, smooth: true, showSymbol: false },
     ],
   }
+}
+
+const setDefaultCapTimeRange = () => {
+  const end = new Date()
+  const start = new Date(end.getTime() - 30 * 60 * 1000)
+  capTimeRange.value = [start, end]
 }
 
 const normalizeAttrs = (attrs: any): Record<string, any> => {
@@ -784,6 +851,7 @@ const submitApplyHpa = async () => {
 
 onMounted(async () => {
   await fetchClusters()
+  setDefaultCapTimeRange()
 })
 </script>
 

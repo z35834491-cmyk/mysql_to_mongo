@@ -79,6 +79,10 @@ spec:
             # 手动指定服务名，防止因缺少 Kube Metadata 导致 Resource 为空
             - name: OTEL_SERVICE_NAME
               value: "beyla-agent"
+            - name: OTEL_TRACES_SAMPLER
+              value: "traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "0.01"
 
             # 配置：要抓取的端口或服务 (自动发现 Java/Go/Node/Python 等 HTTP/gRPC 流量)
             - name: BEYLA_OPEN_PORT

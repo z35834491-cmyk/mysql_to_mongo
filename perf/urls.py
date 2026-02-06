@@ -10,6 +10,7 @@ urlpatterns = [
     path('reports/<int:pk>/pdf', views.load_test_report_pdf),
     path('analyze/capacity', views.analyze_capacity),
     path('jobs/<int:pk>', views.job_detail),
+    path('ebpf/sampling', views.set_ebpf_sampling),
     path('services', views.list_services),
     path('promql/templates', views.promql_templates),
     path('traces/<str:trace_id>', views.get_trace),

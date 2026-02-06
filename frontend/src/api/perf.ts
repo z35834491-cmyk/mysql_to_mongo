@@ -60,8 +60,11 @@ export const perfApi = {
   getTrace: (clusterId: number, traceId: string) => request.get<any>(`/perf/traces/${traceId}`, { params: { cluster_id: clusterId } }),
   getTraceInsights: (clusterId: number, traceId: string) =>
     request.get<any>(`/perf/traces/${traceId}/insights`, { params: { cluster_id: clusterId } }),
-  searchTraces: (clusterId: number) => request.get<{ items: any[] }>('/perf/traces', { params: { cluster_id: clusterId } }),
+  searchTraces: (clusterId: number, serviceName?: string) =>
+    request.get<{ items: any[] }>('/perf/traces', { params: { cluster_id: clusterId, service_name: serviceName } }),
 
   listHpa: (clusterId: number, namespace: string) => request.get<{ items: any[] }>('/perf/hpa', { params: { cluster_id: clusterId, namespace } }),
   applyHpa: (data: any) => request.post('/perf/hpa/apply', data),
+  setEbpfSampling: (clusterId: number, ratio: number, namespace?: string) =>
+    request.post('/perf/ebpf/sampling', { cluster_id: clusterId, ratio, namespace }),
 }

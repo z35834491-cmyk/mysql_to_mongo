@@ -14,6 +14,7 @@ from django.http import HttpResponse
 from ai_ops.models import AIConfig
 from api.views import HasRolePermission
 from .engine import perf_engine
+from .tasks import analyze_capacity_task
 from .models import ClusterConfig, ServiceProfile, LoadTestReport, PerfJob
 
 try:
@@ -69,26 +70,36 @@ def _series_to_points(series_list):
 
 
 def _linregress(xs, ys):
-    n = min(len(xs), len(ys))
-    if n < 2:
-        return None
-    x = xs[:n]
-    y = ys[:n]
-    x_mean = sum(x) / n
-    y_mean = sum(y) / n
-    sxx = sum((xi - x_mean) ** 2 for xi in x)
-    if sxx == 0:
-        return None
-    sxy = sum((x[i] - x_mean) * (y[i] - y_mean) for i in range(n))
-    slope = sxy / sxx
-    intercept = y_mean - slope * x_mean
-
-    syy = sum((yi - y_mean) ** 2 for yi in y)
-    if syy <= 0:
-        r = 0.0
-    else:
-        r = sxy / math.sqrt(sxx * syy)
-    return slope, intercept, r
+    try:
+        import numpy as np
+        from scipy import stats
+        n = min(len(xs), len(ys))
+        if n < 2:
+            return None
+        x = np.array(xs[:n], dtype=float)
+        y = np.array(ys[:n], dtype=float)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+        return float(slope), float(intercept), float(abs(r_value))
+    except Exception:
+        n = min(len(xs), len(ys))
+        if n < 2:
+            return None
+        x = xs[:n]
+        y = ys[:n]
+        x_mean = sum(x) / n
+        y_mean = sum(y) / n
+        sxx = sum((xi - x_mean) ** 2 for xi in x)
+        if sxx == 0:
+            return None
+        sxy = sum((x[i] - x_mean) * (y[i] - y_mean) for i in range(n))
+        slope = sxy / sxx
+        intercept = y_mean - slope * x_mean
+        syy = sum((yi - y_mean) ** 2 for yi in y)
+        if syy <= 0:
+            r = 0.0
+        else:
+            r = sxy / math.sqrt(sxx * syy)
+        return slope, intercept, r
 
 
 def _load_kube_config(kube_config_text: str):
@@ -431,7 +442,10 @@ def _run_capacity_analysis(params: dict):
 def analyze_capacity(request):
     data = request.data or {}
     job = PerfJob.objects.create(job_type="capacity_analysis", params=data, status="pending")
-    perf_engine.start()
+    try:
+        analyze_capacity_task.delay(job.id)
+    except Exception:
+        perf_engine.start()
     return Response({"job_id": job.id, "status": job.status})
 
 
@@ -442,7 +456,10 @@ def job_detail(request, pk: int):
         job = PerfJob.objects.get(pk=pk)
     except PerfJob.DoesNotExist:
         return Response({"error": "not found"}, status=404)
-    perf_engine.start()
+    try:
+        perf_engine.start()
+    except Exception:
+        pass
     payload = {
         "id": job.id,
         "job_type": job.job_type,
@@ -454,6 +471,50 @@ def job_detail(request, pk: int):
         "result": job.result,
     }
     return Response(payload)
+
+@api_view(["POST"])
+@permission_classes([HasRolePermission])
+def set_ebpf_sampling(request):
+    if not client:
+        return Response({"error": "kubernetes package not installed"}, status=500)
+    data = request.data or {}
+    cluster_id = data.get("cluster_id")
+    namespace = data.get("namespace") or "trace-system"
+    ds_name = data.get("daemonset") or "beyla"
+    ratio = data.get("ratio")
+    if not cluster_id or ratio is None:
+        return Response({"error": "cluster_id and ratio required"}, status=400)
+    try:
+        cluster = ClusterConfig.objects.get(pk=cluster_id)
+    except ClusterConfig.DoesNotExist:
+        return Response({"error": "cluster not found"}, status=404)
+    try:
+        _load_kube_config(cluster.kube_config)
+    except Exception as e:
+        return Response({"error": f"kubeconfig invalid: {e}"}, status=400)
+    try:
+        api = client.AppsV1Api()
+        body = {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "beyla",
+                                "env": [
+                                    {"name": "OTEL_TRACES_SAMPLER", "value": "traceidratio"},
+                                    {"name": "OTEL_TRACES_SAMPLER_ARG", "value": str(ratio)},
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        api.patch_namespaced_daemon_set(name=ds_name, namespace=namespace, body=body)
+        return Response({"msg": "patched", "ratio": ratio})
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
 
 
 @api_view(["GET"])
@@ -768,6 +829,7 @@ def trace_insights(request, trace_id: str):
 def search_traces(request):
     cluster_id = request.query_params.get("cluster_id")
     limit = int(request.query_params.get("limit") or 20)
+    service_name = request.query_params.get("service_name") or ""
     if not cluster_id:
         return Response({"error": "cluster_id required"}, status=400)
     try:
@@ -776,9 +838,10 @@ def search_traces(request):
         return Response({"error": "cluster not found"}, status=404)
     if not cluster.tempo_url:
         return Response({"error": "tempo_url missing in cluster config"}, status=400)
-    
-    # Tempo search API: /api/search?limit=20&tags=service.name
+
     url = cluster.tempo_url.rstrip("/") + f"/api/search?limit={limit}"
+    if service_name:
+        url += f"&tags=service.name={service_name}"
     try:
         resp = requests.get(url, timeout=10)
         if not resp.ok:
