@@ -129,12 +129,27 @@
         <el-tab-pane label="Traces" name="traces">
           <el-form :model="traceForm" label-width="120px" style="max-width: 900px">
             <el-form-item label="Cluster">
-              <el-select v-model="traceForm.cluster_id" placeholder="Select cluster" style="width: 100%">
+              <el-select v-model="traceForm.cluster_id" placeholder="Select cluster" style="width: 100%" @change="onSelectTraceCluster">
                 <el-option v-for="c in clusters" :key="c.id" :label="c.name" :value="c.id!" />
               </el-select>
             </el-form-item>
             <el-form-item label="Trace ID">
-              <el-input v-model="traceForm.trace_id" placeholder="trace id" />
+              <el-select
+                v-model="traceForm.trace_id"
+                placeholder="Select or enter trace id"
+                filterable
+                allow-create
+                style="width: 100%"
+                :loading="loadingRecentTraces"
+                @focus="fetchRecentTraces"
+              >
+                <el-option
+                  v-for="t in recentTraces"
+                  :key="t.traceID"
+                  :label="`${new Date(t.startTimeUnixNano / 1e6).toLocaleString()} - ${t.rootServiceName} (${t.durationMs}ms)`"
+                  :value="t.traceID"
+                />
+              </el-select>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="loadingTrace" @click="fetchTrace">Fetch</el-button>
@@ -302,6 +317,29 @@ const loadingTrace = ref(false)
 const traceJson = ref('')
 const traceChartOption = ref<any>(null)
 const traceInsights = ref<any>(null)
+const recentTraces = ref<any[]>([])
+const loadingRecentTraces = ref(false)
+
+const onSelectTraceCluster = () => {
+  recentTraces.value = []
+  traceForm.value.trace_id = ''
+  if (traceForm.value.cluster_id) {
+    fetchRecentTraces()
+  }
+}
+
+const fetchRecentTraces = async () => {
+  if (!traceForm.value.cluster_id) return
+  loadingRecentTraces.value = true
+  try {
+    const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id))
+    recentTraces.value = res.items || []
+  } catch {
+    // ignore
+  } finally {
+    loadingRecentTraces.value = false
+  }
+}
 
 const hpaForm = ref<any>({ cluster_id: undefined, namespace: 'default' })
 const loadingHpa = ref(false)

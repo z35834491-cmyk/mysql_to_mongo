@@ -732,6 +732,42 @@ def trace_insights(request, trace_id: str):
 
 @api_view(["GET"])
 @permission_classes([HasRolePermission])
+def search_traces(request):
+    cluster_id = request.query_params.get("cluster_id")
+    limit = int(request.query_params.get("limit") or 20)
+    if not cluster_id:
+        return Response({"error": "cluster_id required"}, status=400)
+    try:
+        cluster = ClusterConfig.objects.get(pk=cluster_id)
+    except ClusterConfig.DoesNotExist:
+        return Response({"error": "cluster not found"}, status=404)
+    if not cluster.tempo_url:
+        return Response({"error": "tempo_url missing in cluster config"}, status=400)
+    
+    # Tempo search API: /api/search?limit=20&tags=service.name
+    url = cluster.tempo_url.rstrip("/") + f"/api/search?limit={limit}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if not resp.ok:
+            return Response({"error": f"tempo {resp.status_code}", "detail": resp.text[:1000]}, status=502)
+        data = resp.json()
+        traces = data.get("traces") or []
+        items = []
+        for t in traces:
+            items.append({
+                "traceID": t.get("traceID"),
+                "rootServiceName": t.get("rootServiceName"),
+                "rootTraceName": t.get("rootTraceName"),
+                "startTimeUnixNano": t.get("startTimeUnixNano"),
+                "durationMs": t.get("durationMs"),
+            })
+        return Response({"items": items})
+    except Exception as e:
+        return Response({"error": str(e)}, status=502)
+
+
+@api_view(["GET"])
+@permission_classes([HasRolePermission])
 def list_hpa(request):
     if not client:
         return Response({"error": "kubernetes package not installed"}, status=500)

@@ -13,6 +13,7 @@ urlpatterns = [
     path('promql/templates', views.promql_templates),
     path('traces/<str:trace_id>', views.get_trace),
     path('traces/<str:trace_id>/insights', views.trace_insights),
+    path('traces', views.search_traces),
     path('hpa', views.list_hpa),
     path('hpa/apply', views.apply_hpa),
 ]

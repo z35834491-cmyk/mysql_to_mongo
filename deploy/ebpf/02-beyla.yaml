@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: beyla
-  namespace: monitoring
+  namespace: trace-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -25,7 +25,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: beyla
-    namespace: monitoring
+    namespace: trace-system
 roleRef:
   kind: ClusterRole
   name: beyla
@@ -35,7 +35,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: beyla
-  namespace: monitoring
+  namespace: trace-system
 spec:
   selector:
     matchLabels:
@@ -49,7 +49,7 @@ spec:
       hostPID: true  # 必须：允许看到主机上的进程
       containers:
         - name: beyla
-          image: grafana/beyla:latest
+          image: grafana/beyla:1.8.4
           securityContext:
             privileged: true  # 必须：允许加载 eBPF 程序
             capabilities:
@@ -58,15 +58,27 @@ spec:
           env:
             # 配置：将 Trace 发送到我们部署的 Tempo
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://tempo.monitoring.svc:4317"
+              value: "http://tempo.trace-system.svc:4317"
             # 配置：开启 Kubernetes 元数据装饰 (自动加 namespace/pod/service 标签)
+            # 临时禁用 Kube Metadata 以解决 "InstancesCount <= 0" 报错
             - name: BEYLA_KUBE_METADATA_ENABLE
-              value: "true"
+              value: "false"
             # 配置：要抓取的端口或服务 (自动发现 Java/Go/Node/Python 等 HTTP/gRPC 流量)
             - name: BEYLA_OPEN_PORT
               value: "80-65535"
-            # 性能调优
+            # 性能调优：大幅增加超时时间防止 Panic
             - name: BEYLA_BPF_BATCH_TIMEOUT
-              value: "100ms"
+              value: "3s"
+            - name: BEYLA_BPF_CHANNEL_CAPACITY
+              value: "1000"
+            # 关键修复：禁用 Metrics 上报（Tempo 默认只收 Trace，发 Metrics 会导致 gRPC 错误和 Panic）
+            - name: BEYLA_METRICS_INTERVAL
+              value: "0"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            - name: BEYLA_TRACE_PRINTER
+              value: "text"
+            - name: BEYLA_INTERNAL_TELEMETRY_PORT
+              value: "8080"
             - name: BEYLA_LOG_LEVEL
               value: "INFO"
