@@ -137,77 +137,109 @@
         </el-tab-pane>
 
         <el-tab-pane label="Traces" name="traces">
-          <el-form :model="traceForm" label-width="120px" style="max-width: 900px">
-            <el-form-item label="Cluster">
-              <el-select v-model="traceForm.cluster_id" placeholder="Select cluster" style="width: 100%" @change="onSelectTraceCluster">
-                <el-option v-for="c in clusters" :key="c.id" :label="c.name" :value="c.id!" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="Service">
-              <el-select v-model="traceForm.service_name" placeholder="Select service" style="width: 100%" filterable @focus="refreshTraceServices" @change="onSelectTraceService">
-                <el-option v-for="s in traceServices" :key="s" :label="s" :value="s" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="Service NS">
-              <el-input v-model="traceForm.service_ns" placeholder="biz-system" @change="onChangeServiceNs" />
-            </el-form-item>
-            <el-form-item label="Namespace">
-              <el-input v-model="traceForm.sampling_ns" placeholder="trace-system" />
-            </el-form-item>
-            <el-form-item label="DaemonSet">
-              <el-input v-model="traceForm.sampling_ds" placeholder="beyla" />
-            </el-form-item>
-            <el-form-item label="Sampling">
-              <div style="display:flex;gap:8px">
-                <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
-                <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(0.01)">Normal 1%</el-button>
-                <el-button :disabled="!traceForm.cluster_id" @click="checkTempo">Check Tempo</el-button>
-                <el-button :disabled="!traceForm.cluster_id" @click="listRecentTraces">List Recent</el-button>
-              </div>
-            </el-form-item>
-            <el-form-item label="Trace ID">
-              <el-select
-                v-model="traceForm.trace_id"
-                placeholder="Select or enter trace id"
-                filterable
-                allow-create
-                style="width: 100%"
-                :loading="loadingRecentTraces"
-                @focus="fetchRecentTraces"
-              >
-                <el-option
-                  v-for="t in recentTraces"
-                  :key="t.traceID"
-                  :label="`${new Date(t.startTimeUnixNano / 1e6).toLocaleString()} - ${t.rootServiceName} (${t.durationMs}ms)`"
-                  :value="t.traceID"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :loading="loadingTrace" @click="fetchTrace">Fetch</el-button>
-            </el-form-item>
-          </el-form>
-          <div v-if="traceError" class="error-bar">{{ traceError }}</div>
-          <div v-if="traceChartOption" class="trace-chart">
-            <v-chart :option="traceChartOption" autoresize />
+          <div class="trace-grid">
+            <div class="trace-left">
+              <el-form :model="traceForm" label-width="110px">
+                <el-form-item label="Cluster">
+                  <el-select v-model="traceForm.cluster_id" placeholder="Select cluster" style="width: 100%" @change="onSelectTraceCluster">
+                    <el-option v-for="c in clusters" :key="c.id" :label="c.name" :value="c.id!" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="Service">
+                  <el-select v-model="traceForm.service_name" placeholder="Select service" style="width: 100%" filterable @focus="refreshTraceServices" @change="onSelectTraceService">
+                    <el-option v-for="s in traceServices" :key="s" :label="s" :value="s" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="Service NS">
+                  <el-input v-model="traceForm.service_ns" placeholder="biz-system" @change="onChangeServiceNs" />
+                </el-form-item>
+                <el-form-item label="Sampling NS">
+                  <el-input v-model="traceForm.sampling_ns" placeholder="trace-system" />
+                </el-form-item>
+                <el-form-item label="DaemonSet">
+                  <el-input v-model="traceForm.sampling_ds" placeholder="beyla" />
+                </el-form-item>
+                <el-form-item label="Sampling">
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
+                    <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(0.01)">Normal 1%</el-button>
+                    <el-button :disabled="!traceForm.cluster_id" @click="checkTempo">Check Tempo</el-button>
+                    <el-button :disabled="!traceForm.cluster_id" @click="listRecentTraces">List Recent</el-button>
+                  </div>
+                </el-form-item>
+                <el-form-item label="Trace ID">
+                  <el-select
+                    v-model="traceForm.trace_id"
+                    placeholder="Select or enter trace id"
+                    filterable
+                    allow-create
+                    style="width: 100%"
+                    :loading="loadingRecentTraces"
+                    @focus="fetchRecentTraces"
+                  >
+                    <el-option
+                      v-for="t in recentTraces"
+                      :key="t.traceID"
+                      :label="`${new Date(t.startTimeUnixNano / 1e6).toLocaleString()} - ${t.rootServiceName} (${t.durationMs}ms)`"
+                      :value="t.traceID"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" :loading="loadingTrace" @click="fetchTrace">Fetch</el-button>
+                </el-form-item>
+              </el-form>
+              <div v-if="traceError" class="error-bar">{{ traceError }}</div>
+            </div>
+
+            <div class="trace-right">
+              <el-tabs v-model="traceView">
+                <el-tab-pane label="Service Map" name="map">
+                  <div v-if="traceMapOption" class="trace-map">
+                    <v-chart :option="traceMapOption" autoresize />
+                  </div>
+                  <div v-else class="trace-empty">No inter-service calls found for this trace.</div>
+                  <el-table v-if="traceEdges.length" :data="traceEdges" style="width: 100%; margin-top: 12px">
+                    <el-table-column prop="from" label="From" min-width="160" />
+                    <el-table-column prop="to" label="To" min-width="160" />
+                    <el-table-column prop="count" label="Calls" width="90" />
+                    <el-table-column prop="avg_ms" label="Avg(ms)" width="110" />
+                  </el-table>
+                </el-tab-pane>
+
+                <el-tab-pane label="Waterfall" name="waterfall">
+                  <div v-if="traceChartOption" class="trace-chart">
+                    <v-chart :option="traceChartOption" autoresize />
+                  </div>
+                  <div v-else class="trace-empty">No spans to render.</div>
+                </el-tab-pane>
+
+                <el-tab-pane label="Insights" name="insights">
+                  <div v-if="traceInsights" class="trace-insights">
+                    <el-descriptions :column="2" border>
+                      <el-descriptions-item label="Duration (ms)">{{ traceInsights.trace?.duration_ms }}</el-descriptions-item>
+                      <el-descriptions-item label="Span Count">{{ traceInsights.trace?.span_count }}</el-descriptions-item>
+                      <el-descriptions-item label="Services" :span="2">{{ (traceInsights.trace?.services || []).join(', ') }}</el-descriptions-item>
+                    </el-descriptions>
+                    <el-table :data="traceInsights.metrics || []" style="width: 100%; margin-top: 12px">
+                      <el-table-column prop="namespace" label="NS" width="140" />
+                      <el-table-column prop="pod" label="Pod" min-width="260" />
+                      <el-table-column prop="service" label="Service" min-width="180" />
+                      <el-table-column prop="cpu_cores_avg" label="CPU Avg" width="110" />
+                      <el-table-column prop="cpu_cores_max" label="CPU Max" width="110" />
+                      <el-table-column prop="mem_mb_avg" label="Mem Avg(MB)" width="130" />
+                      <el-table-column prop="mem_mb_max" label="Mem Max(MB)" width="130" />
+                    </el-table>
+                  </div>
+                  <div v-else class="trace-empty">No insights.</div>
+                </el-tab-pane>
+
+                <el-tab-pane label="Raw" name="raw">
+                  <pre class="json">{{ traceJson }}</pre>
+                </el-tab-pane>
+              </el-tabs>
+            </div>
           </div>
-          <div v-if="traceInsights" class="trace-insights">
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="Duration (ms)">{{ traceInsights.trace?.duration_ms }}</el-descriptions-item>
-              <el-descriptions-item label="Span Count">{{ traceInsights.trace?.span_count }}</el-descriptions-item>
-              <el-descriptions-item label="Services" :span="2">{{ (traceInsights.trace?.services || []).join(', ') }}</el-descriptions-item>
-            </el-descriptions>
-            <el-table :data="traceInsights.metrics || []" style="width: 100%; margin-top: 12px">
-              <el-table-column prop="namespace" label="NS" width="140" />
-              <el-table-column prop="pod" label="Pod" min-width="260" />
-              <el-table-column prop="service" label="Service" min-width="180" />
-              <el-table-column prop="cpu_cores_avg" label="CPU Avg" width="110" />
-              <el-table-column prop="cpu_cores_max" label="CPU Max" width="110" />
-              <el-table-column prop="mem_mb_avg" label="Mem Avg(MB)" width="130" />
-              <el-table-column prop="mem_mb_max" label="Mem Max(MB)" width="130" />
-            </el-table>
-          </div>
-          <pre class="json">{{ traceJson }}</pre>
         </el-tab-pane>
 
         <el-tab-pane label="HPA" name="hpa">
@@ -355,12 +387,15 @@ const traceForm = ref<any>({ cluster_id: undefined, trace_id: '', service_ns: 'b
 const loadingTrace = ref(false)
 const traceJson = ref('')
 const traceChartOption = ref<any>(null)
+const traceMapOption = ref<any>(null)
+const traceEdges = ref<any[]>([])
 const traceInsights = ref<any>(null)
 const recentTraces = ref<any[]>([])
 const loadingRecentTraces = ref(false)
 const traceServices = ref<string[]>([])
 const samplingPending = ref(false)
 const traceError = ref<string>('')
+const traceView = ref<'map' | 'waterfall' | 'insights' | 'raw'>('map')
 
 const onSelectTraceCluster = () => {
   recentTraces.value = []
@@ -652,10 +687,15 @@ const fetchTrace = async () => {
     const data = await perfApi.getTrace(traceForm.value.cluster_id, traceForm.value.trace_id)
     traceJson.value = JSON.stringify(data, null, 2)
     traceChartOption.value = buildTraceWaterfallOption(data)
+    const mapRes = buildTraceServiceMap(data)
+    traceMapOption.value = mapRes?.option || null
+    traceEdges.value = mapRes?.edges || []
     traceInsights.value = await perfApi.getTraceInsights(traceForm.value.cluster_id, traceForm.value.trace_id)
     traceError.value = ''
   } catch (e: any) {
     traceChartOption.value = null
+    traceMapOption.value = null
+    traceEdges.value = []
     traceInsights.value = null
     traceJson.value = e?.response?.data?.detail || e?.response?.data?.error || 'Failed'
     traceError.value = traceJson.value
@@ -906,6 +946,97 @@ const buildTraceWaterfallOption = (data: any) => {
   }
 }
 
+const buildTraceServiceMap = (data: any) => {
+  const spans = extractTempoSpans(data)
+  if (!spans?.length) return null
+
+  const idToSpan: Record<string, any> = {}
+  for (const sp of spans) {
+    const id = String(sp.spanId || sp.span_id || '')
+    if (!id) continue
+    idToSpan[id] = sp
+  }
+
+  const edgeMap: Record<string, { from: string; to: string; count: number; totalMs: number }> = {}
+  const nodeCount: Record<string, number> = {}
+  for (const sp of spans) {
+    const sid = String(sp.spanId || sp.span_id || '')
+    const pid = String(sp.parentSpanId || sp.parent_span_id || '')
+    const svc = String(sp.__service || 'unknown') || 'unknown'
+    const name = String(sp.name || '')
+    if (!svc || svc === 'unknown') continue
+    if (svc.startsWith('beyla')) continue
+    if (name.startsWith('runtime.') || name.includes('runtime.v1')) continue
+    nodeCount[svc] = (nodeCount[svc] || 0) + 1
+    if (!pid || !idToSpan[pid]) continue
+    const psvc = String(idToSpan[pid].__service || 'unknown') || 'unknown'
+    if (!psvc || psvc === 'unknown') continue
+    if (psvc === svc) continue
+    if (psvc.startsWith('beyla')) continue
+    const start = toNano(sp.startTimeUnixNano ?? sp.startTime ?? sp.start_time_unix_nano)
+    const end = toNano(sp.endTimeUnixNano ?? sp.endTime ?? sp.end_time_unix_nano)
+    const dur = start && end && end > start ? (end - start) / 1e6 : 0
+    const key = `${psvc}=>${svc}`
+    if (!edgeMap[key]) edgeMap[key] = { from: psvc, to: svc, count: 0, totalMs: 0 }
+    edgeMap[key].count += 1
+    edgeMap[key].totalMs += dur
+  }
+
+  const edges = Object.values(edgeMap)
+    .map((e) => ({ from: e.from, to: e.to, count: e.count, avg_ms: e.count ? Number((e.totalMs / e.count).toFixed(2)) : 0 }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 50)
+
+  const services = Array.from(new Set([...Object.keys(nodeCount), ...edges.flatMap((e) => [e.from, e.to])]))
+  if (services.length === 0) return { option: null, edges: [] }
+
+  const palette = ['#3b82f6', '#22c55e', '#f97316', '#a855f7', '#14b8a6', '#eab308', '#ef4444', '#64748b']
+  const colorMap: Record<string, string> = {}
+  services.forEach((s, idx) => (colorMap[s] = palette[idx % palette.length]))
+
+  const nodes = services.map((s) => {
+    const c = nodeCount[s] || 1
+    const size = Math.min(60, 16 + Math.log10(c + 1) * 18)
+    return { id: s, name: s, symbolSize: size, itemStyle: { color: colorMap[s] } }
+  })
+  const links = edges.map((e) => ({
+    source: e.from,
+    target: e.to,
+    value: e.count,
+    lineStyle: { width: Math.min(10, 1 + Math.log10(e.count + 1) * 4), opacity: 0.7 },
+  }))
+
+  return {
+    edges,
+    option: {
+      tooltip: {
+        formatter: (p: any) => {
+          if (p?.dataType === 'edge') {
+            const from = p.data?.source
+            const to = p.data?.target
+            const edge = edges.find((x) => x.from === from && x.to === to)
+            if (!edge) return `${from} → ${to}`
+            return `${from} → ${to}<br/>calls=${edge.count}<br/>avg=${edge.avg_ms}ms`
+          }
+          return p?.data?.name || ''
+        },
+      },
+      series: [
+        {
+          type: 'graph',
+          layout: 'force',
+          roam: true,
+          draggable: true,
+          label: { show: true },
+          force: { repulsion: 300, edgeLength: [80, 160] },
+          data: nodes,
+          links,
+        },
+      ],
+    },
+  }
+}
+
 const fetchHpa = async () => {
   if (!hpaForm.value.cluster_id) return ElMessage.error('Select cluster')
   loadingHpa.value = true
@@ -1035,6 +1166,38 @@ onMounted(async () => {
   max-height: 340px;
   overflow: auto;
   white-space: pre-wrap;
+}
+
+.trace-grid {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 0;
+  height: 100%;
+  min-height: 520px;
+}
+
+.trace-left {
+  padding: 12px;
+  border-right: 1px solid var(--app-border-color);
+  overflow: auto;
+}
+
+.trace-right {
+  padding: 12px;
+  overflow: auto;
+}
+
+.trace-map {
+  height: 520px;
+}
+
+.trace-chart {
+  height: 520px;
+}
+
+.trace-empty {
+  color: #64748b;
+  padding: 12px 0;
 }
 
 .reports {

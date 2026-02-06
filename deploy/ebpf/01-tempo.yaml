@@ -22,13 +22,14 @@ spec:
     spec:
       containers:
       - name: tempo
-        image: grafana/tempo:latest
+        image: grafana/tempo:2.10.0
         args:
           - "-config.file=/etc/tempo.yaml"
         ports:
           - containerPort: 3200  # HTTP Query API (给 Django 用)
           - containerPort: 4317  # OTLP gRPC Receiver (给 Beyla 用)
           - containerPort: 4318  # OTLP HTTP Receiver
+          - containerPort: 7946  # Memberlist gossip
         volumeMounts:
           - mountPath: /etc/tempo.yaml
             name: tempo-config
@@ -55,6 +56,10 @@ spec:
       port: 4317
       targetPort: 4317
       name: otlp-grpc
+    - protocol: TCP
+      port: 7946
+      targetPort: 7946
+      name: memberlist
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -71,7 +76,9 @@ data:
         otlp:
           protocols:
             grpc:
+              endpoint: "0.0.0.0:4317"
             http:
+              endpoint: "0.0.0.0:4318"
       ring:
         kvstore:
           store: memberlist
@@ -92,4 +99,8 @@ data:
         wal:
           path: /tmp/tempo/wal
     memberlist:
-      join_members: []
+      bind_addr:
+        - "0.0.0.0"
+      bind_port: 7946
+      join_members:
+        - "tempo.trace-system.svc.cluster.local:7946"
