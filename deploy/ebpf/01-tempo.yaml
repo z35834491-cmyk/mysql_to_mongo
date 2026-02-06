@@ -66,19 +66,24 @@ data:
     server:
       http_listen_port: 3200
     multitenancy_enabled: false
-    search_enabled: true
     distributor:
       receivers:
         otlp:
           protocols:
             grpc:
-              endpoint: "0.0.0.0:4317"
             http:
-              endpoint: "0.0.0.0:4318"
+      ring:
+        kvstore:
+          store: memberlist
     ingester:
       trace_idle_period: 10s
       max_block_bytes: 1_000_000
       max_block_duration: 5m
+      lifecycler:
+        ring:
+          kvstore:
+            store: memberlist
+          replication_factor: 1
     storage:
       trace:
         backend: local
@@ -87,6 +92,4 @@ data:
         wal:
           path: /tmp/tempo/wal
     memberlist:
-      bind_addr: "0.0.0.0"
-      bind_port: 7946
       join_members: []

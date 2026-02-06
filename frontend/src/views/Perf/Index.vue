@@ -162,6 +162,7 @@
                 <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
                 <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(0.01)">Normal 1%</el-button>
                 <el-button :disabled="!traceForm.cluster_id" @click="checkTempo">Check Tempo</el-button>
+                <el-button :disabled="!traceForm.cluster_id" @click="listRecentTraces">List Recent</el-button>
               </div>
             </el-form-item>
             <el-form-item label="Trace ID">
@@ -398,6 +399,20 @@ const checkTempo = async () => {
   } catch (e: any) {
     traceError.value = e?.response?.data?.error || 'Tempo diagnostics failed'
     ElMessage.error(traceError.value)
+  }
+}
+
+const listRecentTraces = async () => {
+  if (!traceForm.value.cluster_id) return ElMessage.error('Select cluster')
+  loadingRecentTraces.value = true
+  try {
+    const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id))
+    recentTraces.value = res.items || []
+    traceError.value = recentTraces.value.length ? '' : 'No traces found.'
+  } catch (e: any) {
+    traceError.value = e?.response?.data?.error || 'Failed to list recent traces'
+  } finally {
+    loadingRecentTraces.value = false
   }
 }
 const refreshTraceServices = async () => {

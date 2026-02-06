@@ -512,8 +512,34 @@ def set_ebpf_sampling(request):
                 }
             }
         }
-        api.patch_namespaced_daemon_set(name=ds_name, namespace=namespace, body=body)
-        return Response({"msg": "patched", "ratio": ratio})
+        # First attempt: user-provided namespace
+        try:
+            api.patch_namespaced_daemon_set(name=ds_name, namespace=namespace, body=body)
+            return Response({"msg": "patched", "ratio": ratio, "namespace": namespace, "daemonset": ds_name})
+        except Exception as e1:
+            err_msg = str(e1)
+            # NotFound fallback: locate daemonset across all namespaces
+            if "NotFound" in err_msg or "404" in err_msg:
+                try:
+                    dss = api.list_daemon_set_for_all_namespaces().items
+                    found_ns = None
+                    for ds in dss:
+                        if getattr(ds, "metadata", None) and ds.metadata.name == ds_name:
+                            found_ns = ds.metadata.namespace
+                            break
+                    if found_ns and found_ns != namespace:
+                        api.patch_namespaced_daemon_set(name=ds_name, namespace=found_ns, body=body)
+                        return Response({"msg": "patched", "ratio": ratio, "namespace": found_ns, "daemonset": ds_name})
+                except Exception as e2:
+                    pass
+            # RBAC hint for 403
+            if "Forbidden" in err_msg or "403" in err_msg:
+                return Response({
+                    "error": "RBAC forbidden",
+                    "detail": err_msg,
+                    "hint": "Grant patch permission on apps/daemonsets. See k8s/rbac-perf-editor.yaml or clusterrole variant."
+                }, status=403)
+            return Response({"error": err_msg}, status=500)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 

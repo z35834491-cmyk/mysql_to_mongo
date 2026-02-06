@@ -67,14 +67,12 @@ spec:
               value: "0"
             - name: OTEL_METRICS_EXPORTER
               value: "none"
-            # 禁用网络指标，减少队列压力
-            - name: BEYLA_NETWORK_METRICS
-              value: "off"
+            # （移除不兼容的网络指标开关，使用 BEYLA_METRICS_INTERVAL=0 和 OTEL_METRICS_EXPORTER=none 即可禁用）
 
             # 配置：开启 Kubernetes 元数据装饰 (自动加 namespace/pod/service 标签)
             # 临时禁用 Kube Metadata 以解决 "InstancesCount <= 0" 报错及 K8s API 连接问题
             - name: BEYLA_KUBE_METADATA_ENABLE
-              value: "false"
+              value: "true"
             
             # 手动指定服务名，防止因缺少 Kube Metadata 导致 Resource 为空
             - name: OTEL_SERVICE_NAME
