@@ -1,0 +1,72 @@
+# 2. Grafana Beyla (eBPF 采集组件)
+# 作用：以 DaemonSet 运行，通过 eBPF 自动拦截 HTTP/gRPC/HTTPS，无需 Java 业务改代码
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beyla
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: beyla
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes", "endpoints", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: beyla
+subjects:
+  - kind: ServiceAccount
+    name: beyla
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: beyla
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: beyla
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: beyla
+  template:
+    metadata:
+      labels:
+        app: beyla
+    spec:
+      serviceAccountName: beyla
+      hostPID: true  # 必须：允许看到主机上的进程
+      containers:
+        - name: beyla
+          image: grafana/beyla:latest
+          securityContext:
+            privileged: true  # 必须：允许加载 eBPF 程序
+            capabilities:
+              add:
+                - SYS_ADMIN
+          env:
+            # 配置：将 Trace 发送到我们部署的 Tempo
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://tempo.monitoring.svc:4317"
+            # 配置：开启 Kubernetes 元数据装饰 (自动加 namespace/pod/service 标签)
+            - name: BEYLA_KUBE_METADATA_ENABLE
+              value: "true"
+            # 配置：要抓取的端口或服务 (自动发现 Java/Go/Node/Python 等 HTTP/gRPC 流量)
+            - name: BEYLA_OPEN_PORT
+              value: "80-65535"
+            # 性能调优
+            - name: BEYLA_BPF_BATCH_TIMEOUT
+              value: "100ms"
+            - name: BEYLA_LOG_LEVEL
+              value: "INFO"
