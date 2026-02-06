@@ -70,4 +70,6 @@ export const perfApi = {
   diagTempo: (clusterId: number) => request.get<any>('/perf/diag/tempo', { params: { cluster_id: clusterId } }),
   diagBeyla: (clusterId: number, namespace?: string, daemonset?: string) =>
     request.get<any>('/perf/diag/beyla', { params: { cluster_id: clusterId, namespace, daemonset } }),
+  listTraceServices: (clusterId: number, limit?: number) =>
+    request.get<{ items: string[] }>('/perf/traces/services', { params: { cluster_id: clusterId, limit } }),
 }

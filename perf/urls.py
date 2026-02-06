@@ -18,6 +18,7 @@ urlpatterns = [
     path('traces', views.search_traces),
     path('diag/tempo', views.tempo_diagnostics),
     path('diag/beyla', views.beyla_diagnostics),
+    path('traces/services', views.discover_trace_services),
     path('hpa', views.list_hpa),
     path('hpa/apply', views.apply_hpa),
 ]

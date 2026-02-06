@@ -455,7 +455,7 @@ const listRecentTraces = async () => {
 const refreshTraceServices = async () => {
   if (!traceForm.value.cluster_id) return
   try {
-    const res = await perfApi.listServices(Number(traceForm.value.cluster_id), String(traceForm.value.service_ns || 'biz-system'))
+    const res = await perfApi.listTraceServices(Number(traceForm.value.cluster_id), 200)
     traceServices.value = res.items || []
   } catch {
     traceServices.value = []

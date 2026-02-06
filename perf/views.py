@@ -931,37 +931,68 @@ def tempo_diagnostics(request):
     _check("/ready")
     _check("/metrics")
     try:
-        metrics_check = next((c for c in results["checks"] if c.get("url", "").endswith("/metrics") and c.get("ok")), None)
-        text = (metrics_check or {}).get("preview", "") + "\n"
-        for c in results["checks"]:
-            if c.get("url", "").endswith("/metrics") and c.get("ok"):
-                text = (c.get("preview") or "")
-                break
-        def _find(name: str):
-            import re
-            m = re.search(rf"(?m)^{re.escape(name)}\{{[^}}]*\}}\s+([0-9eE\+\.-]+)$", text)
-            if m:
-                return float(m.group(1))
-            m2 = re.search(rf"(?m)^{re.escape(name)}\s+([0-9eE\+\.-]+)$", text)
-            if m2:
-                return float(m2.group(1))
-            return None
-        for k in [
-            "tempo_distributor_spans_received_total",
-            "tempo_distributor_spans_dropped_total",
-            "tempo_distributor_traces_received_total",
-            "tempo_distributor_traces_dropped_total",
-            "tempo_ingester_traces_created_total",
-            "tempo_ingester_spans_created_total",
-        ]:
-            v = _find(k)
-            if v is not None:
-                results["metrics"][k] = v
+        import re
+        metrics_url = f"{url}/metrics"
+        r = requests.get(metrics_url, timeout=10)
+        if r.ok:
+            text = r.text or ""
+            def _find(name: str):
+                m = re.search(rf"(?m)^{re.escape(name)}\{{[^}}]*\}}\s+([0-9eE\+\.-]+)$", text)
+                if m:
+                    return float(m.group(1))
+                m2 = re.search(rf"(?m)^{re.escape(name)}\s+([0-9eE\+\.-]+)$", text)
+                if m2:
+                    return float(m2.group(1))
+                return None
+            keys = [
+                "tempo_distributor_spans_received_total",
+                "tempo_distributor_spans_dropped_total",
+                "tempo_distributor_traces_received_total",
+                "tempo_distributor_traces_dropped_total",
+                "tempo_ingester_traces_created_total",
+                "tempo_ingester_spans_created_total",
+            ]
+            for k in keys:
+                v = _find(k)
+                if v is not None:
+                    results["metrics"][k] = v
     except Exception:
         pass
     ok = any(c.get("ok") for c in results["checks"])
     results["ok"] = ok
     return Response(results)
+
+
+@api_view(["GET"])
+@permission_classes([HasRolePermission])
+def discover_trace_services(request):
+    cluster_id = request.query_params.get("cluster_id")
+    limit = int(request.query_params.get("limit") or 200)
+    if not cluster_id:
+        return Response({"error": "cluster_id required"}, status=400)
+    try:
+        cluster = ClusterConfig.objects.get(pk=cluster_id)
+    except ClusterConfig.DoesNotExist:
+        return Response({"error": "cluster not found"}, status=404)
+    if not cluster.tempo_url:
+        return Response({"error": "tempo_url missing in cluster config"}, status=400)
+    base = cluster.tempo_url.rstrip("/")
+    url = base + f"/api/search?limit={limit}"
+    try:
+        resp = requests.get(url, timeout=15)
+        if not resp.ok:
+            return Response({"error": f"tempo {resp.status_code}", "detail": (resp.text or "")[:2000]}, status=502)
+        data = resp.json() if resp.text else {}
+        traces = (data or {}).get("traces") or []
+        names = []
+        for t in traces:
+            n = (t or {}).get("rootServiceName") or ""
+            if n:
+                names.append(str(n))
+        uniq = sorted(list(set(names)))
+        return Response({"items": uniq})
+    except Exception as e:
+        return Response({"error": str(e)}, status=502)
 
 @api_view(["GET"])
 @permission_classes([HasRolePermission])
