@@ -6,6 +6,7 @@ import glob
 import logging
 import json
 import re
+from urllib.parse import quote
 import requests
 from django.conf import settings
 from django.utils import timezone
@@ -32,6 +33,52 @@ class MonitorEngine:
         self._lock = threading.Lock()
         self.LOG_DIR = os.path.join(settings.BASE_DIR, "logs", "monitor_logs")
         os.makedirs(self.LOG_DIR, exist_ok=True)
+
+    def _get_s3_client(self, task):
+        if not boto3:
+            return None
+        if not getattr(task, 's3_archive_enabled', False):
+            return None
+        if not getattr(task, 's3_bucket', ''):
+            return None
+        try:
+            return boto3.client(
+                's3',
+                region_name=task.s3_region,
+                aws_access_key_id=task.s3_access_key,
+                aws_secret_access_key=task.s3_secret_key,
+                endpoint_url=task.s3_endpoint or None
+            )
+        except Exception:
+            return None
+
+    def _get_s3_prefix(self, task):
+        return f"logs/monitor/{task.id}/"
+
+    def _cleanup_s3(self, task, s3_client, retention_days=90, max_delete=1000):
+        try:
+            cutoff = timezone.now() - datetime.timedelta(days=retention_days)
+            prefix = self._get_s3_prefix(task)
+            keys_to_delete = []
+            paginator = s3_client.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=task.s3_bucket, Prefix=prefix):
+                for obj in page.get('Contents', []) or []:
+                    lm = obj.get('LastModified')
+                    if lm and lm < cutoff:
+                        keys_to_delete.append({'Key': obj['Key']})
+                        if len(keys_to_delete) >= max_delete:
+                            break
+                if len(keys_to_delete) >= max_delete:
+                    break
+
+            if keys_to_delete:
+                for i in range(0, len(keys_to_delete), 1000):
+                    s3_client.delete_objects(
+                        Bucket=task.s3_bucket,
+                        Delete={'Objects': keys_to_delete[i:i + 1000], 'Quiet': True}
+                    )
+        except Exception:
+            pass
 
     def start(self):
         with self._lock:
@@ -156,10 +203,12 @@ class MonitorEngine:
             namespaces = ['default']
         
         today_str = datetime.date.today().isoformat()
-        
-        # Task specific log dir
+        s3_client = self._get_s3_client(task)
+        s3_only = bool(s3_client)
+
         task_log_dir = os.path.join(self.LOG_DIR, str(task.id))
-        os.makedirs(task_log_dir, exist_ok=True)
+        if not s3_only:
+            os.makedirs(task_log_dir, exist_ok=True)
 
         for namespace in namespaces:
             try:
@@ -175,7 +224,7 @@ class MonitorEngine:
                 container_name = pod.spec.containers[0].name
                 
                 unique_name = f"{namespace}_{pod_name}"
-                log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
+                log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log") if not s3_only else ""
                 
                 since_seconds = task.poll_interval_seconds + 10
                 
@@ -189,18 +238,36 @@ class MonitorEngine:
                         timestamps=True,
                         _preload_content=False # Enable streaming
                     )
-                    
-                    self._process_log_stream(response, task, unique_name, task_log_dir, log_file_path)
+                    if s3_only:
+                        stamp = timezone.now().strftime("%H%M%S_%f")
+                        base_prefix = self._get_s3_prefix(task).rstrip('/')
+                        raw_s3_key = f"{base_prefix}/raw/{namespace}/{pod_name}/{today_str}/{stamp}.log"
+                        error_s3_key = f"{base_prefix}/error/{namespace}/{pod_name}/{today_str}/{stamp}.log"
+                        self._process_log_stream(
+                            response,
+                            task,
+                            unique_name,
+                            task_log_dir,
+                            log_file_path,
+                            s3_client=s3_client,
+                            s3_bucket=task.s3_bucket,
+                            raw_s3_key=raw_s3_key,
+                            error_s3_key=error_s3_key
+                        )
+                    else:
+                        self._process_log_stream(response, task, unique_name, task_log_dir, log_file_path)
                         
                 except Exception as e:
                     # logger.warning(f"Failed to read log for {pod_name}: {e}")
                     pass
 
-    def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path):
+    def _process_log_stream(self, stream, task, source_name, log_dir, log_file_path, s3_client=None, s3_bucket=None, raw_s3_key=None, error_s3_key=None):
         alerts = [] # List of dicts: { 'type': str, 'keyword': str, 'msg': str }
         error_lines = [] # List of strings for aggregated error log
         namespace = source_name.split('_', 1)[0] if source_name else ''
-        record_all = namespace == 'flink-system'
+        s3_only = bool(s3_client and s3_bucket and raw_s3_key)
+        raw_buffer = []
+        error_output = []
         
         # Load persistent threshold state from task if available, or init new
         threshold_state = task.threshold_state or {}
@@ -367,9 +434,8 @@ class MonitorEngine:
         error_file_handle = None
         log_file_handle = None
         try:
-            error_file_handle = open(error_file_path, "a", encoding="utf-8")
-            if record_all:
-                log_file_handle = open(log_file_path, "a", encoding="utf-8")
+            if not s3_only:
+                error_file_handle = open(error_file_path, "a", encoding="utf-8")
             
             for line_bytes in stream:
                 if not line_bytes:
@@ -380,8 +446,10 @@ class MonitorEngine:
                 line = _strip_ansi(line_raw)
                 
                 # Write to raw log
-                if log_file_handle:
-                    log_file_handle.write(line_raw)
+                if s3_only:
+                    raw_buffer.append(line)
+                else:
+                    pass
 
                 # --- Analysis Logic Per Line ---
                 if any(k in line for k in clean_ignore_keywords):
@@ -395,13 +463,17 @@ class MonitorEngine:
                 if stack_capture_active and is_stack_line:
                     formatted = _format_stack_line(line)
                     error_lines.append(formatted.rstrip('\n'))
-                    error_file_handle.write(formatted)
+                    if s3_only:
+                        error_output.append(formatted)
+                    else:
+                        error_file_handle.write(formatted)
 
                     context_buffer.append(line)
                     if len(context_buffer) > CONTEXT_LINES:
                         context_buffer.pop(0)
 
-                    error_file_handle.flush()
+                    if not s3_only:
+                        error_file_handle.flush()
                     continue
                 
                 # Simple counting
@@ -510,15 +582,24 @@ class MonitorEngine:
 
                 if should_trigger_context:
                     if not capture_active:
-                        error_file_handle.write("-" * 40 + "\n")
+                        if s3_only:
+                            error_output.append("-" * 40 + "\n")
+                        else:
+                            error_file_handle.write("-" * 40 + "\n")
                         error_lines.append("-" * 40)
                         for ctx_line in context_buffer:
                             ctx_payload = _format_ctx_line(ctx_line)
-                            error_file_handle.write(f"{ctx_payload}\n")
+                            if s3_only:
+                                error_output.append(f"{ctx_payload}\n")
+                            else:
+                                error_file_handle.write(f"{ctx_payload}\n")
                             error_lines.append(ctx_payload)
 
                     main_formatted = _format_main_line(line)
-                    error_file_handle.write(main_formatted)
+                    if s3_only:
+                        error_output.append(main_formatted)
+                    else:
+                        error_file_handle.write(main_formatted)
                     error_lines.append(main_formatted.rstrip('\n'))
 
                     stack_capture_active = bool(is_error)
@@ -527,7 +608,10 @@ class MonitorEngine:
                 else:
                     if not stack_capture_active and after_context_counter > 0:
                         ctx_payload = _format_ctx_line(line)
-                        error_file_handle.write(f"{ctx_payload}\n")
+                        if s3_only:
+                            error_output.append(f"{ctx_payload}\n")
+                        else:
+                            error_file_handle.write(f"{ctx_payload}\n")
                         error_lines.append(ctx_payload)
                         after_context_counter -= 1
                 
@@ -538,7 +622,7 @@ class MonitorEngine:
                     
                 # Flush error file periodically or on write? 
                 # Python's file object is buffered, let's flush on trigger to be safe
-                if should_trigger_context or stack_capture_active:
+                if not s3_only and (should_trigger_context or stack_capture_active):
                     error_file_handle.flush()
 
         finally:
@@ -551,6 +635,35 @@ class MonitorEngine:
             if threshold_updated:
                 task.threshold_state = threshold_state
                 task.save(update_fields=['threshold_state'])
+
+        if s3_only:
+            try:
+                if raw_buffer:
+                    s3_client.put_object(
+                        Bucket=s3_bucket,
+                        Key=raw_s3_key,
+                        Body="".join(raw_buffer).encode('utf-8'),
+                        ContentType='text/plain; charset=utf-8'
+                    )
+            except Exception:
+                pass
+
+            uploaded_error_key = None
+            try:
+                if error_output:
+                    s3_client.put_object(
+                        Bucket=s3_bucket,
+                        Key=error_s3_key,
+                        Body="".join(error_output).encode('utf-8'),
+                        ContentType='text/plain; charset=utf-8'
+                    )
+                    uploaded_error_key = error_s3_key
+            except Exception:
+                pass
+
+            if alerts:
+                self._send_slack_alert(alerts, task, source_name, log_dir, uploaded_error_key)
+            return
 
         # --- Post-processing after stream ends ---
         
@@ -770,7 +883,7 @@ class MonitorEngine:
             
             base_url = os.environ.get('PUBLIC_URL') or getattr(settings, 'PUBLIC_URL', None) or 'http://localhost:5173'
             base_url = base_url.rstrip('/')
-            log_url = f"{base_url}/logs?taskId={task.id}&filename={error_filename}"
+            log_url = f"{base_url}/logs?taskId={task.id}&filename={quote(str(error_filename), safe='')}"
             
             blocks.append({
                 "type": "section",
@@ -813,6 +926,10 @@ class MonitorEngine:
         cutoff_date = datetime.date.today() - datetime.timedelta(days=retention)
         
         task_log_dir = os.path.join(self.LOG_DIR, str(task.id))
+        s3_client = self._get_s3_client(task)
+        if s3_client:
+            self._cleanup_s3(task, s3_client, retention_days=90)
+            return
         if not os.path.exists(task_log_dir):
             return
             

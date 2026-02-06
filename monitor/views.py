@@ -2,11 +2,57 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from api.views import HasRolePermission
-from django.http import FileResponse, HttpResponseNotFound
+from django.http import FileResponse, HttpResponseNotFound, StreamingHttpResponse
 import os
+import datetime
+import codecs
 from .models import MonitorTask
 from .engine import monitor_engine
 from django.forms.models import model_to_dict
+try:
+    import boto3
+except ImportError:
+    boto3 = None
+
+def _get_s3_client(task):
+    if not boto3:
+        return None
+    if not getattr(task, 's3_archive_enabled', False):
+        return None
+    if not getattr(task, 's3_bucket', ''):
+        return None
+    try:
+        return boto3.client(
+            's3',
+            region_name=task.s3_region,
+            aws_access_key_id=task.s3_access_key,
+            aws_secret_access_key=task.s3_secret_key,
+            endpoint_url=task.s3_endpoint or None
+        )
+    except Exception:
+        return None
+
+def _task_s3_prefixes(task):
+    prefixes = [f"logs/monitor/{task.id}/"]
+    if getattr(task, 'name', None):
+        prefixes.append(f"logs/{task.name}/")
+    return prefixes
+
+def _iter_s3_lines(body_stream):
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    buf = ""
+    for chunk in iter(lambda: body_stream.read(64 * 1024), b''):
+        buf += decoder.decode(chunk)
+        while True:
+            nl = buf.find('\n')
+            if nl == -1:
+                break
+            line = buf[:nl + 1]
+            buf = buf[nl + 1:]
+            yield line
+    buf += decoder.decode(b'', final=True)
+    if buf:
+        yield buf
 
 @api_view(['GET', 'POST'])
 @permission_classes([HasRolePermission])
@@ -82,22 +128,82 @@ def monitor_logs(request):
     search_query = request.query_params.get('search', '').lower()
     sort_by = request.query_params.get('sort_by', 'mtime') # name, size, mtime
     order = request.query_params.get('order', 'desc') # asc, desc
+    log_type = (request.query_params.get('log_type') or 'all').lower()
     
     base_dir = monitor_engine.LOG_DIR
-    if task_id:
-        log_dir = os.path.join(base_dir, str(task_id))
-    else:
+    if not task_id:
         return Response({"files": [], "total": 0})
+
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return Response({"files": [], "total": 0})
+
+    s3_client = _get_s3_client(task)
+    if s3_client:
+        files = []
+        try:
+            prefixes = _task_s3_prefixes(task)
+            def is_error_key(key: str) -> bool:
+                k = (key or '').lower()
+                return ('/error/' in k) or k.endswith('_error.log') or ('task_errors_' in k)
+
+            for prefix in prefixes:
+                paginator = s3_client.get_paginator('list_objects_v2')
+                for p in paginator.paginate(Bucket=task.s3_bucket, Prefix=prefix):
+                    for obj in p.get('Contents', []) or []:
+                        key = obj.get('Key') or ''
+                        if not key.endswith(".log"):
+                            continue
+                        if log_type == 'error' and not is_error_key(key):
+                            continue
+                        if log_type == 'raw' and is_error_key(key):
+                            continue
+                        if search_query and search_query not in key.lower():
+                            continue
+                        lm = obj.get('LastModified')
+                        mtime = lm.timestamp() if lm else 0
+                        files.append({
+                            "name": key,
+                            "size": int(obj.get('Size') or 0),
+                            "mtime": mtime
+                        })
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+        reverse = (order == 'desc')
+        if sort_by == 'name':
+            files.sort(key=lambda x: x['name'], reverse=reverse)
+        elif sort_by == 'size':
+            files.sort(key=lambda x: x['size'], reverse=reverse)
+        else:
+            files.sort(key=lambda x: x['mtime'], reverse=reverse)
+
+        total = len(files)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paged_files = files[start:end]
+        return Response({"files": paged_files, "total": total, "page": page, "page_size": page_size})
+
+    log_dir = os.path.join(base_dir, str(task_id))
 
     if not os.path.exists(log_dir):
         return Response({"files": [], "total": 0})
     
     files = []
     try:
+        def is_error_name(name: str) -> bool:
+            n = (name or '').lower()
+            return n.endswith('_error.log') or ('task_errors_' in n)
+
         for f in os.listdir(log_dir):
             if f.endswith(".log"):
                 # Filter by search query if provided
                 if search_query and search_query not in f.lower():
+                    continue
+                if log_type == 'error' and not is_error_name(f):
+                    continue
+                if log_type == 'raw' and is_error_name(f):
                     continue
                     
                 full_path = os.path.join(log_dir, f)
@@ -145,9 +251,77 @@ def monitor_log_view(request):
     
     if not filename or not task_id:
         return Response({"error": "filename and task_id required"}, status=400)
-    
+
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return Response({"error": "Task not found"}, status=404)
+
+    s3_client = _get_s3_client(task)
+    if s3_client:
+        key = filename
+        prefixes = _task_s3_prefixes(task)
+        if not any(key.startswith(p) for p in prefixes):
+            return Response({"error": "invalid parameters"}, status=400)
+
+        try:
+            head = s3_client.head_object(Bucket=task.s3_bucket, Key=key)
+            size = int(head.get('ContentLength') or 0)
+        except Exception:
+            return Response({"error": "File not found"}, status=404)
+
+        try:
+            if keyword:
+                results = []
+                keywords = keyword.lower().split()
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                for i, line in enumerate(_iter_s3_lines(obj['Body']), 1):
+                    ll = line.lower()
+                    if all(k in ll for k in keywords):
+                        results.append(line.rstrip('\n'))
+                        if len(results) > 2000:
+                            results.append("... (Matches truncated, found > 2000 lines) ...")
+                            break
+                return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
+
+            MAX_SIZE_MB = 50
+            if size > MAX_SIZE_MB * 1024 * 1024:
+                if reverse and page == 1:
+                    tail_bytes = min(size, 1024 * 1024)
+                    start = max(0, size - tail_bytes)
+                    obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key, Range=f"bytes={start}-{size-1}")
+                    text = obj['Body'].read().decode('utf-8', errors='replace')
+                    lines = text.splitlines(True)
+                    if lines and not text.endswith('\n'):
+                        pass
+                    lines = lines[-page_size:]
+                    lines.reverse()
+                    return Response({
+                        "content": "".join(lines),
+                        "total": page_size + 1,
+                        "page": 1,
+                        "page_size": page_size,
+                        "warning": "File too large, showing last lines only."
+                    })
+                return Response({"error": "File too large"}, status=413)
+
+            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+            text = obj['Body'].read().decode('utf-8', errors='replace')
+            all_lines = text.splitlines(True)
+            total = len(all_lines)
+            if reverse:
+                all_lines.reverse()
+            if page == -1:
+                import math
+                page = max(1, math.ceil(total / page_size))
+            start = (page - 1) * page_size
+            end = start + page_size
+            return Response({"content": "".join(all_lines[start:end]), "total": total, "page": page, "page_size": page_size})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
     if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
-         return Response({"error": "invalid parameters"}, status=400)
+        return Response({"error": "invalid parameters"}, status=400)
          
     log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
     file_path = os.path.join(log_dir, filename)
@@ -259,10 +433,30 @@ def monitor_log_download(request):
     
     if not filename or not task_id:
         return Response({"error": "filename and task_id required"}, status=400)
-    
-    # Security check
+
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return HttpResponseNotFound("File not found")
+
+    s3_client = _get_s3_client(task)
+    if s3_client:
+        key = filename
+        prefixes = _task_s3_prefixes(task)
+        if not any(key.startswith(p) for p in prefixes):
+            return Response({"error": "invalid parameters"}, status=400)
+        try:
+            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+        except Exception:
+            return HttpResponseNotFound("File not found")
+
+        resp = StreamingHttpResponse(obj['Body'], content_type='text/plain; charset=utf-8')
+        out_name = os.path.basename(key) or "log.log"
+        resp['Content-Disposition'] = f'attachment; filename="{out_name}"'
+        return resp
+
     if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
-         return Response({"error": "invalid parameters"}, status=400)
+        return Response({"error": "invalid parameters"}, status=400)
          
     log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
     file_path = os.path.join(log_dir, filename)
@@ -282,37 +476,54 @@ def monitor_log_batch_search(request):
     
     if not task_id or not filenames or not keyword:
         return Response({"error": "Missing parameters"}, status=400)
-        
-    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return Response({"results": []})
+
+    s3_client = _get_s3_client(task)
     results = []
     MAX_TOTAL_RESULTS = 2000
-    
     keywords = keyword.lower().split()
-    
+
+    if s3_client:
+        prefixes = _task_s3_prefixes(task)
+        for key in filenames:
+            if not any(str(key).startswith(p) for p in prefixes):
+                continue
+            try:
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                for i, line in enumerate(_iter_s3_lines(obj['Body']), 1):
+                    ll = line.lower()
+                    if all(k in ll for k in keywords):
+                        results.append({"file": key, "line": i, "content": line.strip()})
+                        if len(results) >= MAX_TOTAL_RESULTS:
+                            break
+            except Exception:
+                pass
+            if len(results) >= MAX_TOTAL_RESULTS:
+                break
+        return Response({"results": results})
+
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
     for fname in filenames:
         if os.path.sep in fname or '..' in fname:
             continue
-            
         fpath = os.path.join(log_dir, fname)
         if not os.path.exists(fpath):
             continue
-            
         try:
             with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
                 for i, line in enumerate(f, 1):
                     line_lower = line.lower()
                     if all(k in line_lower for k in keywords):
-                        results.append({
-                            "file": fname,
-                            "line": i,
-                            "content": line.strip()
-                        })
+                        results.append({"file": fname, "line": i, "content": line.strip()})
                         if len(results) >= MAX_TOTAL_RESULTS:
                             break
         except Exception:
             pass
-            
         if len(results) >= MAX_TOTAL_RESULTS:
             break
-            
+
     return Response({"results": results})

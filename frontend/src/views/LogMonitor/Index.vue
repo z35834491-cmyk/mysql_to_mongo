@@ -168,8 +168,12 @@
                     />
                   </div>
                   <div class="list-toolbar">
-                     <span class="file-count">{{ filteredSavedLogFiles.length }} Files</span>
+                     <span class="file-count">{{ savedFileTotal }} Files</span>
                      <div class="toolbar-actions">
+                      <el-radio-group v-if="selectedTask?.s3_archive_enabled" v-model="savedLogType" size="small" @change="handleSavedLogTypeChange">
+                        <el-radio-button label="raw">正常</el-radio-button>
+                        <el-radio-button label="error">错误</el-radio-button>
+                      </el-radio-group>
                        <el-tooltip content="Task Config" placement="top" v-if="canManage">
                           <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
                        </el-tooltip>
@@ -339,11 +343,24 @@ const savedLoading = ref(false)
 const savedContentLoading = ref(false)
 const savedLogFiles = ref<any[]>([])
 const fileSearchQuery = ref('')
+const savedLogType = ref<'raw' | 'error'>('raw')
+
+const isErrorLogName = (name: string) => {
+  const n = (name || '').toLowerCase()
+  if (n.includes('/error/')) return true
+  if (n.endsWith('_error.log')) return true
+  if (n.includes('task_errors_')) return true
+  return false
+}
 
 const filteredSavedLogFiles = computed(() => {
-  if (!fileSearchQuery.value) return savedLogFiles.value
+  const base = savedLogFiles.value.filter(f => {
+    const isErr = isErrorLogName(f.name)
+    return savedLogType.value === 'error' ? isErr : !isErr
+  })
+  if (!fileSearchQuery.value) return base
   const q = fileSearchQuery.value.toLowerCase()
-  return savedLogFiles.value.filter(f => f.name.toLowerCase().includes(q))
+  return base.filter(f => f.name.toLowerCase().includes(q))
 })
 
 const savedLogFile = ref('')
@@ -514,11 +531,15 @@ const fetchSavedLogs = async (page = 1) => {
   savedFilePage.value = page
   savedLoading.value = true
   try {
+    if (!selectedTask.value?.s3_archive_enabled && savedLogType.value !== 'error') {
+      savedLogType.value = 'error'
+    }
     const res = await monitorApi.getLogs(selectedTaskId.value, { 
         page, 
         page_size: savedFilePageSize.value,
         sort_by: savedFileSortBy.value,
-        order: savedFileOrder.value
+        order: savedFileOrder.value,
+        log_type: savedLogType.value
     })
     savedLogFiles.value = res.files
     savedFileTotal.value = res.total
@@ -536,6 +557,20 @@ const handleSortCommand = (command: string) => {
     savedFileSortBy.value = field
     savedFileOrder.value = order
     fetchSavedLogs(1)
+}
+
+const handleSavedLogTypeChange = () => {
+  selectedFiles.value = []
+  isBatchSearch.value = false
+  if (savedLogFile.value && !filteredSavedLogFiles.value.some(f => f.name === savedLogFile.value)) {
+    savedLogFile.value = ''
+    savedLogContent.value = ''
+    savedLogTotal.value = 0
+    savedLogPage.value = 1
+  }
+  if (selectedTaskId.value) {
+    fetchSavedLogs(1)
+  }
 }
 
 const selectSavedFile = (name: string) => {
@@ -694,10 +729,14 @@ onMounted(async () => {
       selectedTaskId.value = task.id!
       selectedTask.value = { ...task }
       form.value = { ...task }
+      if (!selectedTask.value.s3_archive_enabled) {
+        savedLogType.value = 'error'
+      }
       
       await fetchSavedLogs(1)
       
       if (fName) {
+        savedLogType.value = isErrorLogName(String(fName)) ? 'error' : 'raw'
         selectSavedFile(String(fName))
       }
     }
