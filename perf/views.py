@@ -9,6 +9,7 @@ from django.forms.models import model_to_dict
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from django.http import HttpResponse
 
 from ai_ops.models import AIConfig
 from api.views import HasRolePermission
@@ -256,6 +257,38 @@ def load_test_report_detail(request, pk: int):
     except LoadTestReport.DoesNotExist:
         return Response({"error": "not found"}, status=404)
     return Response(model_to_dict(r))
+
+@api_view(["GET"])
+@permission_classes([HasRolePermission])
+def load_test_report_pdf(request, pk: int):
+    try:
+        r = LoadTestReport.objects.get(pk=pk)
+    except LoadTestReport.DoesNotExist:
+        return Response({"error": "not found"}, status=404)
+    html = f"""
+    <html><head><meta charset="utf-8"><style>
+    body {{ font-family: Arial, sans-serif; }}
+    h1 {{ font-size: 20px; }}
+    pre {{ white-space: pre-wrap; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ border: 1px solid #ddd; padding: 6px; font-size: 12px; }}
+    </style></head><body>
+    <h1>Load Test Report: {r.test_id}</h1>
+    <p>Service: {r.namespace}/{r.service_name}</p>
+    <p>Time: {r.start_time} ~ {r.end_time}</p>
+    <p>Max QPS: {r.max_qps_reached} | QPS/Core: {r.qps_per_core:.3f} | Confidence: {r.confidence:.3f}</p>
+    <h2>AI Suggestions</h2>
+    <pre>{r.report_markdown or r.ai_suggestions}</pre>
+    </body></html>
+    """
+    try:
+        from weasyprint import HTML
+        pdf = HTML(string=html).write_pdf()
+        resp = HttpResponse(pdf, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="report_{r.id}.pdf"'
+        return resp
+    except Exception as e:
+        return Response({"error": f"pdf_failed: {e}"}, status=500)
 
 def _run_capacity_analysis(params: dict):
     data = params or {}

@@ -66,6 +66,7 @@ data:
     server:
       http_listen_port: 3200
     multitenancy_enabled: false
+    search_enabled: true
     distributor:
       receivers:
         otlp:

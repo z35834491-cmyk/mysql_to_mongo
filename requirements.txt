@@ -16,3 +16,4 @@ whitenoise
 psutil==5.9.8
 redis==5.0.1
 pika==1.3.2
+WeasyPrint==61.2

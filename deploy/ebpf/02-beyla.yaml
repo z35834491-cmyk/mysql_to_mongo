@@ -49,6 +49,7 @@ spec:
       hostPID: true  # 必须：允许看到主机上的进程
       containers:
         - name: beyla
+          # 降级到 v1.8.4 以确保稳定性，v2.8.5 存在 Metrics 队列阻塞导致的 Panic 问题
           image: grafana/beyla:1.8.4
           securityContext:
             privileged: true  # 必须：允许加载 eBPF 程序
@@ -57,12 +58,28 @@ spec:
                 - SYS_ADMIN
           env:
             # 配置：将 Trace 发送到我们部署的 Tempo
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            # 使用 Explicit Traces Endpoint 避免混淆
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: "http://tempo.trace-system.svc:4317"
+            
+            # 关键修复：禁用 Metrics 上报（Tempo 默认只收 Trace，发 Metrics 会导致 gRPC 错误和 Panic）
+            - name: BEYLA_METRICS_INTERVAL
+              value: "0"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            # 禁用网络指标，减少队列压力
+            - name: BEYLA_NETWORK_METRICS
+              value: "off"
+
             # 配置：开启 Kubernetes 元数据装饰 (自动加 namespace/pod/service 标签)
-            # 临时禁用 Kube Metadata 以解决 "InstancesCount <= 0" 报错
+            # 临时禁用 Kube Metadata 以解决 "InstancesCount <= 0" 报错及 K8s API 连接问题
             - name: BEYLA_KUBE_METADATA_ENABLE
               value: "false"
+            
+            # 手动指定服务名，防止因缺少 Kube Metadata 导致 Resource 为空
+            - name: OTEL_SERVICE_NAME
+              value: "beyla-agent"
+
             # 配置：要抓取的端口或服务 (自动发现 Java/Go/Node/Python 等 HTTP/gRPC 流量)
             - name: BEYLA_OPEN_PORT
               value: "80-65535"
@@ -71,11 +88,6 @@ spec:
               value: "3s"
             - name: BEYLA_BPF_CHANNEL_CAPACITY
               value: "1000"
-            # 关键修复：禁用 Metrics 上报（Tempo 默认只收 Trace，发 Metrics 会导致 gRPC 错误和 Panic）
-            - name: BEYLA_METRICS_INTERVAL
-              value: "0"
-            - name: OTEL_METRICS_EXPORTER
-              value: "none"
             - name: BEYLA_TRACE_PRINTER
               value: "text"
             - name: BEYLA_INTERNAL_TELEMETRY_PORT

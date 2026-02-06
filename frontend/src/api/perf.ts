@@ -49,6 +49,7 @@ export const perfApi = {
   listProfiles: (params?: any) => request.get<ServiceProfile[]>('/perf/profiles', { params }),
   listReports: (params?: any) => request.get<LoadTestReport[]>('/perf/reports', { params }),
   getReport: (id: number) => request.get<LoadTestReport>(`/perf/reports/${id}`),
+  getReportPdf: (id: number) => request.get<Blob>(`/perf/reports/${id}/pdf`, { responseType: 'blob' }),
 
   analyzeCapacity: (data: any) => request.post<{ job_id: number, status: string }>('/perf/analyze/capacity', data),
   getJob: (id: number) => request.get<any>(`/perf/jobs/${id}`),

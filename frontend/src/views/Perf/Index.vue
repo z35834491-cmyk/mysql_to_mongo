@@ -102,6 +102,9 @@
               <div class="md-title">AI Suggestions</div>
               <pre class="md-body">{{ capResult.ai_suggestions || capResult.report_markdown }}</pre>
             </div>
+            <div v-if="capChartOption" class="capacity-chart">
+              <v-chart :option="capChartOption" autoresize />
+            </div>
           </div>
 
           <div class="reports">
@@ -242,6 +245,10 @@
         <el-descriptions-item label="Confidence">{{ Number(activeReport.confidence).toFixed(3) }}</el-descriptions-item>
       </el-descriptions>
       <pre class="md-body" v-if="activeReport">{{ activeReport.report_markdown || activeReport.ai_suggestions }}</pre>
+      <template #footer>
+        <el-button @click="reportDialogVisible = false">Close</el-button>
+        <el-button type="primary" :disabled="!activeReport" @click="downloadReportPdf">Download PDF</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="applyDialogVisible" title="Apply HPA" width="600px">
@@ -274,10 +281,10 @@ import { perfApi, type ClusterConfig, type LoadTestReport } from '@/api/perf'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart } from 'echarts/charts'
+import { BarChart, ScatterChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components'
 
-use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, DataZoomComponent])
+use([CanvasRenderer, BarChart, ScatterChart, LineChart, GridComponent, TooltipComponent, DataZoomComponent])
 
 const activeTab = ref('clusters')
 
@@ -303,6 +310,7 @@ const capForm = ref<any>({
 const capTimeRange = ref<any[]>([])
 const analyzing = ref(false)
 const capResult = ref<LoadTestReport | null>(null)
+const capChartOption = ref<any>(null)
 const services = ref<string[]>([])
 const templates = ref<any[]>([])
 const selectedTemplateId = ref<string>('')
@@ -459,6 +467,7 @@ const runAnalyze = async () => {
       const job = await perfApi.getJob(jobId)
       if (job.status === 'success') {
         capResult.value = job.result?.report || null
+        buildCapacityChart()
         activeTab.value = 'capacity'
         fetchReports()
         return
@@ -494,6 +503,23 @@ const openReport = async (row: LoadTestReport) => {
   }
 }
 
+const downloadReportPdf = async () => {
+  if (!activeReport.value) return
+  try {
+    const blob = await perfApi.getReportPdf(activeReport.value.id)
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `report_${activeReport.value.id}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error('Download failed')
+  }
+}
+
 const fetchTrace = async () => {
   if (!traceForm.value.cluster_id) return ElMessage.error('Select cluster')
   if (!traceForm.value.trace_id) return ElMessage.error('Trace ID required')
@@ -509,6 +535,89 @@ const fetchTrace = async () => {
     traceJson.value = e?.response?.data?.detail || e?.response?.data?.error || 'Failed'
   } finally {
     loadingTrace.value = false
+  }
+}
+
+const sumSeriesByTs = (seriesList: any[]): [number, number][] => {
+  const map: Record<string, number> = {}
+  for (const s of seriesList || []) {
+    for (const [ts, v] of s?.values || []) {
+      const t = Number(ts)
+      const val = Number(v)
+      if (!isFinite(t) || !isFinite(val)) continue
+      map[t] = (map[t] || 0) + val
+    }
+  }
+  const items = Object.keys(map).map((k) => [Number(k), map[k]])
+  items.sort((a, b) => a[0] - b[0])
+  return items
+}
+
+const linregress = (xs: number[], ys: number[]) => {
+  const n = Math.min(xs.length, ys.length)
+  if (n < 2) return null as any
+  const x = xs.slice(0, n)
+  const y = ys.slice(0, n)
+  const xm = x.reduce((a, b) => a + b, 0) / n
+  const ym = y.reduce((a, b) => a + b, 0) / n
+  let sxx = 0
+  let sxy = 0
+  let syy = 0
+  for (let i = 0; i < n; i++) {
+    const dx = x[i] - xm
+    const dy = y[i] - ym
+    sxx += dx * dx
+    sxy += dx * dy
+    syy += dy * dy
+  }
+  if (sxx === 0) return null as any
+  const slope = sxy / sxx
+  const intercept = ym - slope * xm
+  const r = sxy / Math.sqrt(sxx * syy || 1)
+  return { slope, intercept, r }
+}
+
+const buildCapacityChart = () => {
+  const rep = capResult.value as any
+  if (!rep?.raw_metrics) {
+    capChartOption.value = null
+    return
+  }
+  const qpsPts = sumSeriesByTs(rep.raw_metrics.qps || [])
+  const cpuPts = sumSeriesByTs(rep.raw_metrics.cpu || [])
+  const cpuMap: Record<number, number> = {}
+  for (const [t, v] of cpuPts) cpuMap[t] = v
+  const pts: [number, number][] = []
+  for (const [t, q] of qpsPts) {
+    const c = cpuMap[t]
+    if (c == null) continue
+    pts.push([Number(q), Number(c)])
+  }
+  if (pts.length < 2) {
+    capChartOption.value = null
+    return
+  }
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  const reg = linregress(xs, ys)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const lineData: number[][] =
+    reg
+      ? [
+          [minX, reg.intercept + reg.slope * minX],
+          [maxX, reg.intercept + reg.slope * maxX],
+        ]
+      : []
+  capChartOption.value = {
+    tooltip: { trigger: 'axis' },
+    grid: { left: 60, right: 20, top: 20, bottom: 50 },
+    xAxis: { type: 'value', name: 'QPS' },
+    yAxis: { type: 'value', name: 'CPU(cores)' },
+    series: [
+      { type: 'scatter', name: 'points', symbolSize: 6, data: pts },
+      { type: 'line', name: 'fit', data: lineData, smooth: true, showSymbol: false },
+    ],
   }
 }
 

@@ -7,6 +7,7 @@ urlpatterns = [
     path('profiles', views.service_profiles),
     path('reports', views.load_test_reports),
     path('reports/<int:pk>', views.load_test_report_detail),
+    path('reports/<int:pk>/pdf', views.load_test_report_pdf),
     path('analyze/capacity', views.analyze_capacity),
     path('jobs/<int:pk>', views.job_detail),
     path('services', views.list_services),
