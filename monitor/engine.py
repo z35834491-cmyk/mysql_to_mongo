@@ -5,6 +5,7 @@ import datetime
 import glob
 import logging
 import json
+import re
 import requests
 from django.conf import settings
 from django.utils import timezone
@@ -246,9 +247,39 @@ class MonitorEngine:
         after_context_counter = 0
         stack_capture_active = False
 
-        def _strip_leading_timestamp(s: str) -> str:
+        def _strip_ansi(s: str) -> str:
+            try:
+                return re.sub(r'\x1b\[[0-9;]*m', '', s)
+            except Exception:
+                return s
+
+        def _strip_k8s_timestamp(s: str) -> str:
             try:
                 payload = s.lstrip()
+                m = re.match(r'^\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2})\s+(.*)$', payload)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
+            return s
+
+        def _extract_level(s: str):
+            try:
+                payload = s.lstrip()
+                m = re.match(r'^\[(ERROR|WARN|INFO|DEBUG|TRACE|FATAL)\]\b', payload)
+                return m.group(1) if m else None
+            except Exception:
+                return None
+
+        def _drop_bracket_tags(s: str) -> str:
+            try:
+                return re.sub(r'^(\[[^\]]+\]\s+)+', '', s.lstrip())
+            except Exception:
+                return s
+
+        def _strip_leading_timestamp(s: str) -> str:
+            try:
+                payload = _strip_k8s_timestamp(_strip_ansi(s)).lstrip()
                 for prefix in ('[ERROR]', '[WARN]', '[INFO]', '[DEBUG]', '[TRACE]', '[FATAL]'):
                     if payload.startswith(prefix):
                         payload = payload[len(prefix):].lstrip()
@@ -264,7 +295,7 @@ class MonitorEngine:
 
         def _strip_level_prefix(s: str) -> str:
             try:
-                payload = s.lstrip()
+                payload = _strip_k8s_timestamp(_strip_ansi(s)).lstrip()
                 for prefix in ('[ERROR]', '[WARN]', '[INFO]', '[DEBUG]', '[TRACE]', '[FATAL]'):
                     if payload.startswith(prefix):
                         return payload[len(prefix):].lstrip()
@@ -272,9 +303,39 @@ class MonitorEngine:
                 pass
             return s
 
+        def _looks_like_java_frame(s: str) -> bool:
+            t = s.strip()
+            if not t:
+                return False
+            return bool(re.match(r'^[a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)+\([A-Za-z0-9_$.]+:\d+\)$', t))
+
+        def _format_stack_line(raw_line: str) -> str:
+            payload = _strip_leading_timestamp(raw_line).rstrip('\n')
+            payload = _drop_bracket_tags(payload).rstrip()
+            if not payload:
+                return "\n"
+            if payload.startswith('at '):
+                return f"    {payload}\n"
+            if payload.startswith('Caused by') or payload.startswith('Suppressed:'):
+                return f"{payload}\n"
+            if payload.startswith('...') and payload.endswith('more'):
+                return f"    {payload}\n"
+            if _looks_like_java_frame(payload):
+                return f"    at {payload}\n"
+            return f"    {payload}\n"
+
+        def _format_main_line(raw_line: str) -> str:
+            payload = _strip_leading_timestamp(raw_line).rstrip('\n')
+            payload = payload.rstrip()
+            return f"{payload}\n" if payload else "\n"
+
+        def _format_ctx_line(raw_line: str) -> str:
+            payload = _strip_leading_timestamp(raw_line).rstrip('\n').rstrip()
+            return payload
+
         def _is_stack_line(s: str) -> bool:
             payload = _strip_leading_timestamp(s).rstrip('\n')
-            t = payload.lstrip()
+            t = _drop_bracket_tags(payload).lstrip()
             if not t:
                 return True
             if t.startswith('at '):
@@ -291,10 +352,11 @@ class MonitorEngine:
                 return True
             if t.startswith('File "') or t.startswith('File '):
                 return True
-            # Java/Spring/MyBatis specific patterns
             if t.startswith('###') or t.startswith(';'):
                 return True
             if 'nested exception is ' in t:
+                return True
+            if _looks_like_java_frame(t):
                 return True
             return False
         
@@ -314,26 +376,26 @@ class MonitorEngine:
                     continue
                     
                 # Decode bytes to string
-                line = line_bytes.decode('utf-8', errors='replace')
+                line_raw = line_bytes.decode('utf-8', errors='replace')
+                line = _strip_ansi(line_raw)
                 
                 # Write to raw log
                 if log_file_handle:
-                    log_file_handle.write(line)
+                    log_file_handle.write(line_raw)
 
                 # --- Analysis Logic Per Line ---
                 if any(k in line for k in clean_ignore_keywords):
                     continue
 
-                line_lower = line.lower()
+                app_level = _extract_level(line)
+                payload_lower = _strip_leading_timestamp(line).lower()
+                line_lower = payload_lower
                 is_stack_line = _is_stack_line(line)
 
                 if stack_capture_active and is_stack_line:
-                    error_lines.append(line.strip())
-                    # Use _strip_leading_timestamp for cleaner stack trace in log file
-                    line_for_write = _strip_leading_timestamp(line)
-                    error_file_handle.write(f"[STACK] {line_for_write}")
-                    if not line_for_write.endswith('\n'):
-                        error_file_handle.write('\n')
+                    formatted = _format_stack_line(line)
+                    error_lines.append(formatted.rstrip('\n'))
+                    error_file_handle.write(formatted)
 
                     context_buffer.append(line)
                     if len(context_buffer) > CONTEXT_LINES:
@@ -343,7 +405,7 @@ class MonitorEngine:
                     continue
                 
                 # Simple counting
-                if 'error' in line_lower or 'fail' in line_lower or 'exception' in line_lower:
+                if app_level in ('ERROR', 'FATAL') or ('error' in line_lower or 'fail' in line_lower or 'exception' in line_lower):
                     count_error += 1
                 elif 'warn' in line_lower:
                     count_warn += 1
@@ -405,7 +467,7 @@ class MonitorEngine:
                                 pass
                 
                 # 3. Generic Errors (for context recording)
-                is_error = any(k in line_lower for k in default_error_keywords)
+                is_error = app_level in ('ERROR', 'FATAL') or any(k in line_lower for k in default_error_keywords)
                 
                 # 4. Record Only (and Suppress Alert)
                 is_record = False
@@ -447,35 +509,26 @@ class MonitorEngine:
                 capture_active = stack_capture_active or after_context_counter > 0
 
                 if should_trigger_context:
-                    error_lines.append(line.strip())
-
                     if not capture_active:
                         error_file_handle.write("-" * 40 + "\n")
+                        error_lines.append("-" * 40)
                         for ctx_line in context_buffer:
-                            error_file_handle.write(f"[CTX] {ctx_line}")
-                            if not ctx_line.endswith('\n'):
-                                error_file_handle.write('\n')
+                            ctx_payload = _format_ctx_line(ctx_line)
+                            error_file_handle.write(f"{ctx_payload}\n")
+                            error_lines.append(ctx_payload)
 
-                    prefix = ""
-                    if is_alert:
-                        prefix += "[ALERT]"
-                    if is_error:
-                        prefix += "[ERROR]"
-                    if is_record:
-                        prefix += "[RECORD]"
-                    line_for_write = _strip_level_prefix(line)
-                    error_file_handle.write(f"{prefix} {line_for_write}")
-                    if not line.endswith('\n'):
-                        error_file_handle.write('\n')
+                    main_formatted = _format_main_line(line)
+                    error_file_handle.write(main_formatted)
+                    error_lines.append(main_formatted.rstrip('\n'))
 
                     stack_capture_active = bool(is_error)
                     after_context_counter = 0
 
                 else:
                     if not stack_capture_active and after_context_counter > 0:
-                        error_file_handle.write(f"[CTX] {line}")
-                        if not line.endswith('\n'):
-                            error_file_handle.write('\n')
+                        ctx_payload = _format_ctx_line(line)
+                        error_file_handle.write(f"{ctx_payload}\n")
+                        error_lines.append(ctx_payload)
                         after_context_counter -= 1
                 
                 # Update context buffer (always keep last N lines)
@@ -519,8 +572,9 @@ class MonitorEngine:
             task_err_path = os.path.join(log_dir, task_err_filename)
             try:
                 with open(task_err_path, "a", encoding="utf-8") as f:
+                    f.write(f"===== {source_name} =====\n")
                     for l in error_lines:
-                        f.write(f"[{source_name}] {l}")
+                        f.write(l)
                         if not l.endswith('\n'):
                             f.write('\n')
             except Exception as e:
