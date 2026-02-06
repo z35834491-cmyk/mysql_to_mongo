@@ -158,6 +158,7 @@
               <div style="display:flex;gap:8px">
                 <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(1.0)">Load-Test 100%</el-button>
                 <el-button :disabled="!traceForm.cluster_id || samplingPending" @click="toggleSampling(0.01)">Normal 1%</el-button>
+                <el-button :disabled="!traceForm.cluster_id" @click="checkTempo">Check Tempo</el-button>
               </div>
             </el-form-item>
             <el-form-item label="Trace ID">
@@ -384,6 +385,18 @@ const toggleSampling = async (ratio: number) => {
   }
 }
 
+const checkTempo = async () => {
+  if (!traceForm.value.cluster_id) return ElMessage.error('Select cluster')
+  try {
+    const res = await perfApi.diagTempo(Number(traceForm.value.cluster_id))
+    const ok = !!res?.ok
+    traceError.value = ok ? 'Tempo reachable' : `Tempo issues: ${JSON.stringify(res?.checks || res)}`
+    if (!ok) ElMessage.error('Tempo not reachable or empty')
+  } catch (e: any) {
+    traceError.value = e?.response?.data?.error || 'Tempo diagnostics failed'
+    ElMessage.error(traceError.value)
+  }
+}
 const refreshTraceServices = async () => {
   if (!traceForm.value.cluster_id) return
   try {

@@ -16,6 +16,8 @@ urlpatterns = [
     path('traces/<str:trace_id>', views.get_trace),
     path('traces/<str:trace_id>/insights', views.trace_insights),
     path('traces', views.search_traces),
+    path('diag/tempo', views.tempo_diagnostics),
+    path('diag/beyla', views.beyla_diagnostics),
     path('hpa', views.list_hpa),
     path('hpa/apply', views.apply_hpa),
 ]

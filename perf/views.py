@@ -9,6 +9,7 @@ from django.forms.models import model_to_dict
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+import logging
 from django.http import HttpResponse
 
 from ai_ops.models import AIConfig
@@ -844,12 +845,19 @@ def search_traces(request):
     if service_name:
         url = base + f"/api/search?limit={limit}&tags=service.name={service_name}"
     try:
+        logging.getLogger("perf").info(f"tempo_search url={url} cluster_id={cluster_id} service={service_name}")
         resp = requests.get(url, timeout=10)
         traces = []
         if resp.ok:
             data = resp.json()
             traces = data.get("traces") or []
         # Fallback: if filtered search got nothing, try unfiltered recent traces
+        if (not traces) and service_name:
+            # Try rootServiceName filter
+            resp1 = requests.get(base + f"/api/search?limit={limit}&tags=rootServiceName={service_name}", timeout=10)
+            if resp1.ok:
+                data1 = resp1.json()
+                traces = data1.get("traces") or []
         if (not traces) and service_name:
             resp2 = requests.get(base + f"/api/search?limit={limit}", timeout=10)
             if resp2.ok:
@@ -864,9 +872,77 @@ def search_traces(request):
                 "startTimeUnixNano": t.get("startTimeUnixNano"),
                 "durationMs": t.get("durationMs"),
             })
+        logging.getLogger("perf").info(f"tempo_search result_count={len(items)}")
         return Response({"items": items})
     except Exception as e:
+        logging.getLogger("perf").error(f"tempo_search error={e}")
         return Response({"items": []})
+
+@api_view(["GET"])
+@permission_classes([HasRolePermission])
+def tempo_diagnostics(request):
+    cluster_id = request.query_params.get("cluster_id")
+    if not cluster_id:
+        return Response({"error": "cluster_id required"}, status=400)
+    try:
+        cluster = ClusterConfig.objects.get(pk=cluster_id)
+    except ClusterConfig.DoesNotExist:
+        return Response({"error": "cluster not found"}, status=404)
+    url = (cluster.tempo_url or "").rstrip("/")
+    if not url:
+        return Response({"ok": False, "reason": "tempo_url missing in cluster config"})
+    results = {"base": url, "checks": []}
+    def _check(path):
+        full = f"{url}{path}"
+        try:
+            r = requests.get(full, timeout=10)
+            results["checks"].append({"url": full, "status": r.status_code, "ok": bool(r.ok), "len": len(r.text or ""), "preview": (r.text or "")[:300]})
+        except Exception as e:
+            results["checks"].append({"url": full, "error": str(e)})
+    _check("/api/search?limit=1")
+    _check("/api/search?limit=1&tags=service.name=*")
+    _check("/api/search?limit=1&tags=rootServiceName=*")
+    _check("/ready")
+    _check("/metrics")
+    ok = any(c.get("ok") for c in results["checks"])
+    results["ok"] = ok
+    return Response(results)
+
+@api_view(["GET"])
+@permission_classes([HasRolePermission])
+def beyla_diagnostics(request):
+    if not client:
+        return Response({"error": "kubernetes package not installed"}, status=500)
+    cluster_id = request.query_params.get("cluster_id")
+    namespace = request.query_params.get("namespace") or "trace-system"
+    ds_name = request.query_params.get("daemonset") or "beyla"
+    if not cluster_id:
+        return Response({"error": "cluster_id required"}, status=400)
+    try:
+        cluster = ClusterConfig.objects.get(pk=cluster_id)
+    except ClusterConfig.DoesNotExist:
+        return Response({"error": "cluster not found"}, status=404)
+    try:
+        _load_kube_config(cluster.kube_config)
+    except Exception as e:
+        return Response({"error": f"kubeconfig invalid: {e}"}, status=400)
+    try:
+        api = client.AppsV1Api()
+        ds = api.read_namespaced_daemon_set(name=ds_name, namespace=namespace)
+        containers = ds.spec.template.spec.containers or []
+        env = []
+        for c in containers:
+            if c.name == "beyla":
+                for e in (c.env or []):
+                    env.append({"name": e.name, "value": e.value})
+        out = {
+            "namespace": namespace,
+            "daemonset": ds_name,
+            "env": env,
+        }
+        return Response(out)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
 
 
 @api_view(["GET"])
