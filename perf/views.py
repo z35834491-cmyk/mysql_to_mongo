@@ -837,7 +837,7 @@ def search_traces(request):
     except ClusterConfig.DoesNotExist:
         return Response({"error": "cluster not found"}, status=404)
     if not cluster.tempo_url:
-        return Response({"error": "tempo_url missing in cluster config"}, status=400)
+        return Response({"items": []})
 
     url = cluster.tempo_url.rstrip("/") + f"/api/search?limit={limit}"
     if service_name:
@@ -845,7 +845,7 @@ def search_traces(request):
     try:
         resp = requests.get(url, timeout=10)
         if not resp.ok:
-            return Response({"error": f"tempo {resp.status_code}", "detail": resp.text[:1000]}, status=502)
+            return Response({"items": []})
         data = resp.json()
         traces = data.get("traces") or []
         items = []
@@ -859,7 +859,7 @@ def search_traces(request):
             })
         return Response({"items": items})
     except Exception as e:
-        return Response({"error": str(e)}, status=502)
+        return Response({"items": []})
 
 
 @api_view(["GET"])

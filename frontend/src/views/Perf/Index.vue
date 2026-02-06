@@ -350,9 +350,7 @@ const onSelectTraceCluster = () => {
   traceForm.value.trace_id = ''
   traceForm.value.service_name = ''
   traceServices.value = []
-  if (traceForm.value.cluster_id) {
-    fetchRecentTraces()
-  }
+  // Wait for service selection to fetch recent traces
 }
 
 const toggleSampling = async (ratio: number) => {
@@ -395,10 +393,10 @@ const onSelectTraceService = async () => {
   }
 }
 const fetchRecentTraces = async () => {
-  if (!traceForm.value.cluster_id) return
+  if (!traceForm.value.cluster_id || !traceForm.value.service_name) return
   loadingRecentTraces.value = true
   try {
-    const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id))
+    const res = await perfApi.searchTraces(Number(traceForm.value.cluster_id), String(traceForm.value.service_name))
     recentTraces.value = res.items || []
   } catch {
     // ignore
