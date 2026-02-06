@@ -86,3 +86,7 @@ data:
           path: /tmp/tempo/blocks
         wal:
           path: /tmp/tempo/wal
+    memberlist:
+      bind_addr: "0.0.0.0"
+      bind_port: 7946
+      join_members: []

@@ -148,6 +148,9 @@
                 <el-option v-for="s in traceServices" :key="s" :label="s" :value="s" />
               </el-select>
             </el-form-item>
+            <el-form-item label="Service NS">
+              <el-input v-model="traceForm.service_ns" placeholder="biz-system" @change="onChangeServiceNs" />
+            </el-form-item>
             <el-form-item label="Namespace">
               <el-input v-model="traceForm.sampling_ns" placeholder="trace-system" />
             </el-form-item>
@@ -347,7 +350,7 @@ const loadingReports = ref(false)
 const reportDialogVisible = ref(false)
 const activeReport = ref<LoadTestReport | null>(null)
 
-const traceForm = ref<any>({ cluster_id: undefined, trace_id: '', sampling_ns: 'trace-system', sampling_ds: 'beyla' })
+const traceForm = ref<any>({ cluster_id: undefined, trace_id: '', service_ns: 'biz-system', sampling_ns: 'trace-system', sampling_ds: 'beyla' })
 const loadingTrace = ref(false)
 const traceJson = ref('')
 const traceChartOption = ref<any>(null)
@@ -400,7 +403,7 @@ const checkTempo = async () => {
 const refreshTraceServices = async () => {
   if (!traceForm.value.cluster_id) return
   try {
-    const res = await perfApi.listServices(Number(traceForm.value.cluster_id), 'default')
+    const res = await perfApi.listServices(Number(traceForm.value.cluster_id), String(traceForm.value.service_ns || 'biz-system'))
     traceServices.value = res.items || []
   } catch {
     traceServices.value = []
@@ -428,6 +431,12 @@ const onSelectTraceService = async () => {
   } finally {
     loadingRecentTraces.value = false
   }
+}
+
+const onChangeServiceNs = () => {
+  traceServices.value = []
+  traceForm.value.service_name = ''
+  if (traceForm.value.cluster_id) refreshTraceServices()
 }
 const fetchRecentTraces = async () => {
   if (!traceForm.value.cluster_id || !traceForm.value.service_name) return
