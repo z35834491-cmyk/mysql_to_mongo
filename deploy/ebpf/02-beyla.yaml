@@ -61,6 +61,12 @@ spec:
             # 使用 Explicit Traces Endpoint 避免混淆
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: "http://tempo.trace-system.svc:4317"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://tempo.trace-system.svc:4317"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+              value: "grpc"
             
             # 关键修复：禁用 Metrics 上报（Tempo 默认只收 Trace，发 Metrics 会导致 gRPC 错误和 Panic）
             - name: BEYLA_METRICS_INTERVAL
@@ -72,11 +78,8 @@ spec:
             # 配置：开启 Kubernetes 元数据装饰 (自动加 namespace/pod/service 标签)
             # 临时禁用 Kube Metadata 以解决 "InstancesCount <= 0" 报错及 K8s API 连接问题
             - name: BEYLA_KUBE_METADATA_ENABLE
-              value: "false"
+              value: "true"
             
-            # 手动指定服务名，防止因缺少 Kube Metadata 导致 Resource 为空
-            - name: OTEL_SERVICE_NAME
-              value: "beyla-agent"
             - name: OTEL_TRACES_SAMPLER
               value: "traceidratio"
             - name: OTEL_TRACES_SAMPLER_ARG

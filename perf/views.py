@@ -917,7 +917,7 @@ def tempo_diagnostics(request):
     url = (cluster.tempo_url or "").rstrip("/")
     if not url:
         return Response({"ok": False, "reason": "tempo_url missing in cluster config"})
-    results = {"base": url, "checks": []}
+    results = {"base": url, "checks": [], "metrics": {}}
     def _check(path):
         full = f"{url}{path}"
         try:
@@ -930,6 +930,35 @@ def tempo_diagnostics(request):
     _check("/api/search?limit=1&tags=rootServiceName=*")
     _check("/ready")
     _check("/metrics")
+    try:
+        metrics_check = next((c for c in results["checks"] if c.get("url", "").endswith("/metrics") and c.get("ok")), None)
+        text = (metrics_check or {}).get("preview", "") + "\n"
+        for c in results["checks"]:
+            if c.get("url", "").endswith("/metrics") and c.get("ok"):
+                text = (c.get("preview") or "")
+                break
+        def _find(name: str):
+            import re
+            m = re.search(rf"(?m)^{re.escape(name)}\{{[^}}]*\}}\s+([0-9eE\+\.-]+)$", text)
+            if m:
+                return float(m.group(1))
+            m2 = re.search(rf"(?m)^{re.escape(name)}\s+([0-9eE\+\.-]+)$", text)
+            if m2:
+                return float(m2.group(1))
+            return None
+        for k in [
+            "tempo_distributor_spans_received_total",
+            "tempo_distributor_spans_dropped_total",
+            "tempo_distributor_traces_received_total",
+            "tempo_distributor_traces_dropped_total",
+            "tempo_ingester_traces_created_total",
+            "tempo_ingester_spans_created_total",
+        ]:
+            v = _find(k)
+            if v is not None:
+                results["metrics"][k] = v
+    except Exception:
+        pass
     ok = any(c.get("ok") for c in results["checks"])
     results["ok"] = ok
     return Response(results)
