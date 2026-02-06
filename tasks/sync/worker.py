@@ -346,8 +346,18 @@ class SyncWorker:
                                     last_id = r[real_pk]
 
                                 doc = self.converter.row_to_base_doc(r)
-                                if self.cfg.use_pk_as_mongo_id and "_id" in doc:
-                                    ops.append(ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+                                if self.cfg.use_pk_as_mongo_id:
+                                    pk_val = r.get(real_pk)
+                                    if pk_val is None:
+                                        for kk, vv in r.items():
+                                            if isinstance(kk, str) and kk.lower() == str(real_pk).lower():
+                                                pk_val = vv
+                                                break
+                                    if pk_val is not None:
+                                        doc["_id"] = self.converter.convert_value(pk_val)
+                                        ops.append(ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+                                    else:
+                                        ops.append(InsertOne(doc))
                                 else:
                                     ops.append(InsertOne(doc))
 
@@ -520,8 +530,13 @@ class SyncWorker:
                             continue
 
                         doc = self.converter.row_to_base_doc(data)
-                        if self.cfg.use_pk_as_mongo_id and "_id" in doc:
-                            buf.add(coll_name, ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+                        if self.cfg.use_pk_as_mongo_id:
+                            pk_val = self.mysql_introspector.extract_pk(table, data)
+                            if pk_val is not None:
+                                doc["_id"] = pk_val
+                                buf.add(coll_name, ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
+                            else:
+                                buf.add(coll_name, InsertOne(doc))
                         else:
                             buf.add(coll_name, InsertOne(doc))
 

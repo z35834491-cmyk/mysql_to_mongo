@@ -30,6 +30,34 @@ class MySQLIntrospector:
         self._table_columns_cache: Dict[str, List[str]] = {}
         self._table_columns_cache_ts: Dict[str, float] = {}
         self._pk_index_cache: Dict[str, int] = {}
+        self._pk_by_table: Dict[str, str] = {}
+        self._pk_index_by_table: Dict[str, int] = {}
+
+    def get_effective_pk(self, table: str) -> str:
+        if table in self._pk_by_table:
+            return self._pk_by_table[table]
+        pk = None
+        try:
+            pk = self.get_primary_key(table)
+        except Exception:
+            pk = None
+        pk = pk or self.pk_field
+        self._pk_by_table[table] = pk
+        return pk
+
+    def _get_pk_index(self, table: str, pk_lower: str) -> Optional[int]:
+        cache_key = f"{table}:{pk_lower}"
+        if cache_key in self._pk_index_by_table:
+            return self._pk_index_by_table[cache_key]
+        cols = self.get_table_columns(table)
+        if not cols:
+            return None
+        try:
+            idx = [cc.lower() for cc in cols].index(pk_lower)
+            self._pk_index_by_table[cache_key] = idx
+            return idx
+        except ValueError:
+            return None
 
     def _connect(self):
         # introspector 读取 schema 不需要 SSDictCursor
@@ -93,11 +121,6 @@ class MySQLIntrospector:
                 if cols:
                     self._table_columns_cache[table] = cols
                     self._table_columns_cache_ts[table] = now
-                    try:
-                        pk_idx = [cc.lower() for cc in cols].index(self._pk_lower)
-                        self._pk_index_cache[table] = pk_idx
-                    except ValueError:
-                        self._pk_index_cache.pop(table, None)
                 return cols
         finally:
             conn.close()
@@ -132,16 +155,14 @@ class MySQLIntrospector:
         return data
 
     def extract_pk(self, table: str, data: dict) -> Optional[Any]:
-        # 1) 正常字段名找
+        pk_field = self.get_effective_pk(table)
+        pk_lower = pk_field.lower()
         for kk, vv in data.items():
-            if isinstance(kk, str) and kk.lower() == self._pk_lower:
+            if isinstance(kk, str) and kk.lower() == pk_lower:
                 return self.converter.convert_value(vv)
 
         # 2) UNKNOWN_COL + pk index 兜底
-        pk_idx = self._pk_index_cache.get(table)
-        if pk_idx is None:
-            self.get_table_columns(table)
-            pk_idx = self._pk_index_cache.get(table)
+        pk_idx = self._get_pk_index(table, pk_lower)
         if pk_idx is None:
             return None
 
@@ -186,6 +207,10 @@ class MySQLIntrospector:
                     self._table_columns_cache.pop(t, None)
                     self._table_columns_cache_ts.pop(t, None)
                     self._pk_index_cache.pop(t, None)
+                    self._pk_by_table.pop(t, None)
+                    for k in list(self._pk_index_by_table.keys()):
+                        if k.startswith(f"{t}:"):
+                            self._pk_index_by_table.pop(k, None)
             last_refresh_ts_holder["ts"] = now
             if added > 0:
                 log(self.task_id, f"Discovered new tables={added} reason={reason}")
