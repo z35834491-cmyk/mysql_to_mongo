@@ -109,6 +109,12 @@
                 </el-button>
               </el-tooltip>
 
+              <el-tooltip content="Performance Config" v-if="canManage">
+                <el-button circle size="small" type="info" plain @click="openPerfConfig(row)">
+                  <el-icon><Setting /></el-icon>
+                </el-button>
+              </el-tooltip>
+
               <el-divider direction="vertical" v-if="canManage" />
 
               <el-button size="small" type="danger" text @click="handleDelete(row.task_id)" v-if="canManage">
@@ -119,6 +125,118 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="perfDialogVisible" title="Performance Config" width="760px">
+      <div v-loading="perfLoading">
+        <el-form label-width="220px">
+          <el-form-item label="Task ID">
+            <el-input :model-value="perfTaskId" disabled />
+          </el-form-item>
+          <el-form-item label="Current Status">
+            <el-tag :type="getStatusType(perfTaskStatus)" effect="light">{{ (perfTaskStatus || '').toUpperCase() }}</el-tag>
+          </el-form-item>
+          <el-form-item label="Preset">
+            <el-select v-model="perfPreset" style="width: 260px" @change="applyPerfPreset">
+              <el-option label="Balanced (默认)" value="balanced" />
+              <el-option label="High Throughput (追速)" value="fast" />
+              <el-option label="Conservative (稳一点)" value="safe" />
+            </el-select>
+          </el-form-item>
+
+          <el-divider content-position="left">Batching</el-divider>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="MySQL Fetch Batch">
+                <el-input-number v-model="perfForm.mysql_fetch_batch" :min="100" :max="50000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Mongo Bulk Batch">
+                <el-input-number v-model="perfForm.mongo_bulk_batch" :min="100" :max="50000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Prefetch Queue Size">
+                <el-input-number v-model="perfForm.prefetch_queue_size" :min="1" :max="50" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Progress Interval (sec)">
+                <el-input-number v-model="perfForm.progress_interval" :min="1" :max="300" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <el-divider content-position="left">Incremental Flush</el-divider>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Inc Flush Batch">
+                <el-input-number v-model="perfForm.inc_flush_batch" :min="1000" :max="200000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Inc Flush Interval (sec)">
+                <el-input-number v-model="perfForm.inc_flush_interval_sec" :min="1" :max="30" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="State Save Interval (sec)">
+                <el-input-number v-model="perfForm.state_save_interval_sec" :min="1" :max="60" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <el-divider content-position="left">Rate Limit</el-divider>
+          <el-form-item label="Enable Rate Limit">
+            <el-switch v-model="perfForm.rate_limit_enabled" />
+          </el-form-item>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Max Load Avg Ratio">
+                <el-input-number v-model="perfForm.max_load_avg_ratio" :min="0.5" :max="10" :step="0.1" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Max Sleep (ms)">
+                <el-input-number v-model="perfForm.max_sleep_ms" :min="0" :max="2000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <el-divider content-position="left">Mongo Client</el-divider>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Max Pool Size">
+                <el-input-number v-model="perfForm.mongo_max_pool_size" :min="10" :max="500" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Write Concern (w)">
+                <el-input-number v-model="perfForm.mongo_write_w" :min="0" :max="5" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="Journal (j)">
+            <el-switch v-model="perfForm.mongo_write_j" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="perfDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :disabled="perfTaskStatus === 'running'" :loading="perfSaving" @click="savePerfConfig">
+            Save
+          </el-button>
+          <el-button type="warning" v-if="perfTaskStatus === 'running'" :loading="perfSaving" @click="stopSaveStart">
+            Stop → Save → Start
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -128,11 +246,13 @@ import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
 import { 
   Plus, VideoPlay, VideoPause, Document, 
-  RefreshRight, DataLine, Monitor, Warning 
+  RefreshRight, DataLine, Monitor, Warning, Setting
 } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useSystemStore } from '@/stores/system'
+import { taskApi } from '@/api/task'
+import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const taskStore = useTaskStore()
@@ -366,6 +486,135 @@ const handleReset = (id: string) => {
 
 const handleLogs = (id: string) => {
   router.push(`/tasks/logs/${id}`)
+}
+
+const perfDialogVisible = ref(false)
+const perfLoading = ref(false)
+const perfSaving = ref(false)
+const perfTaskId = ref('')
+const perfTaskStatus = ref('')
+const perfPreset = ref<'balanced' | 'fast' | 'safe'>('balanced')
+
+const perfForm = ref({
+  progress_interval: 10,
+  mysql_fetch_batch: 5000,
+  mongo_bulk_batch: 5000,
+  inc_flush_batch: 20000,
+  inc_flush_interval_sec: 2,
+  state_save_interval_sec: 2,
+  prefetch_queue_size: 4,
+  rate_limit_enabled: true,
+  max_load_avg_ratio: 2.5,
+  max_sleep_ms: 80,
+  mongo_max_pool_size: 100,
+  mongo_write_w: 1,
+  mongo_write_j: false,
+})
+
+const applyPerfPreset = () => {
+  if (perfPreset.value === 'safe') {
+    perfForm.value = {
+      ...perfForm.value,
+      progress_interval: 10,
+      mysql_fetch_batch: 2000,
+      mongo_bulk_batch: 2000,
+      prefetch_queue_size: 2,
+      inc_flush_batch: 10000,
+      inc_flush_interval_sec: 2,
+      state_save_interval_sec: 2,
+      rate_limit_enabled: true,
+      max_load_avg_ratio: 1.5,
+      max_sleep_ms: 200,
+      mongo_max_pool_size: 50,
+      mongo_write_w: 1,
+      mongo_write_j: false,
+    }
+    return
+  }
+  if (perfPreset.value === 'fast') {
+    perfForm.value = {
+      ...perfForm.value,
+      progress_interval: 10,
+      mysql_fetch_batch: 10000,
+      mongo_bulk_batch: 10000,
+      prefetch_queue_size: 8,
+      inc_flush_batch: 50000,
+      inc_flush_interval_sec: 1,
+      state_save_interval_sec: 2,
+      rate_limit_enabled: false,
+      max_load_avg_ratio: 3.0,
+      max_sleep_ms: 20,
+      mongo_max_pool_size: 200,
+      mongo_write_w: 1,
+      mongo_write_j: false,
+    }
+    return
+  }
+  perfForm.value = {
+    ...perfForm.value,
+    progress_interval: 10,
+    mysql_fetch_batch: 5000,
+    mongo_bulk_batch: 5000,
+    prefetch_queue_size: 4,
+    inc_flush_batch: 20000,
+    inc_flush_interval_sec: 2,
+    state_save_interval_sec: 2,
+    rate_limit_enabled: true,
+    max_load_avg_ratio: 2.5,
+    max_sleep_ms: 80,
+    mongo_max_pool_size: 100,
+    mongo_write_w: 1,
+    mongo_write_j: false,
+  }
+}
+
+const openPerfConfig = async (row: any) => {
+  perfTaskId.value = row.task_id
+  perfTaskStatus.value = row.status
+  perfPreset.value = 'balanced'
+  applyPerfPreset()
+  perfDialogVisible.value = true
+  perfLoading.value = true
+  try {
+    const res = await taskApi.getTaskPerfConfig(row.task_id)
+    const p = res.perf || {}
+    perfForm.value = { ...perfForm.value, ...p }
+  } catch (e: any) {
+    ElMessage.error(String(e?.message || e || 'Failed to load config'))
+  } finally {
+    perfLoading.value = false
+  }
+}
+
+const savePerfConfig = async () => {
+  if (!perfTaskId.value) return
+  perfSaving.value = true
+  try {
+    await taskApi.updateTaskPerfConfig(perfTaskId.value, perfForm.value)
+    ElMessage.success('Updated')
+    perfDialogVisible.value = false
+    await taskStore.fetchTasks()
+  } catch (e: any) {
+    ElMessage.error(String(e?.response?.data?.detail || e?.message || e || 'Update failed'))
+  } finally {
+    perfSaving.value = false
+  }
+}
+
+const stopSaveStart = async () => {
+  if (!perfTaskId.value) return
+  perfSaving.value = true
+  try {
+    await taskStore.stopTask(perfTaskId.value)
+    await taskApi.updateTaskPerfConfig(perfTaskId.value, perfForm.value)
+    await taskStore.startTask(perfTaskId.value)
+    ElMessage.success('Applied and restarted')
+    perfDialogVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(String(e?.response?.data?.detail || e?.message || e || 'Operation failed'))
+  } finally {
+    perfSaving.value = false
+  }
 }
 </script>
 
