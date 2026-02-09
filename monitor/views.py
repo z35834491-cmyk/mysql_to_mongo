@@ -6,6 +6,8 @@ from django.http import FileResponse, HttpResponseNotFound, StreamingHttpRespons
 import os
 import datetime
 import codecs
+import json
+from django.utils import timezone
 from .models import MonitorTask
 from .engine import monitor_engine
 from django.forms.models import model_to_dict
@@ -53,6 +55,19 @@ def _iter_s3_lines(body_stream):
     buf += decoder.decode(b'', final=True)
     if buf:
         yield buf
+
+def _latest_completed_4h_window_start(now):
+    local_dt = timezone.localtime(now)
+    hour = (local_dt.hour // 4) * 4
+    ws = local_dt.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return ws - datetime.timedelta(hours=4)
+
+def _index_s3_key(task, log_type: str, window_start):
+    ws = timezone.localtime(window_start)
+    date_str = ws.date().isoformat()
+    start_h = ws.hour
+    end_h = (start_h + 3) % 24
+    return f"logs/monitor/{task.id}/indexes/{log_type}/{date_str}/{start_h:02d}00-{end_h:02d}59.json"
 
 def _redact_task_dict(d: dict) -> dict:
     if not isinstance(d, dict):
@@ -162,49 +177,46 @@ def monitor_logs(request):
 
     s3_client = _get_s3_client(task)
     if s3_client:
-        files = []
+        lt = log_type if log_type in ('raw', 'error') else 'raw'
+        ws = _latest_completed_4h_window_start(timezone.now())
+        idx_key = _index_s3_key(task, lt, ws)
+        payload = None
         try:
-            prefixes = _task_s3_prefixes(task)
-            def is_error_key(key: str) -> bool:
-                k = (key or '').lower()
-                return ('/error/' in k) or k.endswith('_error.log') or ('task_errors_' in k)
+            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
+            raw = obj['Body'].read().decode('utf-8', errors='replace')
+            payload = json.loads(raw)
+        except Exception:
+            payload = {"files": [], "total": 0, "window_start": ws.isoformat(), "window_end": (ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)).isoformat()}
 
-            for prefix in prefixes:
-                paginator = s3_client.get_paginator('list_objects_v2')
-                for p in paginator.paginate(Bucket=task.s3_bucket, Prefix=prefix):
-                    for obj in p.get('Contents', []) or []:
-                        key = obj.get('Key') or ''
-                        if not key.endswith(".log"):
-                            continue
-                        if log_type == 'error' and not is_error_key(key):
-                            continue
-                        if log_type == 'raw' and is_error_key(key):
-                            continue
-                        if search_query and search_query not in key.lower():
-                            continue
-                        lm = obj.get('LastModified')
-                        mtime = lm.timestamp() if lm else 0
-                        files.append({
-                            "name": key,
-                            "size": int(obj.get('Size') or 0),
-                            "mtime": mtime
-                        })
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
+        files = payload.get('files') if isinstance(payload, dict) else []
+        if not isinstance(files, list):
+            files = []
+
+        if search_query:
+            sq = search_query.lower()
+            files = [f for f in files if sq in str((f.get('name') or '')).lower()]
 
         reverse = (order == 'desc')
         if sort_by == 'name':
-            files.sort(key=lambda x: x['name'], reverse=reverse)
+            files.sort(key=lambda x: x.get('name') or '', reverse=reverse)
         elif sort_by == 'size':
-            files.sort(key=lambda x: x['size'], reverse=reverse)
+            files.sort(key=lambda x: int(x.get('size') or 0), reverse=reverse)
         else:
-            files.sort(key=lambda x: x['mtime'], reverse=reverse)
+            files.sort(key=lambda x: float(x.get('mtime') or 0), reverse=reverse)
 
         total = len(files)
-        start = (page - 1) * page_size
-        end = start + page_size
-        paged_files = files[start:end]
-        return Response({"files": paged_files, "total": total, "page": page, "page_size": page_size})
+        start_i = (page - 1) * page_size
+        end_i = start_i + page_size
+        paged_files = files[start_i:end_i]
+        return Response({
+            "files": paged_files,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "latest_index_key": idx_key,
+            "window_start": payload.get('window_start'),
+            "window_end": payload.get('window_end'),
+        })
 
     log_dir = os.path.join(base_dir, str(task_id))
 
@@ -259,6 +271,112 @@ def monitor_logs(request):
         "page": page,
         "page_size": page_size
     })
+
+
+@api_view(['GET'])
+@permission_classes([HasRolePermission])
+def monitor_logs_history(request):
+    task_id = request.query_params.get('task_id')
+    log_type = (request.query_params.get('log_type') or 'raw').lower()
+    start_str = request.query_params.get('start')
+    end_str = request.query_params.get('end')
+    keyword = (request.query_params.get('keyword') or '').lower()
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 50))
+
+    if not task_id:
+        return Response({"items": [], "total": 0})
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return Response({"items": [], "total": 0})
+
+    s3_client = _get_s3_client(task)
+    if not s3_client:
+        return Response({"items": [], "total": 0})
+
+    lt = log_type if log_type in ('raw', 'error') else 'raw'
+    now = timezone.now()
+    try:
+        start_dt = datetime.datetime.fromisoformat(start_str) if start_str else (now - datetime.timedelta(days=7))
+    except Exception:
+        start_dt = now - datetime.timedelta(days=7)
+    try:
+        end_dt = datetime.datetime.fromisoformat(end_str) if end_str else now
+    except Exception:
+        end_dt = now
+    if timezone.is_naive(start_dt):
+        start_dt = timezone.make_aware(start_dt, timezone.get_current_timezone())
+    if timezone.is_naive(end_dt):
+        end_dt = timezone.make_aware(end_dt, timezone.get_current_timezone())
+
+    prefix = f"logs/monitor/{task.id}/indexes/{lt}/"
+    items = []
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        for p in paginator.paginate(Bucket=task.s3_bucket, Prefix=prefix):
+            for obj in p.get('Contents', []) or []:
+                key = obj.get('Key') or ''
+                if not key.endswith('.json'):
+                    continue
+                if keyword and keyword not in key.lower():
+                    continue
+                try:
+                    parts = key.split('/')
+                    date_str = parts[-2]
+                    range_str = parts[-1].replace('.json', '')
+                    start_h = int(range_str[:2])
+                    ws = datetime.datetime.fromisoformat(date_str).replace(hour=start_h, minute=0, second=0, microsecond=0)
+                    ws = timezone.make_aware(ws, timezone.get_current_timezone())
+                    we = ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+                except Exception:
+                    continue
+                if we < start_dt or ws > end_dt:
+                    continue
+                lm = obj.get('LastModified')
+                mtime = lm.timestamp() if lm else 0
+                items.append({
+                    "key": key,
+                    "window_start": ws.isoformat(),
+                    "window_end": we.isoformat(),
+                    "mtime": mtime,
+                    "size": int(obj.get('Size') or 0),
+                })
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+    items.sort(key=lambda x: x.get('window_start') or '', reverse=True)
+    total = len(items)
+    start_i = (page - 1) * page_size
+    end_i = start_i + page_size
+    return Response({"items": items[start_i:end_i], "total": total, "page": page, "page_size": page_size})
+
+
+@api_view(['GET'])
+@permission_classes([HasRolePermission])
+def monitor_index_detail(request):
+    task_id = request.query_params.get('task_id')
+    key = request.query_params.get('key')
+    if not task_id or not key:
+        return Response({"error": "task_id and key required"}, status=400)
+    try:
+        task = MonitorTask.objects.get(pk=task_id)
+    except MonitorTask.DoesNotExist:
+        return Response({"error": "Task not found"}, status=404)
+
+    s3_client = _get_s3_client(task)
+    if not s3_client:
+        return Response({"error": "S3 not enabled"}, status=400)
+    prefix = f"logs/monitor/{task.id}/indexes/"
+    if not str(key).startswith(prefix):
+        return Response({"error": "invalid parameters"}, status=400)
+    try:
+        obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+        raw = obj['Body'].read().decode('utf-8', errors='replace')
+        data = json.loads(raw)
+        return Response(data)
+    except Exception:
+        return Response({"error": "Index not found"}, status=404)
 
 @api_view(['GET'])
 @permission_classes([HasRolePermission])

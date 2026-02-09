@@ -45,4 +45,9 @@ export const monitorApi = {
   batchViewLogs: (taskId: number, filenames: string[], keyword: string) => 
     request.post<{results: any[]}>('/monitor/logs/batch_search', { task_id: taskId, filenames, keyword }),
   downloadLog: (taskId: number, filename: string) => `/api/monitor/logs/download?task_id=${taskId}&filename=${encodeURIComponent(filename)}`,
+
+  getIndexHistory: (taskId: number, params: any) =>
+    request.get<{ items: any[]; total: number; page: number; page_size: number }>('/monitor/logs/history', { params: { task_id: taskId, ...params } }),
+  getIndexDetail: (taskId: number, key: string) =>
+    request.get<any>('/monitor/logs/index_detail', { params: { task_id: taskId, key } }),
 }

@@ -178,6 +178,96 @@
               </template>
           </el-dialog>
 
+          <el-dialog v-model="historyVisible" title="历史索引" width="980px" top="5vh">
+            <div class="history-body">
+              <div class="history-filters">
+                <el-form label-width="120px">
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="时间范围">
+                        <el-date-picker
+                          v-model="historyRange"
+                          type="datetimerange"
+                          range-separator="至"
+                          start-placeholder="开始时间"
+                          end-placeholder="结束时间"
+                          value-format="YYYY-MM-DDTHH:mm:ss"
+                          style="width: 100%"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="6">
+                      <el-form-item label="状态">
+                        <el-select v-model="historyLogType" style="width: 100%">
+                          <el-option label="正常" value="raw" />
+                          <el-option label="错误" value="error" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="6">
+                      <el-form-item label="文件名关键字">
+                        <el-input v-model="historyKeyword" placeholder="可选" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </el-form>
+                <div class="history-actions">
+                  <el-button type="primary" :loading="historyLoading" @click="searchHistory">搜索</el-button>
+                </div>
+              </div>
+
+              <div class="history-results" v-loading="historyLoading">
+                <el-row :gutter="16">
+                  <el-col :span="10">
+                    <el-card shadow="never">
+                      <template #header>
+                        <span>索引列表</span>
+                      </template>
+                      <div v-if="historyItems.length === 0" class="empty-viewer">
+                        <el-empty description="点击「搜索」后展示历史索引" />
+                      </div>
+                      <el-table v-else :data="historyItems" size="small" style="width: 100%" @row-click="selectHistoryIndex">
+                        <el-table-column prop="window_start" label="窗口开始" min-width="180">
+                          <template #default="{ row }">{{ formatIso(row.window_start) }}</template>
+                        </el-table-column>
+                        <el-table-column prop="window_end" label="窗口结束" min-width="180">
+                          <template #default="{ row }">{{ formatIso(row.window_end) }}</template>
+                        </el-table-column>
+                        <el-table-column prop="size" label="Size" width="90">
+                          <template #default="{ row }">{{ formatBytes(row.size) }}</template>
+                        </el-table-column>
+                      </el-table>
+                    </el-card>
+                  </el-col>
+                  <el-col :span="14">
+                    <el-card shadow="never">
+                      <template #header>
+                        <span>索引详情</span>
+                      </template>
+                      <div v-if="historyDetailFiles.length === 0" class="empty-viewer">
+                        <el-empty description="点击左侧某条索引查看详情" />
+                      </div>
+                      <el-table v-else :data="historyDetailFiles" size="small" style="width: 100%">
+                        <el-table-column prop="name" label="File" min-width="360" />
+                        <el-table-column prop="size" label="Size" width="90">
+                          <template #default="{ row }">{{ formatBytes(row.size) }}</template>
+                        </el-table-column>
+                        <el-table-column prop="mtime" label="Time" width="180">
+                          <template #default="{ row }">{{ formatEpoch(row.mtime) }}</template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="90" fixed="right">
+                          <template #default="{ row }">
+                            <el-button link type="primary" @click.stop="openFileFromHistory(row.name)">查看</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </el-card>
+                  </el-col>
+                </el-row>
+              </div>
+            </div>
+          </el-dialog>
+
           <!-- Main Log Explorer for Task -->
           <div class="saved-container">
                 <!-- File List -->
@@ -199,6 +289,7 @@
                         <el-radio-button label="raw">正常</el-radio-button>
                         <el-radio-button label="error">错误</el-radio-button>
                       </el-radio-group>
+                      <el-button v-if="selectedTask?.s3_archive_enabled" size="small" @click="openHistory">历史</el-button>
                        <el-tooltip content="Task Config" placement="top" v-if="canManage">
                           <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
                        </el-tooltip>
@@ -357,6 +448,14 @@ const tasks = ref<MonitorTask[]>([])
 const selectedTaskId = ref<number | null>(null)
 const selectedTask = ref<MonitorTask | null>(null)
 const showConfigDialog = ref(false)
+const historyVisible = ref(false)
+const historyLoading = ref(false)
+const historyRange = ref<[string, string] | null>(null)
+const historyKeyword = ref('')
+const historyLogType = ref<'raw' | 'error'>('raw')
+const historyItems = ref<any[]>([])
+const historyDetailFiles = ref<any[]>([])
+const historySelectedKey = ref<string>('')
 const form = ref<Partial<MonitorTask>>({})
 const k8sPods = ref<any[]>([])
 const selectedPod = ref('')
@@ -604,6 +703,90 @@ const handleSavedLogTypeChange = () => {
   if (selectedTaskId.value) {
     fetchSavedLogs(1)
   }
+}
+
+const formatIso = (s: string) => {
+  if (!s) return '-'
+  try {
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? s : d.toLocaleString()
+  } catch (e) {
+    return s
+  }
+}
+
+const formatEpoch = (sec: number) => {
+  if (!sec) return '-'
+  try {
+    const d = new Date(Number(sec) * 1000)
+    return isNaN(d.getTime()) ? String(sec) : d.toLocaleString()
+  } catch (e) {
+    return String(sec)
+  }
+}
+
+const formatBytes = (n: number) => {
+  const v = Number(n || 0)
+  if (v <= 0) return '0 B'
+  if (v < 1024) return `${v} B`
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(2)} KB`
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(2)} MB`
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+const openHistory = () => {
+  historyVisible.value = true
+  historyItems.value = []
+  historyDetailFiles.value = []
+  historySelectedKey.value = ''
+  historyLogType.value = savedLogType.value
+}
+
+const searchHistory = async () => {
+  if (!selectedTaskId.value) return
+  if (!historyRange.value || historyRange.value.length !== 2) {
+    ElMessage.warning('请选择时间范围')
+    return
+  }
+  historyLoading.value = true
+  historyItems.value = []
+  historyDetailFiles.value = []
+  historySelectedKey.value = ''
+  try {
+    const res = await monitorApi.getIndexHistory(selectedTaskId.value, {
+      log_type: historyLogType.value,
+      start: historyRange.value[0],
+      end: historyRange.value[1],
+      keyword: historyKeyword.value || ''
+    })
+    historyItems.value = res.items || []
+  } catch (e) {
+    ElMessage.error(`历史查询失败: ${e}`)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const selectHistoryIndex = async (row: any) => {
+  if (!selectedTaskId.value) return
+  if (!row?.key) return
+  historySelectedKey.value = row.key
+  historyLoading.value = true
+  try {
+    const detail = await monitorApi.getIndexDetail(selectedTaskId.value, row.key)
+    historyDetailFiles.value = detail?.files || []
+  } catch (e) {
+    historyDetailFiles.value = []
+    ElMessage.error(`加载索引详情失败: ${e}`)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const openFileFromHistory = (key: string) => {
+  if (!key) return
+  historyVisible.value = false
+  selectSavedFile(key)
 }
 
 const selectSavedFile = (name: string) => {

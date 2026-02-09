@@ -33,6 +33,9 @@ class MonitorEngine:
         self._lock = threading.Lock()
         self.LOG_DIR = os.path.join(settings.BASE_DIR, "logs", "monitor_logs")
         os.makedirs(self.LOG_DIR, exist_ok=True)
+        self._index_lock = threading.Lock()
+        self._index_entries = {}
+        self._index_last_window_start = {}
 
     def _get_s3_client(self, task):
         if not boto3:
@@ -54,6 +57,101 @@ class MonitorEngine:
 
     def _get_s3_prefix(self, task):
         return f"logs/monitor/{task.id}/"
+
+    def _get_4h_window_start(self, dt):
+        local_dt = timezone.localtime(dt)
+        hour = (local_dt.hour // 4) * 4
+        return local_dt.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+    def _get_latest_completed_window_start(self, now):
+        return self._get_4h_window_start(now) - datetime.timedelta(hours=4)
+
+    def _get_index_s3_key(self, task, log_type: str, window_start):
+        ws = timezone.localtime(window_start)
+        date_str = ws.date().isoformat()
+        start_h = ws.hour
+        end_h = (start_h + 3) % 24
+        return f"{self._get_s3_prefix(task)}indexes/{log_type}/{date_str}/{start_h:02d}00-{end_h:02d}59.json"
+
+    def _record_index_entry(self, task, log_type: str, key: str, size_bytes: int, ts: float):
+        try:
+            if not key:
+                return
+            now = timezone.now()
+            ws = self._get_4h_window_start(now)
+            tid = str(task.id)
+            with self._index_lock:
+                by_task = self._index_entries.setdefault(tid, {})
+                by_window = by_task.setdefault(ws.isoformat(), {"raw": {}, "error": {}})
+                by_type = by_window.setdefault(log_type, {})
+                by_type[key] = {"name": key, "size": int(size_bytes or 0), "mtime": float(ts or now.timestamp())}
+                self._index_last_window_start[tid] = ws.isoformat()
+        except Exception:
+            pass
+
+    def _finalize_due_indexes(self, task):
+        s3_client = self._get_s3_client(task)
+        if not s3_client:
+            return
+        now = timezone.now()
+        latest_completed_ws = self._get_latest_completed_window_start(now)
+        tid = str(task.id)
+
+        to_finalize = []
+        with self._index_lock:
+            by_task = self._index_entries.get(tid) or {}
+            for ws_iso in list(by_task.keys()):
+                try:
+                    ws = datetime.datetime.fromisoformat(ws_iso)
+                except Exception:
+                    continue
+                if timezone.is_naive(ws):
+                    ws = timezone.make_aware(ws, timezone.get_current_timezone())
+                if ws <= latest_completed_ws:
+                    to_finalize.append(ws)
+
+        for ws in sorted(to_finalize):
+            self._upload_index_file(task, s3_client, 'raw', ws)
+            self._upload_index_file(task, s3_client, 'error', ws)
+            with self._index_lock:
+                by_task = self._index_entries.get(tid) or {}
+                by_task.pop(ws.isoformat(), None)
+                if not by_task:
+                    self._index_entries.pop(tid, None)
+
+    def _upload_index_file(self, task, s3_client, log_type: str, window_start):
+        tid = str(task.id)
+        ws = timezone.localtime(window_start)
+        we = ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+        ws_iso = ws.isoformat()
+        items = []
+        with self._index_lock:
+            by_task = self._index_entries.get(tid) or {}
+            by_window = by_task.get(ws_iso) or {}
+            items_map = by_window.get(log_type) or {}
+            items = list(items_map.values())
+
+        items.sort(key=lambda x: x.get('name') or '')
+        payload = {
+            "task_id": tid,
+            "task_name": getattr(task, 'name', ''),
+            "log_type": log_type,
+            "window_start": ws_iso,
+            "window_end": we.isoformat(),
+            "generated_at": timezone.now().isoformat(),
+            "total": len(items),
+            "files": items,
+        }
+        key = self._get_index_s3_key(task, log_type, ws)
+        try:
+            s3_client.put_object(
+                Bucket=task.s3_bucket,
+                Key=key,
+                Body=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                ContentType='application/json; charset=utf-8'
+            )
+        except Exception:
+            pass
 
     def _cleanup_s3(self, task, s3_client, retention_days=90, max_delete=1000):
         try:
@@ -142,6 +240,11 @@ class MonitorEngine:
                             logger.error(f"Error processing task {task.name}: {e}")
                             task.last_error = str(e)
                             task.save(update_fields=['last_error'])
+
+                    try:
+                        self._finalize_due_indexes(task)
+                    except Exception:
+                        pass
                 
                 # Global sleep - maybe shorter to check for new tasks/schedule
                 time.sleep(5)
@@ -639,25 +742,29 @@ class MonitorEngine:
         if s3_only:
             try:
                 if raw_buffer:
+                    raw_body = "".join(raw_buffer).encode('utf-8')
                     s3_client.put_object(
                         Bucket=s3_bucket,
                         Key=raw_s3_key,
-                        Body="".join(raw_buffer).encode('utf-8'),
+                        Body=raw_body,
                         ContentType='text/plain; charset=utf-8'
                     )
+                    self._record_index_entry(task, 'raw', raw_s3_key, len(raw_body), time.time())
             except Exception:
                 pass
 
             uploaded_error_key = None
             try:
                 if error_output:
+                    err_body = "".join(error_output).encode('utf-8')
                     s3_client.put_object(
                         Bucket=s3_bucket,
                         Key=error_s3_key,
-                        Body="".join(error_output).encode('utf-8'),
+                        Body=err_body,
                         ContentType='text/plain; charset=utf-8'
                     )
                     uploaded_error_key = error_s3_key
+                    self._record_index_entry(task, 'error', error_s3_key, len(err_body), time.time())
             except Exception:
                 pass
 
