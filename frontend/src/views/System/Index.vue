@@ -3,7 +3,7 @@
     <div class="page-header">
       <div class="header-info">
         <h2 class="page-title">System Inspection</h2>
-        <p class="page-subtitle">AI-powered system health analysis and performance auditing</p>
+        <p class="page-subtitle">全量服务器资源使用状况 + 告警分析 + 运维处置建议</p>
       </div>
       <div class="header-actions">
         <el-button @click="showLogs" :icon="Document">Inspection Logs</el-button>
@@ -84,6 +84,14 @@
               <span class="score-total">/100</span>
             </div>
           </div>
+          <div class="meta-item">
+            <span class="label">SERVERS</span>
+            <span class="value">{{ currentReport.fleet_summary?.server_count ?? '-' }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="label">FIRING ALERTS</span>
+            <span class="value">{{ currentReport.alerts_summary?.firing_total ?? '-' }}</span>
+          </div>
         </div>
 
         <el-divider />
@@ -91,7 +99,7 @@
         <div class="analysis-section">
           <div class="section-header">
             <el-icon><MagicStick /></el-icon>
-            <span>AI Diagnostic Insights</span>
+            <span>巡检报告（运维分析）</span>
           </div>
           <div class="analysis-card">
             <div class="markdown-body">
@@ -100,53 +108,75 @@
           </div>
         </div>
 
-        <div class="analysis-section" v-if="currentReport.metrics_summary && currentReport.metrics_summary.length > 0">
+        <div class="analysis-section" v-if="currentReport.fleet_summary">
           <div class="section-header">
             <el-icon><Histogram /></el-icon>
-            <span>Resource Utilization Analysis</span>
+            <span>服务器资源使用状况</span>
           </div>
           <el-row :gutter="20" class="metrics-row">
-            <el-col :span="12" v-if="getChartOption('cpu').series">
+            <el-col :span="12" v-if="getServerTopOption('cpu_pct', 'CPU 使用率 Top 10 (%)').series">
               <div class="chart-card">
-                <div class="chart-title">CPU Usage Top 5 (%)</div>
-                <v-chart class="report-chart" :option="getChartOption('cpu')" autoresize />
+                <div class="chart-title">CPU 使用率 Top 10 (%)</div>
+                <v-chart class="report-chart" :option="getServerTopOption('cpu_pct', 'CPU 使用率 Top 10 (%)')" autoresize />
               </div>
             </el-col>
-            <el-col :span="12" v-if="getChartOption('memory').series">
+            <el-col :span="12" v-if="getServerTopOption('mem_pct', '内存使用率 Top 10 (%)').series">
               <div class="chart-card">
-                <div class="chart-title">Memory Usage Top 5 (%)</div>
-                <v-chart class="report-chart" :option="getChartOption('memory')" autoresize />
+                <div class="chart-title">内存使用率 Top 10 (%)</div>
+                <v-chart class="report-chart" :option="getServerTopOption('mem_pct', '内存使用率 Top 10 (%)')" autoresize />
               </div>
             </el-col>
           </el-row>
           <el-row :gutter="20" class="metrics-row" style="margin-top: 20px;">
-            <el-col :span="12" v-if="getChartOption('disk').series">
+            <el-col :span="12" v-if="getServerTopOption('disk_pct', '磁盘(/)使用率 Top 10 (%)').series">
               <div class="chart-card">
-                <div class="chart-title">Disk Usage Top 5 (%)</div>
-                <v-chart class="report-chart" :option="getChartOption('disk')" autoresize />
+                <div class="chart-title">磁盘(/)使用率 Top 10 (%)</div>
+                <v-chart class="report-chart" :option="getServerTopOption('disk_pct', '磁盘(/)使用率 Top 10 (%)')" autoresize />
+              </div>
+            </el-col>
+          </el-row>
+          <el-table v-if="currentReport.servers && currentReport.servers.length" :data="currentReport.servers.slice(0, 50)" style="width: 100%; margin-top: 16px">
+            <el-table-column prop="instance" label="Instance" min-width="220" />
+            <el-table-column prop="cpu_pct" label="CPU%" width="110" />
+            <el-table-column prop="mem_pct" label="Mem%" width="110" />
+            <el-table-column prop="disk_pct" label="Disk%(/)" width="110" />
+            <el-table-column prop="load1" label="Load1" width="110" />
+            <el-table-column prop="uptime_hours" label="Uptime(h)" width="120" />
+          </el-table>
+        </div>
+
+        <div class="analysis-section" v-if="currentReport.alerts_summary">
+          <div class="section-header">
+            <el-icon><Warning /></el-icon>
+            <span>告警分析</span>
+          </div>
+          <el-row :gutter="20" class="metrics-row">
+            <el-col :span="12">
+              <div class="chart-card">
+                <div class="chart-title">Firing 告警严重度分布</div>
+                <v-chart class="report-chart" :option="getAlertsPieOption()" autoresize />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="chart-card">
+                <div class="chart-title">Top 告警</div>
+                <el-table :data="currentReport.alerts_summary.top_alerts || []" style="width: 100%">
+                  <el-table-column prop="name" label="Alert" min-width="220" />
+                  <el-table-column prop="count" label="Count" width="90" />
+                </el-table>
               </div>
             </el-col>
           </el-row>
         </div>
 
-        <div class="analysis-section" v-if="currentReport.forecast_7_15_30">
+        <div class="analysis-section" v-if="currentReport.trend_7d && currentReport.trend_7d.length">
           <div class="section-header">
             <el-icon><DataLine /></el-icon>
-            <span>Health Trend Forecast</span>
+            <span>7 日趋势</span>
           </div>
-          <div class="forecast-card">
-            <div class="forecast-item">
-              <span class="label">7 Days</span>
-              <span class="value">{{ currentReport.forecast_7_15_30.predictions['7d'].risk_score }}</span>
-            </div>
-            <div class="forecast-item">
-              <span class="label">15 Days</span>
-              <span class="value">{{ currentReport.forecast_7_15_30.predictions['15d'].risk_score }}</span>
-            </div>
-            <div class="forecast-item">
-              <span class="label">30 Days</span>
-              <span class="value">{{ currentReport.forecast_7_15_30.predictions['30d'].risk_score }}</span>
-            </div>
+          <div class="chart-card">
+            <div class="chart-title">健康评分 / 告警数量趋势</div>
+            <v-chart class="report-chart" :option="getTrendOption()" autoresize />
           </div>
         </div>
       </div>
@@ -245,28 +275,61 @@ const systemStore = useSystemStore()
 const canManage = computed(() => systemStore.isAdmin || systemStore.hasPermission('run_inspection'))
 // ... existing refs and computed ...
 
-const getChartOption = (category: string) => {
-  if (!currentReport.value || !currentReport.value.metrics_summary) return {}
-  
-  const metrics = currentReport.value.metrics_summary.filter((m: any) => m.category === category)
-  if (metrics.length === 0) return {}
-
+const getServerTopOption = (key: string, title: string) => {
+  const rep: any = currentReport.value
+  const top = rep?.fleet_summary?.top_cpu || rep?.servers || []
+  const list = Array.isArray(top) ? top : []
+  const sorted = [...list].sort((a: any, b: any) => Number(b?.[key] || 0) - Number(a?.[key] || 0)).slice(0, 10)
+  if (!sorted.length) return {}
   return {
+    title: { text: '', left: 'center' },
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: metrics.map((m: any) => m.labels.instance || m.display),
-      axisLabel: { interval: 0, rotate: 30 }
-    },
-    yAxis: { type: 'value', name: metrics[0].unit },
-    series: [{
-      data: metrics.map((m: any) => m.value),
-      type: 'bar',
-      itemStyle: {
-        color: category === 'cpu' ? '#3b82f6' : category === 'memory' ? '#8b5cf6' : '#f59e0b'
-      }
-    }]
+    xAxis: { type: 'category', data: sorted.map((s: any) => s.instance || '-'), axisLabel: { interval: 0, rotate: 25 } },
+    yAxis: { type: 'value', name: '%' },
+    series: [{ name: title, type: 'bar', data: sorted.map((s: any) => s[key]), itemStyle: { color: '#3b82f6' } }],
+  }
+}
+
+const getAlertsPieOption = () => {
+  const a: any = currentReport.value?.alerts_summary || {}
+  const crit = Number(a.critical_total || 0)
+  const warn = Number(a.warning_total || 0)
+  const other = Math.max(0, Number(a.firing_total || 0) - crit - warn)
+  return {
+    tooltip: { trigger: 'item' },
+    legend: { bottom: 0 },
+    series: [
+      {
+        type: 'pie',
+        radius: '70%',
+        data: [
+          { name: 'Critical/High', value: crit },
+          { name: 'Warning', value: warn },
+          { name: 'Other', value: other },
+        ].filter((x) => x.value > 0),
+      },
+    ],
+  }
+}
+
+const getTrendOption = () => {
+  const t: any[] = (currentReport.value?.trend_7d || []) as any[]
+  const dates = t.map((x) => x.date)
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['Score', 'Firing', 'Critical'] },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: dates },
+    yAxis: [
+      { type: 'value', name: 'Score', min: 0, max: 100 },
+      { type: 'value', name: 'Alerts', min: 0 },
+    ],
+    series: [
+      { name: 'Score', type: 'line', yAxisIndex: 0, data: t.map((x) => x.score ?? null), smooth: true },
+      { name: 'Firing', type: 'bar', yAxisIndex: 1, data: t.map((x) => x.firing ?? 0), itemStyle: { color: '#f59e0b' } },
+      { name: 'Critical', type: 'bar', yAxisIndex: 1, data: t.map((x) => x.critical ?? 0), itemStyle: { color: '#ef4444' } },
+    ],
   }
 }
 const reports = computed(() => systemStore.reports)
@@ -334,7 +397,14 @@ const getProgressStatus = (score: number) => {
 
 const viewReport = async (row: any) => {
   await systemStore.fetchReportDetail(row.report_id)
-  currentReport.value = systemStore.currentReport
+  const rep: any = systemStore.currentReport || {}
+  const score =
+    rep?.health_summary?.score ??
+    rep?.risk_summary?.score ??
+    rep?.score ??
+    row?.score ??
+    0
+  currentReport.value = { ...rep, score }
   dialogVisible.value = true
 }
 

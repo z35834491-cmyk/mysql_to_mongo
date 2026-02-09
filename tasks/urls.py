@@ -17,6 +17,7 @@ urlpatterns = [
     path('tasks/stop_soft/<str:task_id>', views.stop_task_soft),
     path('tasks/delete/<str:task_id>', views.delete_task),
     path('tasks/logs/<str:task_id>', views.task_logs),
+    path('tasks/config/<str:task_id>', views.task_config),
     
     # Global Log APIs
     path('logs/files', views.log_files_list),

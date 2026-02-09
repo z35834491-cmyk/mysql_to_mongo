@@ -143,7 +143,10 @@ def system_stats(request):
     # Recent Inspection
     latest_report = InspectionReport.objects.order_by('-created_at').first()
     if latest_report:
-        score = 100 - latest_report.content.get('risk_summary', {}).get('score', 0)
+        content = latest_report.content or {}
+        score = content.get('health_summary', {}).get('score')
+        if score is None:
+            score = content.get('risk_summary', {}).get('score', 0)
         health_items.append({
             "name": "System Inspection",
             "desc": f"Last score: {score}%",

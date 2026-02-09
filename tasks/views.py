@@ -214,12 +214,74 @@ def start_with_conn_ids(request):
             "auto_discover_new_tables": data.get('auto_discover_new_tables', True),
             "use_pk_as_mongo_id": data.get('use_pk_as_mongo_id', True),
         }
+
+        try:
+            model_fields = getattr(SyncTaskRequest, 'model_fields', None) or {}
+            allowed = set(model_fields.keys())
+            reserved = {'task_id', 'mysql_conf', 'mongo_conf', 'table_map'}
+            for k in (allowed - reserved):
+                if k in data:
+                    req_data[k] = data.get(k)
+        except Exception:
+            pass
         
         cfg = SyncTaskRequest(**req_data)
         task_manager.start(cfg)
         return Response({"msg": "started", "task_id": cfg.task_id})
     except Exception as e:
         return Response({"detail": str(e)}, status=400)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([HasRolePermission])
+def task_config(request, task_id: str):
+    try:
+        t = SyncTask.objects.get(task_id=task_id)
+    except SyncTask.DoesNotExist:
+        return Response({"detail": "Task not found"}, status=404)
+
+    if request.method == 'GET':
+        cfg = t.config or {}
+        perf_keys = [
+            "progress_interval",
+            "mysql_fetch_batch",
+            "mongo_bulk_batch",
+            "inc_flush_batch",
+            "inc_flush_interval_sec",
+            "state_save_interval_sec",
+            "prefetch_queue_size",
+            "rate_limit_enabled",
+            "max_load_avg_ratio",
+            "min_sleep_ms",
+            "max_sleep_ms",
+            "mongo_max_pool_size",
+            "mongo_write_w",
+            "mongo_write_j",
+            "mongo_socket_timeout_ms",
+            "mongo_connect_timeout_ms",
+            "mongo_compressors",
+        ]
+        out = {k: cfg.get(k) for k in perf_keys if k in cfg}
+        return Response({"task_id": task_id, "perf": out})
+
+    if task_manager.is_running(task_id):
+        return Response({"detail": "Stop task before updating config"}, status=400)
+
+    payload = request.data or {}
+    perf = payload.get('perf') if isinstance(payload, dict) else None
+    if not isinstance(perf, dict):
+        return Response({"detail": "perf object required"}, status=400)
+
+    cfg = dict(t.config or {})
+    cfg.update(perf)
+    try:
+        validated = SyncTaskRequest(**cfg)
+    except Exception as e:
+        return Response({"detail": str(e)}, status=400)
+
+    t.config = validated.model_dump()
+    t.save()
+    return Response({"msg": "updated", "task_id": task_id})
 
 @api_view(['POST'])
 @permission_classes([HasRolePermission])

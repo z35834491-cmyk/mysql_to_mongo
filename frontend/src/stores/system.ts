@@ -11,7 +11,7 @@ export const useSystemStore = defineStore('system', () => {
   const monitorLogs = ref<any[]>([])
   
   // Inspection State
-  const reports = ref<string[]>([])
+  const reports = ref<any[]>([])
   const currentReport = ref<any | null>(null)
   const inspectionConfig = ref<any>({
     prometheus_url: '',

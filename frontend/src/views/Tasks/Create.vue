@@ -85,6 +85,96 @@
             </el-form-item>
           </el-col>
         </el-row>
+
+        <el-divider content-position="left">Performance (可配置)</el-divider>
+        <el-form-item label="Preset">
+          <el-select v-model="perfPreset" style="width: 260px" placeholder="Select preset" @change="applyPreset">
+            <el-option label="Balanced (默认)" value="balanced" />
+            <el-option label="High Throughput (追速)" value="fast" />
+            <el-option label="Conservative (稳一点)" value="safe" />
+          </el-select>
+        </el-form-item>
+
+        <el-collapse v-model="perfCollapse">
+          <el-collapse-item title="高级性能参数" name="advanced">
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="MySQL Fetch Batch">
+                  <el-input-number v-model="form.mysql_fetch_batch" :min="100" :max="50000" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Mongo Bulk Batch">
+                  <el-input-number v-model="form.mongo_bulk_batch" :min="100" :max="50000" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="Prefetch Queue Size">
+                  <el-input-number v-model="form.prefetch_queue_size" :min="1" :max="50" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Progress Interval (sec)">
+                  <el-input-number v-model="form.progress_interval" :min="1" :max="300" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-divider content-position="left">Incremental Flush</el-divider>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="Inc Flush Batch">
+                  <el-input-number v-model="form.inc_flush_batch" :min="1000" :max="200000" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Inc Flush Interval (sec)">
+                  <el-input-number v-model="form.inc_flush_interval_sec" :min="1" :max="30" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="State Save Interval (sec)">
+                  <el-input-number v-model="form.state_save_interval_sec" :min="1" :max="60" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-divider content-position="left">Rate Limit</el-divider>
+            <el-form-item label="Enable Rate Limit">
+              <el-switch v-model="form.rate_limit_enabled" />
+            </el-form-item>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="Max Load Avg Ratio">
+                  <el-input-number v-model="form.max_load_avg_ratio" :min="0.5" :max="10" :step="0.1" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Max Sleep (ms)">
+                  <el-input-number v-model="form.max_sleep_ms" :min="0" :max="2000" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-divider content-position="left">Mongo Client</el-divider>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="Max Pool Size">
+                  <el-input-number v-model="form.mongo_max_pool_size" :min="10" :max="500" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Write Concern (w)">
+                  <el-input-number v-model="form.mongo_write_w" :min="0" :max="5" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </el-collapse-item>
+        </el-collapse>
         
         <el-form-item>
           <el-button type="primary" @click="onSubmit">Create & Start</el-button>
@@ -101,6 +191,7 @@ import { useRouter } from 'vue-router'
 import { useConnectionStore } from '@/stores/connection'
 import { useTaskStore } from '@/stores/task'
 import { storeToRefs } from 'pinia'
+import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const connectionStore = useConnectionStore()
@@ -124,8 +215,71 @@ const form = reactive({
   use_pk_as_mongo_id: true,
   pk_field: 'id',
   binlog_filename: '',
-  binlog_position: undefined as number | undefined
+  binlog_position: undefined as number | undefined,
+
+  progress_interval: 10,
+  mysql_fetch_batch: 2000,
+  mongo_bulk_batch: 2000,
+  inc_flush_batch: 10000,
+  inc_flush_interval_sec: 2,
+  state_save_interval_sec: 2,
+  prefetch_queue_size: 2,
+  rate_limit_enabled: true,
+  max_load_avg_ratio: 1.5,
+  max_sleep_ms: 200,
+  mongo_max_pool_size: 50,
+  mongo_write_w: 1,
+  mongo_write_j: false
 })
+
+const perfPreset = ref<'balanced' | 'fast' | 'safe'>('balanced')
+const perfCollapse = ref<string[]>([])
+
+const applyPreset = () => {
+  if (perfPreset.value === 'safe') {
+    form.mysql_fetch_batch = 2000
+    form.mongo_bulk_batch = 2000
+    form.prefetch_queue_size = 2
+    form.inc_flush_batch = 10000
+    form.inc_flush_interval_sec = 2
+    form.state_save_interval_sec = 2
+    form.rate_limit_enabled = true
+    form.max_load_avg_ratio = 1.5
+    form.max_sleep_ms = 200
+    form.mongo_max_pool_size = 50
+    form.mongo_write_w = 1
+    form.mongo_write_j = false
+    return
+  }
+  if (perfPreset.value === 'fast') {
+    form.mysql_fetch_batch = 10000
+    form.mongo_bulk_batch = 10000
+    form.prefetch_queue_size = 8
+    form.inc_flush_batch = 50000
+    form.inc_flush_interval_sec = 1
+    form.state_save_interval_sec = 2
+    form.rate_limit_enabled = false
+    form.max_load_avg_ratio = 3.0
+    form.max_sleep_ms = 20
+    form.mongo_max_pool_size = 200
+    form.mongo_write_w = 1
+    form.mongo_write_j = false
+    perfCollapse.value = ['advanced']
+    return
+  }
+  form.mysql_fetch_batch = 5000
+  form.mongo_bulk_batch = 5000
+  form.prefetch_queue_size = 4
+  form.inc_flush_batch = 20000
+  form.inc_flush_interval_sec = 2
+  form.state_save_interval_sec = 2
+  form.rate_limit_enabled = true
+  form.max_load_avg_ratio = 2.5
+  form.max_sleep_ms = 80
+  form.mongo_max_pool_size = 100
+  form.mongo_write_w = 1
+  form.mongo_write_j = false
+}
 
 const rules = {
   task_id: [{ required: true, message: 'Please input task ID', trigger: 'blur' }],
@@ -140,6 +294,7 @@ const mongoConnections = computed(() => connections.value.filter(c => c.type ===
 
 onMounted(() => {
   connectionStore.fetchConnections()
+  applyPreset()
 })
 
 const goBack = () => {

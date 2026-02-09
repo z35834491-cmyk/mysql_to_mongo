@@ -23,18 +23,27 @@ export interface MonitorTask {
 
 export interface InspectionReport {
   report_id: string
-  created_at: number
-  status: string
   score: number
   summary: string
   ai_analysis?: string
-  metrics?: any
   metrics_summary?: any[]
-  forecast_7_15_30?: {
-    predictions: {
-      "7d": { risk_score: number }
-      "15d": { risk_score: number }
-      "30d": { risk_score: number }
-    }
+  health_summary?: { score: number; level?: string; reasons?: string[] }
+  fleet_summary?: {
+    server_count: number
+    avg_cpu_pct?: number
+    avg_mem_pct?: number
+    avg_disk_pct?: number
+    top_cpu?: any[]
+    top_mem?: any[]
+    top_disk?: any[]
   }
+  alerts_summary?: {
+    firing_total: number
+    critical_total: number
+    warning_total: number
+    top_alerts?: { name: string; count: number }[]
+  }
+  servers?: any[]
+  trend_7d?: { date: string; score?: number; firing?: number; critical?: number; avg_cpu?: number; avg_mem?: number; avg_disk?: number }[]
+  forecast_7_15_30?: any
 }

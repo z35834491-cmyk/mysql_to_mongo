@@ -26,6 +26,9 @@ export const taskApi = {
   // Download logs
   downloadLogs: (id: string) => `/api/tasks/logs/${id}/download`,
 
+  getTaskPerfConfig: (id: string) => request.get<{ task_id: string; perf: Record<string, any> }>(`/tasks/config/${id}`),
+  updateTaskPerfConfig: (id: string, perf: Record<string, any>) => request.post(`/tasks/config/${id}`, { perf }),
+
   // Global Log Monitoring
   getLogFiles: (params?: any) => request.get<{files: any[], total: number}>('/logs/files', { params }).then(res => res),
   getLogStats: () => request.get<any>('/logs/stats'),

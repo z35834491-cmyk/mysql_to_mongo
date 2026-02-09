@@ -68,22 +68,8 @@ def history(request):
     results = []
     for r in reports:
         content = r.content
-        risk = content.get('risk_summary', {})
-        score = risk.get('score', 0)
-        reasons = risk.get('reasons', [])
-        
-        # Backward compatibility check
-        # Old logic: Score is Risk (0=Good, 50=Bad)
-        # New logic: Score is Health (100=Good, 0=Bad)
-        # Heuristic: If reasons contains "resource_max=OK" or "alerts_or_targets_down", it's old logic
-        is_legacy = False
-        if reasons and isinstance(reasons, list):
-            if "resource_max=OK" in reasons or "alerts_or_targets_down" in reasons:
-                is_legacy = True
-        
-        health_score = score
-        if is_legacy:
-            health_score = 100 - score
+        health = content.get('health_summary', {}) or content.get('risk_summary', {})
+        health_score = health.get('score', 0)
             
         results.append({
             "report_id": r.report_id,
@@ -102,11 +88,8 @@ def history(request):
                     with open(os.path.join(path, f), 'r', encoding='utf-8') as f_in:
                         try:
                             content = json.load(f_in)
-                            risk = content.get('risk_summary', {})
-                            score = risk.get('score', 0)
-                            
-                            # Legacy file logic is definitely legacy
-                            health_score = 100 - score
+                            health = content.get('health_summary', {}) or content.get('risk_summary', {})
+                            health_score = health.get('score', 0)
                             
                             results.append({
                                 "report_id": rid,
@@ -145,19 +128,9 @@ def get_aggregated_report(request):
     
     for r in reports:
         content = r.content
-        risk = content.get('risk_summary', {})
-        score = risk.get('score', 0)
-        reasons = risk.get('reasons', [])
-        
-        # Compat logic
-        is_legacy = False
-        if reasons and isinstance(reasons, list):
-            if "resource_max=OK" in reasons or "alerts_or_targets_down" in reasons:
-                is_legacy = True
-        
-        health_score = score
-        if is_legacy:
-            health_score = 100 - score
+        health = content.get('health_summary', {}) or content.get('risk_summary', {})
+        health_score = health.get('score', 0)
+        reasons = health.get('reasons', [])
             
         total_score += health_score
         count += 1

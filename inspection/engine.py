@@ -72,33 +72,6 @@ class InspectionEngine:
             pass
         return []
 
-    def _get_vulnerabilities(self):
-        # In a real scenario, this would query a CVE database or security scanner.
-        # Here we mock some official vulnerability data for analysis.
-        return [
-            {
-                "cve_id": "CVE-2023-44487",
-                "component": "http/2",
-                "severity": "High",
-                "description": "HTTP/2 Rapid Reset vulnerability allowing DDoS attacks.",
-                "status": "Fix Required"
-            },
-            {
-                "cve_id": "CVE-2024-21626",
-                "component": "runc",
-                "severity": "High",
-                "description": "Container escape vulnerability in runc.",
-                "status": "Investigating"
-            },
-            {
-                "cve_id": "CVE-2023-48795",
-                "component": "ssh",
-                "severity": "Medium",
-                "description": "Terrapin attack affecting SSH handshake integrity.",
-                "status": "Patched"
-            }
-        ]
-
     def _call_gemini_api(self, prompt, system_prompt):
         """Call Google Gemini API (REST)"""
         api_key = self.config.ark_api_key
@@ -158,7 +131,7 @@ class InspectionEngine:
         except Exception as e:
             return f"AI analysis error: {e}"
 
-    def _calculate_health_score(self, down_targets, firing_alerts, metrics_summary):
+    def _calculate_health_score(self, down_targets, firing_alerts, servers):
         """
         Calculate dynamic health score (0-100) based on current metrics.
         Base score: 100
@@ -189,24 +162,31 @@ class InspectionEngine:
                 reasons.append(f"Warning Alert ({alert.get('name')}): -5")
 
         # 3. Resource Usage
-        for m in metrics_summary:
-            val = m.get('value', 0)
-            category = m.get('category', '')
-            
-            if category in ['cpu', 'memory']:
-                if val > 90:
-                    score -= 10
-                    reasons.append(f"High {m.get('display')} ({val}%): -10")
-                elif val > 80:
-                    score -= 5
-                    reasons.append(f"Elevated {m.get('display')} ({val}%): -5")
-            elif category == 'disk':
-                if val > 95:
-                    score -= 15
-                    reasons.append(f"Critical Disk ({val}%): -15")
-                elif val > 85:
-                    score -= 5
-                    reasons.append(f"High Disk ({val}%): -5")
+        if servers:
+            max_cpu = max((float(s.get('cpu_pct') or 0) for s in servers), default=0)
+            max_mem = max((float(s.get('mem_pct') or 0) for s in servers), default=0)
+            max_disk = max((float(s.get('disk_pct') or 0) for s in servers), default=0)
+
+            if max_cpu > 95:
+                score -= 10
+                reasons.append(f"CPU热点(最高{round(max_cpu,1)}%): -10")
+            elif max_cpu > 85:
+                score -= 5
+                reasons.append(f"CPU偏高(最高{round(max_cpu,1)}%): -5")
+
+            if max_mem > 95:
+                score -= 10
+                reasons.append(f"内存热点(最高{round(max_mem,1)}%): -10")
+            elif max_mem > 85:
+                score -= 5
+                reasons.append(f"内存偏高(最高{round(max_mem,1)}%): -5")
+
+            if max_disk > 95:
+                score -= 15
+                reasons.append(f"磁盘临界(最高{round(max_disk,1)}%): -15")
+            elif max_disk > 90:
+                score -= 5
+                reasons.append(f"磁盘偏高(最高{round(max_disk,1)}%): -5")
 
         score = max(0.0, score)
         level = "ok"
@@ -235,7 +215,7 @@ class InspectionEngine:
                 d = (today - timedelta(days=i)).strftime('%Y-%m-%d')
                 report = InspectionReport.objects.filter(report_id=d).first()
                 if report and report.content:
-                    s = report.content.get('risk_summary', {}).get('score')
+                    s = report.content.get('health_summary', {}).get('score') or report.content.get('risk_summary', {}).get('score')
                     if s is not None:
                         history_scores.append(float(s))
         except Exception:
@@ -338,65 +318,114 @@ class InspectionEngine:
             "labels": {}, "value": len(firing), "unit": "count", "level": "ok" if not firing else "warning", "status": "success"
         })
 
-        # Vulnerabilities
-        log("inspection", "Fetching vulnerabilities...")
-        vulnerabilities = self._get_vulnerabilities()
-        
-        # Top 5 CPU
-        log("inspection", "Querying CPU usage...")
-        cpu_query = 'topk(5, (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)))'
+        log("inspection", "Querying node resource usage...")
+        cpu_query = '(100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100))'
+        mem_query = '((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100)'
+        disk_query = '((1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) * 100)'
+        load1_query = 'node_load1'
+        uptime_h_query = '((time() - node_boot_time_seconds) / 3600)'
+
         cpu_results = self._query_prometheus(cpu_query)
-        for r in cpu_results:
-            val = float(r['value'][1])
-            metrics_summary.append({
-                "category": "cpu", "name": "cpu_usage_top5", "display": "CPU Usage Top5",
-                "labels": r['metric'], "value": round(val, 2), "unit": "%", "level": "ok" if val < 80 else "warning", "status": "success", "query": cpu_query
-            })
-
-        # Top 5 Mem
-        log("inspection", "Querying Memory usage...")
-        mem_query = 'topk(5, (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100)'
         mem_results = self._query_prometheus(mem_query)
-        for r in mem_results:
-            val = float(r['value'][1])
-            metrics_summary.append({
-                "category": "memory", "name": "mem_usage_top5", "display": "Memory Usage Top5",
-                "labels": r['metric'], "value": round(val, 2), "unit": "%", "level": "ok" if val < 85 else "warning", "status": "success", "query": mem_query
-            })
-
-        # Top 5 Disk
-        log("inspection", "Querying Disk usage...")
-        disk_query = 'topk(5, (1 - (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) * 100)'
         disk_results = self._query_prometheus(disk_query)
-        for r in disk_results:
-            val = float(r['value'][1])
-            metrics_summary.append({
-                "category": "disk", "name": "rootfs_usage_top5", "display": "Disk(/) Usage Top5",
-                "labels": r['metric'], "value": round(val, 2), "unit": "%", "level": "ok" if val < 90 else "warning", "status": "success", "query": disk_query
-            })
+        load1_results = self._query_prometheus(load1_query)
+        uptime_results = self._query_prometheus(uptime_h_query)
 
-        # --- Mock data for demo if Prometheus is empty ---
-        if not metrics_summary or len(metrics_summary) <= 4:
-            log("inspection", "Using mock data for demo...")
-            mock_metrics = [
-                {"category": "cpu", "name": "cpu_usage_top5", "display": "CPU Usage Top5", "labels": {"instance": "192.168.1.10"}, "value": 45.2, "unit": "%", "level": "ok", "status": "success"},
-                {"category": "cpu", "name": "cpu_usage_top5", "display": "CPU Usage Top5", "labels": {"instance": "192.168.1.11"}, "value": 32.1, "unit": "%", "level": "ok", "status": "success"},
-                {"category": "memory", "name": "mem_usage_top5", "display": "Memory Usage Top5", "labels": {"instance": "192.168.1.10"}, "value": 78.5, "unit": "%", "level": "ok", "status": "success"},
-                {"category": "memory", "name": "mem_usage_top5", "display": "Memory Usage Top5", "labels": {"instance": "192.168.1.11"}, "value": 65.4, "unit": "%", "level": "ok", "status": "success"},
-                {"category": "disk", "name": "rootfs_usage_top5", "display": "Disk(/) Usage Top5", "labels": {"instance": "192.168.1.10"}, "value": 55.0, "unit": "%", "level": "ok", "status": "success"},
-            ]
-            metrics_summary.extend(mock_metrics)
-            if not total_targets: total_targets = 2
-        # -------------------------------------------------
+        by_instance = {}
+        def _set(inst, k, v):
+            if not inst:
+                return
+            if inst not in by_instance:
+                by_instance[inst] = {"instance": inst}
+            by_instance[inst][k] = v
+
+        for r in cpu_results:
+            inst = (r.get('metric') or {}).get('instance') or ''
+            try:
+                _set(inst, 'cpu_pct', round(float(r['value'][1]), 2))
+            except Exception:
+                pass
+        for r in mem_results:
+            inst = (r.get('metric') or {}).get('instance') or ''
+            try:
+                _set(inst, 'mem_pct', round(float(r['value'][1]), 2))
+            except Exception:
+                pass
+        for r in disk_results:
+            inst = (r.get('metric') or {}).get('instance') or ''
+            try:
+                _set(inst, 'disk_pct', round(float(r['value'][1]), 2))
+            except Exception:
+                pass
+        for r in load1_results:
+            inst = (r.get('metric') or {}).get('instance') or ''
+            try:
+                _set(inst, 'load1', round(float(r['value'][1]), 2))
+            except Exception:
+                pass
+        for r in uptime_results:
+            inst = (r.get('metric') or {}).get('instance') or ''
+            try:
+                _set(inst, 'uptime_hours', round(float(r['value'][1]), 1))
+            except Exception:
+                pass
+
+        servers = list(by_instance.values())
+        servers.sort(key=lambda x: float(x.get('cpu_pct') or 0), reverse=True)
+
+        def _avg(key):
+            vals = [float(s.get(key) or 0) for s in servers if s.get(key) is not None]
+            return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+        fleet_summary = {
+            "server_count": len(servers),
+            "avg_cpu_pct": _avg('cpu_pct'),
+            "avg_mem_pct": _avg('mem_pct'),
+            "avg_disk_pct": _avg('disk_pct'),
+            "top_cpu": servers[:10],
+            "top_mem": sorted(servers, key=lambda x: float(x.get('mem_pct') or 0), reverse=True)[:10],
+            "top_disk": sorted(servers, key=lambda x: float(x.get('disk_pct') or 0), reverse=True)[:10],
+        }
+
+        metrics_summary.append({
+            "category": "fleet", "name": "server_count", "display": "Servers",
+            "labels": {}, "value": len(servers), "unit": "count", "level": "ok", "status": "success"
+        })
+        metrics_summary.append({
+            "category": "fleet", "name": "avg_cpu_pct", "display": "Avg CPU",
+            "labels": {}, "value": fleet_summary["avg_cpu_pct"], "unit": "%", "level": "ok", "status": "success", "query": cpu_query
+        })
+        metrics_summary.append({
+            "category": "fleet", "name": "avg_mem_pct", "display": "Avg Memory",
+            "labels": {}, "value": fleet_summary["avg_mem_pct"], "unit": "%", "level": "ok", "status": "success", "query": mem_query
+        })
+        metrics_summary.append({
+            "category": "fleet", "name": "avg_disk_pct", "display": "Avg Disk(/)",
+            "labels": {}, "value": fleet_summary["avg_disk_pct"], "unit": "%", "level": "ok", "status": "success", "query": disk_query
+        })
 
         # 2. AI Analysis
         log("inspection", "Starting AI analysis...")
         ai_analysis = "AI analysis failed or not configured."
         
         if self.config.ark_api_key:
-            # Include vulnerabilities in the prompt
-            prompt = f"请分析以下系统巡检数据并提供报告：\n指标数据：\n{json.dumps(metrics_summary, indent=2, ensure_ascii=False)}\n\n发现的官方披露漏洞：\n{json.dumps(vulnerabilities, indent=2, ensure_ascii=False)}"
-            system_prompt = f"你是一个资深的运维架构师。请根据我提供的系统巡检报告还有指标数据和官方披露漏洞进行综合分析。并且详细分析我的报警以及系统资源使用情况，对当前情况进行分析并且给出处置意见\n请在报告开头严格按照以下格式输出元数据：\n**报告生成时间**：{datetime.now().strftime('%Y-%m-%d')}\n***报告人***：运维团队\n**联系方式**：slack @运维团队\n\n。请全程使用中文回复。"
+            prompt = json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "targets": {"total": total_targets, "down": down_targets},
+                "alerts": {"firing": firing},
+                "fleet": fleet_summary,
+            }, ensure_ascii=False, indent=2)
+            system_prompt = (
+                "你是一名专业资深的系统运维工程师（偏 SRE）。"
+                "请基于我提供的巡检数据，输出一份可执行的中文巡检报告，聚焦：服务器资源使用状况、告警分析、影响面、处置建议与优先级。"
+                "不要输出安全漏洞/CVE/风险扫描相关内容。"
+                "输出结构必须包含：\n"
+                "1) 总览（健康评分/关键结论）\n"
+                "2) 资源热点（按CPU/内存/磁盘列出最需要关注的主机与原因）\n"
+                "3) 告警分析（按严重度统计、Top告警、可能根因）\n"
+                "4) 处置建议（P0/P1/P2，给出具体操作方向）\n"
+                f"\n报告生成时间：{datetime.now().strftime('%Y-%m-%d')}\n"
+            )
             
             # Detect provider
             model_id = self.config.ark_model_id.lower()
@@ -451,10 +480,44 @@ class InspectionEngine:
             pass
 
         # 4. Calculate Dynamic Score
-        health_score, health_level, health_reasons = self._calculate_health_score(down_targets, firing, metrics_summary)
+        health_score, health_level, health_reasons = self._calculate_health_score(down_targets, firing, servers)
         
         # 5. Predict Future
         forecast_data = self._predict_future_scores(health_score)
+
+        critical_count = sum(1 for a in firing if str(a.get('severity') or '').lower() in ['critical', 'high'])
+        warning_count = sum(1 for a in firing if str(a.get('severity') or '').lower() not in ['critical', 'high'])
+
+        top_alerts = {}
+        for a in firing:
+            k = a.get('name') or 'Unknown'
+            top_alerts[k] = top_alerts.get(k, 0) + 1
+        top_alert_list = [{"name": k, "count": v} for k, v in sorted(top_alerts.items(), key=lambda x: x[1], reverse=True)[:10]]
+
+        trend = []
+        try:
+            for i in range(6, -1, -1):
+                d = (datetime.now().date() - timedelta(days=i)).strftime('%Y-%m-%d')
+                r = InspectionReport.objects.filter(report_id=d).first()
+                if r and r.content:
+                    hs = r.content.get('health_summary', {}).get('score')
+                    if hs is None:
+                        hs = r.content.get('risk_summary', {}).get('score')
+                    a_sum = r.content.get('alerts_summary', {})
+                    f_total = a_sum.get('firing_total')
+                    c_total = a_sum.get('critical_total')
+                    fleet = r.content.get('fleet_summary', {})
+                    trend.append({
+                        "date": d,
+                        "score": hs,
+                        "firing": f_total,
+                        "critical": c_total,
+                        "avg_cpu": fleet.get('avg_cpu_pct'),
+                        "avg_mem": fleet.get('avg_mem_pct'),
+                        "avg_disk": fleet.get('avg_disk_pct'),
+                    })
+        except Exception:
+            pass
 
         # 6. Final Report
         report = {
@@ -462,11 +525,20 @@ class InspectionEngine:
             "prometheus_status": "ok" if total_targets > 0 else "error",
             "down_targets": down_targets,
             "firing_alerts": firing,
-            "vulnerabilities": vulnerabilities,
+            "alerts_summary": {
+                "firing_total": len(firing),
+                "critical_total": critical_count,
+                "warning_total": warning_count,
+                "top_alerts": top_alert_list,
+            },
+            "servers": servers,
+            "fleet_summary": fleet_summary,
             "metrics_summary": metrics_summary,
             "ai_analysis": ai_analysis,
             "report_id": report_id,
-            "risk_summary": {
+            "score": health_score,
+            "level": health_level,
+            "health_summary": {
                 "score": health_score,
                 "level": health_level,
                 "reasons": health_reasons
@@ -474,7 +546,8 @@ class InspectionEngine:
             "compare_with_yesterday": compare_data,
             "forecast_7_15_30": {
                 "predictions": forecast_data
-            }
+            },
+            "trend_7d": trend,
         }
         
         # Save to DB

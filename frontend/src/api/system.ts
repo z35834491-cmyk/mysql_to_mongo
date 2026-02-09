@@ -14,7 +14,7 @@ export const systemApi = {
   }),
   
   // Inspection
-  getReports: () => request.get<{items: string[]}>('/inspection/reports').then(res => res.items),
+  getReports: () => request.get<{items: any[]}>('/inspection/reports').then(res => res.items),
   runInspection: (config?: any) => request.post<any>('/inspection/run', config),
   getReportDetail: (id: string) => request.get<any>(`/inspection/reports/${id}`),
   getInspectionConfig: () => request.get<any>('/inspection/config'),
