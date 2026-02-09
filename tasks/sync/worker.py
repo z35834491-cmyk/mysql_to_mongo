@@ -216,7 +216,7 @@ class SyncWorker:
             self._auto_build_table_map_if_needed()
             state = load_state(self.cfg.task_id)
 
-            if not state:
+            if not state or state.get("metrics", {}).get("phase") == "full_sync":
                 # Check if specific binlog position provided in config
                 if self.cfg.binlog_filename:
                     log(self.cfg.task_id, f"Starting IncSync from config: {self.cfg.binlog_filename}:{self.cfg.binlog_position}")
@@ -258,6 +258,21 @@ class SyncWorker:
 
         conn = pymysql.connect(**self.mysql_settings)
         try:
+            # --- Capture Master Status at start of full sync ---
+            start_log_file = None
+            start_log_pos = None
+            try:
+                with conn.cursor() as c_status:
+                    c_status.execute("SHOW MASTER STATUS")
+                    ms = c_status.fetchone()
+                    if ms:
+                        start_log_file = ms.get("File")
+                        start_log_pos = ms.get("Position")
+                        self._metrics["full_sync_start_pos"] = f"{start_log_file}:{start_log_pos}"
+                        log(self.cfg.task_id, f"FullSync started at binlog {start_log_file}:{start_log_pos}")
+            except Exception as e:
+                log(self.cfg.task_id, f"Warning: failed to get master status: {e}")
+
             with conn.cursor() as c:
                 for table, coll_name in self.cfg.table_map.items():
                     if self.stop_event.is_set():
@@ -372,6 +387,8 @@ class SyncWorker:
 
                         self._metrics["processed_count"] = processed
                         self._maybe_progress_log(f"FullSync prog table={table} done={processed}")
+                        if start_log_file and start_log_pos:
+                            self._maybe_save_state(start_log_file, start_log_pos)
 
                     if ops:
                         _s = time.time()
