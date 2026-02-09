@@ -283,37 +283,41 @@
                     />
                   </div>
                   <div class="list-toolbar">
-                     <span class="file-count">{{ savedFileTotal }} Files</span>
-                     <div class="toolbar-actions">
-                      <el-radio-group v-if="selectedTask?.s3_archive_enabled" v-model="savedLogType" size="small" @change="handleSavedLogTypeChange">
+                    <span class="file-count">{{ savedFileTotal }} Files</span>
+                    <div class="toolbar-actions">
+                      <el-radio-group
+                        v-if="selectedTask?.s3_archive_enabled"
+                        v-model="savedLogType"
+                        size="small"
+                        class="log-type-toggle"
+                        @change="handleSavedLogTypeChange"
+                      >
                         <el-radio-button label="raw">正常</el-radio-button>
                         <el-radio-button label="error">错误</el-radio-button>
                       </el-radio-group>
-                      <el-button v-if="selectedTask?.s3_archive_enabled" size="small" @click="openHistory">历史</el-button>
-                       <el-tooltip content="Task Config" placement="top" v-if="canManage">
-                          <el-button link :icon="Setting" @click="openConfig(selectedTask)" />
-                       </el-tooltip>
-                       
-                       <el-dropdown trigger="click" @command="handleSortCommand">
-                          <span class="el-dropdown-link" style="cursor: pointer; display: flex; align-items: center; color: #64748b; font-size: 12px; margin-right: 4px">
-                            <el-icon><Sort /></el-icon>
-                          </span>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item command="mtime:desc">Date (Newest)</el-dropdown-item>
-                              <el-dropdown-item command="mtime:asc">Date (Oldest)</el-dropdown-item>
-                              <el-dropdown-item command="name:asc">Name (A-Z)</el-dropdown-item>
-                              <el-dropdown-item command="size:desc">Size (Large)</el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                       </el-dropdown>
-
-                       <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
+                      <el-button v-if="selectedTask?.s3_archive_enabled" size="small" class="history-btn" @click="openHistory">历史</el-button>
+                      <el-tooltip content="Task Config" placement="top" v-if="canManage">
+                        <el-button link :icon="Setting" @click="selectedTask && openConfig(selectedTask)" />
+                      </el-tooltip>
+                      <el-dropdown trigger="click" @command="handleSortCommand">
+                        <span class="el-dropdown-link" style="cursor: pointer; display: flex; align-items: center; color: #64748b; font-size: 12px; margin-right: 4px">
+                          <el-icon><Sort /></el-icon>
+                        </span>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item command="mtime:desc">Date (Newest)</el-dropdown-item>
+                            <el-dropdown-item command="mtime:asc">Date (Oldest)</el-dropdown-item>
+                            <el-dropdown-item command="name:asc">Name (A-Z)</el-dropdown-item>
+                            <el-dropdown-item command="size:desc">Size (Large)</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                      <el-select v-model="savedFilePageSize" size="small" style="width: 70px" @change="fetchSavedLogs(1)">
                         <el-option :value="10" label="10" />
                         <el-option :value="20" label="20" />
                         <el-option :value="50" label="50" />
                       </el-select>
-                     </div>
+                    </div>
                   </div>
                   <div v-loading="savedLoading" class="list-content">
                     <div 
@@ -396,10 +400,10 @@
                       <div v-for="(group, file) in _.groupBy(batchSearchResults, 'file')" :key="file" class="search-result-group">
                         <div class="group-header">
                           <span>{{ file }}</span>
-                          <el-button link size="small" @click="jumpToBatchResult(file)">View File</el-button>
+                          <el-button link size="small" @click="jumpToBatchResult(String(file))">View File</el-button>
                         </div>
                         <div class="group-matches">
-                          <div v-for="(match, idx) in group" :key="idx" class="match-item" @click="jumpToBatchResult(file)">
+                          <div v-for="(match, idx) in group" :key="idx" class="match-item" @click="jumpToBatchResult(String(file))">
                             <span class="match-line-num">{{ match.line + 1 }}</span>
                             <span class="match-content">{{ match.content }}</span>
                           </div>
@@ -671,7 +675,8 @@ const fetchSavedLogs = async (page = 1) => {
         page_size: savedFilePageSize.value,
         sort_by: savedFileSortBy.value,
         order: savedFileOrder.value,
-        log_type: savedLogType.value
+        log_type: savedLogType.value,
+        realtime: selectedTask.value?.s3_archive_enabled ? 1 : 0
     })
     savedLogFiles.value = res.files
     savedFileTotal.value = res.total
@@ -1039,6 +1044,46 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.log-type-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-actions :deep(.el-radio-button__inner) {
+  height: 24px;
+  line-height: 22px;
+  padding: 0 10px;
+  border-color: var(--app-border-color);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--app-text-muted);
+}
+
+.toolbar-actions :deep(.el-radio-button:first-child .el-radio-button__inner) {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.toolbar-actions :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.toolbar-actions :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: rgba(var(--el-color-primary-rgb), 0.12);
+  border-color: rgba(var(--el-color-primary-rgb), 0.45);
+  color: var(--el-color-primary);
+  box-shadow: none;
+}
+
+.toolbar-actions :deep(.el-radio-button__inner:hover) {
+  color: var(--app-text-main);
+}
+
+.toolbar-actions :deep(.el-button--small) {
+  height: 24px;
 }
 
 .list-content {

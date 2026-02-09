@@ -153,6 +153,49 @@ class MonitorEngine:
         except Exception:
             pass
 
+    def get_realtime_index_payload(self, task, log_type: str):
+        tid = str(getattr(task, 'id', '') or '')
+        if not tid:
+            return None
+        now = timezone.now()
+        ws = self._get_4h_window_start(now)
+        ws_iso = ws.isoformat()
+        we = timezone.localtime(ws) + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+
+        with self._index_lock:
+            by_task = self._index_entries.get(tid) or {}
+            by_window = by_task.get(ws_iso)
+            if not by_window:
+                last_ws_iso = self._index_last_window_start.get(tid)
+                if last_ws_iso and last_ws_iso in by_task:
+                    ws_iso = last_ws_iso
+                    try:
+                        ws = datetime.datetime.fromisoformat(ws_iso)
+                        if timezone.is_naive(ws):
+                            ws = timezone.make_aware(ws, timezone.get_current_timezone())
+                        we = timezone.localtime(ws) + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+                    except Exception:
+                        ws = self._get_4h_window_start(now)
+                        we = timezone.localtime(ws) + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+                    by_window = by_task.get(ws_iso)
+
+            by_window = by_window or {}
+            items_map = by_window.get(log_type) or {}
+            items = list(items_map.values())
+
+        items.sort(key=lambda x: x.get('name') or '')
+        return {
+            "task_id": tid,
+            "task_name": getattr(task, 'name', ''),
+            "log_type": log_type,
+            "window_start": ws_iso,
+            "window_end": we.isoformat(),
+            "generated_at": timezone.now().isoformat(),
+            "total": len(items),
+            "files": items,
+            "realtime": True,
+        }
+
     def _cleanup_s3(self, task, s3_client, retention_days=90, max_delete=1000):
         try:
             cutoff = timezone.now() - datetime.timedelta(days=retention_days)

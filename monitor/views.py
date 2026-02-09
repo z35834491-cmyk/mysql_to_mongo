@@ -165,6 +165,7 @@ def monitor_logs(request):
     sort_by = request.query_params.get('sort_by', 'mtime') # name, size, mtime
     order = request.query_params.get('order', 'desc') # asc, desc
     log_type = (request.query_params.get('log_type') or 'all').lower()
+    realtime = (request.query_params.get('realtime') or '').lower() in ('1', 'true', 'yes', 'y', 'on')
     
     base_dir = monitor_engine.LOG_DIR
     if not task_id:
@@ -178,15 +179,25 @@ def monitor_logs(request):
     s3_client = _get_s3_client(task)
     if s3_client:
         lt = log_type if log_type in ('raw', 'error') else 'raw'
-        ws = _latest_completed_4h_window_start(timezone.now())
-        idx_key = _index_s3_key(task, lt, ws)
         payload = None
-        try:
-            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
-            raw = obj['Body'].read().decode('utf-8', errors='replace')
-            payload = json.loads(raw)
-        except Exception:
-            payload = {"files": [], "total": 0, "window_start": ws.isoformat(), "window_end": (ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)).isoformat()}
+        source = 's3'
+        idx_key = None
+        if realtime:
+            try:
+                payload = monitor_engine.get_realtime_index_payload(task, lt)
+                if isinstance(payload, dict) and payload.get('total'):
+                    source = 'realtime'
+            except Exception:
+                payload = None
+        if source != 'realtime':
+            ws = _latest_completed_4h_window_start(timezone.now())
+            idx_key = _index_s3_key(task, lt, ws)
+            try:
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
+                raw = obj['Body'].read().decode('utf-8', errors='replace')
+                payload = json.loads(raw)
+            except Exception:
+                payload = {"files": [], "total": 0, "window_start": ws.isoformat(), "window_end": (ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)).isoformat()}
 
         files = payload.get('files') if isinstance(payload, dict) else []
         if not isinstance(files, list):
@@ -216,6 +227,8 @@ def monitor_logs(request):
             "latest_index_key": idx_key,
             "window_start": payload.get('window_start'),
             "window_end": payload.get('window_end'),
+            "source": source,
+            "realtime": source == 'realtime'
         })
 
     log_dir = os.path.join(base_dir, str(task_id))
