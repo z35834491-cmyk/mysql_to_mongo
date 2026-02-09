@@ -143,6 +143,31 @@
                       </el-form-item>
                     </el-col>
                   </el-row>
+
+                  <el-row :gutter="20">
+                    <el-col :span="8">
+                      <el-form-item label="S3 Region">
+                        <el-input v-model="form.s3_region" :disabled="!form.s3_archive_enabled" placeholder="us-east-1" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="16">
+                      <el-form-item label="S3 Endpoint (Optional)">
+                        <el-input v-model="form.s3_endpoint" :disabled="!form.s3_archive_enabled" placeholder="https://s3.amazonaws.com 或 MinIO/OSS endpoint" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="20">
+                    <el-col :span="12">
+                      <el-form-item label="S3 Access Key">
+                        <el-input v-model="form.s3_access_key" :disabled="!form.s3_archive_enabled" placeholder="AKIA... / 留空不修改" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="S3 Secret Key">
+                        <el-input v-model="form.s3_secret_key" :disabled="!form.s3_archive_enabled" type="password" show-password placeholder="****（编辑时留空表示不修改）" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
               </el-form>
               <template #footer>
                 <div class="dialog-footer">
@@ -445,6 +470,9 @@ const selectTask = (task: MonitorTask) => {
 
 const openConfig = (task: MonitorTask) => {
     form.value = { ...task }
+    if (form.value.s3_secret_key === undefined || form.value.s3_secret_key === null) {
+      form.value.s3_secret_key = ''
+    }
     showConfigDialog.value = true
 }
 
@@ -462,6 +490,11 @@ const createNewTask = () => {
     alert_threshold_window: 60,
     alert_silence_minutes: 60,
     s3_archive_enabled: false,
+    s3_bucket: '',
+    s3_region: 'us-east-1',
+    s3_access_key: '',
+    s3_secret_key: '',
+    s3_endpoint: '',
     retention_days: 7,
     alert_enabled: true
   } as any
