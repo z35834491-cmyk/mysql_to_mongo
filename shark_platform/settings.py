@@ -60,7 +60,6 @@ INSTALLED_APPS = [
     'schedules',
     'ai_ops',
     'db_manager',
-    'perf',
 ]
 
 MIDDLEWARE = [

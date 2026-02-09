@@ -1,22 +1,34 @@
 from django.apps import AppConfig
 import os
 import logging
+import sys
 
 logger = logging.getLogger("inspection")
+
+_scheduler_started = False
 
 class InspectionConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'inspection'
 
     def ready(self):
-        # Prevent double execution in runserver with auto-reload
-        if os.environ.get('RUN_MAIN') != 'true' and os.environ.get('SERVER_SOFTWARE', '').startswith('gunicorn') is False:
-             return
+        global _scheduler_started
+        if _scheduler_started:
+            return
+
+        is_runserver = 'runserver' in sys.argv
+        should_start = (os.environ.get('RUN_MAIN') == 'true') if is_runserver else True
+        if not should_start:
+            return
         
         try:
+            from django.conf import settings
+            try:
+                from zoneinfo import ZoneInfo
+            except Exception:
+                from backports.zoneinfo import ZoneInfo
             from apscheduler.schedulers.background import BackgroundScheduler
             from apscheduler.triggers.cron import CronTrigger
-            # from django_apscheduler.jobstores import DjangoJobStore
             from .engine import inspection_engine
             
             def run_inspection_task():
@@ -24,30 +36,29 @@ class InspectionConfig(AppConfig):
                     logger.info("Starting daily inspection task...")
                     inspection_engine.run()
                     logger.info("Daily inspection task completed.")
-                except Exception as e:
-                    logger.error(f"Daily inspection task failed: {e}")
+                except Exception:
+                    logger.exception("Daily inspection task failed")
 
-            scheduler = BackgroundScheduler()
-            # If using django_apscheduler, we can use DjangoJobStore, but memory is fine for now
-            # scheduler.add_jobstore(DjangoJobStore(), "default")
-            
-            # Add job to run at 8:00 AM every day
-            scheduler.add_job(
+            tz = ZoneInfo(getattr(settings, 'TIME_ZONE', 'UTC') or 'UTC')
+            scheduler = BackgroundScheduler(timezone=tz)
+            job = scheduler.add_job(
                 run_inspection_task,
-                trigger=CronTrigger(hour=8, minute=0),
+                trigger=CronTrigger(hour=8, minute=0, timezone=tz),
                 id='daily_inspection',
                 max_instances=1,
+                coalesce=True,
+                misfire_grace_time=6 * 60 * 60,
                 replace_existing=True
             )
-
-            
             scheduler.start()
+            _scheduler_started = True
             logger.info("Inspection scheduler started: Daily at 08:00")
+            try:
+                logger.info(f"Inspection next run: {job.next_run_time}")
+            except Exception:
+                pass
             
-        except ImportError:
-            logger.warning("APScheduler not installed. Daily inspection disabled.")
-        except Exception as e:
-            logger.error(f"Failed to start inspection scheduler: {e}")
-
-# Helper wrapper for the task since we can't import views at top level inside AppConfig easily?
-# Actually we can import inside ready()
+        except ImportError as e:
+            logger.warning(f"Daily inspection scheduler disabled due to ImportError: {e}")
+        except Exception:
+            logger.exception("Failed to start inspection scheduler")

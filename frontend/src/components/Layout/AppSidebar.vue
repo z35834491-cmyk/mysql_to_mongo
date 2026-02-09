@@ -60,10 +60,6 @@
           <el-icon><Upload /></el-icon>
           <template #title>Deployment</template>
         </el-menu-item>
-        <el-menu-item index="/perf" v-if="canViewPerf">
-          <el-icon><TrendCharts /></el-icon>
-          <template #title>Performance</template>
-        </el-menu-item>
         <el-menu-item index="/permissions" v-if="isAdmin">
           <el-icon><Lock /></el-icon>
           <template #title>Access Control</template>
@@ -82,7 +78,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock, Calendar, Cpu, TrendCharts } from '@element-plus/icons-vue'
+import { Odometer, List, Link, Monitor, Setting, Upload, Fold, Expand, Lock, Calendar, Cpu } from '@element-plus/icons-vue'
 import { useSystemStore } from '@/stores/system'
 
 const route = useRoute()
@@ -95,7 +91,6 @@ const canViewTasks = computed(() => systemStore.isAdmin || systemStore.hasPermis
 const canViewLogs = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_logs'))
 const canViewSystem = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_inspection'))
 const canViewDeploy = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_deploy'))
-const canViewPerf = computed(() => systemStore.isAdmin || systemStore.hasPermission('view_perf'))
 
 const handleMenuSelect = () => {
   // Menu selection handling if needed

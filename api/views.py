@@ -80,10 +80,6 @@ class HasRolePermission(BasePermission):
                 return has('run_inspection')
             if '/inspection/reports' in path:
                 return has('view_inspection')
-        if '/perf/' in path:
-            if method == 'GET':
-                return has('view_perf')
-            return has('manage_perf')
         return True
 
 
@@ -105,8 +101,6 @@ def _ensure_custom_permissions():
         {"codename": "view_deploy", "name": "View Deployments"},
         {"codename": "manage_deploy", "name": "Manage Deployments"},
         {"codename": "manage_users", "name": "Manage Users & Roles"},
-        {"codename": "view_perf", "name": "View Performance"},
-        {"codename": "manage_perf", "name": "Manage Performance"},
     ]
     for p in perms:
         obj, created = Permission.objects.get_or_create(

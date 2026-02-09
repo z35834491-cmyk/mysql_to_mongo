@@ -81,12 +81,6 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Deploy', icon: 'Upload', viewPerm: 'view_deploy' }
       },
       {
-        path: 'perf',
-        name: 'Perf',
-        component: () => import('@/views/Perf/Index.vue'),
-        meta: { title: 'Performance', icon: 'TrendCharts', viewPerm: 'view_perf' }
-      },
-      {
         path: 'permissions',
         name: 'Permissions',
         component: () => import('@/views/Permissions/Index.vue'),
@@ -128,7 +122,6 @@ router.beforeEach(async (to, from, next) => {
       if (systemStore.hasPermission('view_logs')) return next('/logs')
       if (systemStore.hasPermission('view_tasks')) return next('/tasks')
       if (systemStore.hasPermission('view_deploy')) return next('/deploy')
-      if (systemStore.hasPermission('view_perf')) return next('/perf')
       if (systemStore.hasPermission('view_inspection')) return next('/system')
       if (systemStore.hasPermission('view_dashboard')) return next('/dashboard')
       
