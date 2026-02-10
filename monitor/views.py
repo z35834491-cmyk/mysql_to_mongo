@@ -177,74 +177,106 @@ def monitor_logs(request):
         return Response({"files": [], "total": 0})
 
     s3_client = _get_s3_client(task)
+    
+    # Logic: 
+    # 1. Fetch from S3 Index (History mode or S3 enabled).
+    # 2. Fetch from Local (Error logs or S3 disabled).
+    # 3. Combine and Deduplicate.
+    
+    s3_files = []
+    local_files = []
+    
+    # 1. S3 Files
+    # Logic: Use S3 Index ONLY if S3 is enabled.
     if s3_client:
         lt = log_type if log_type in ('raw', 'error') else 'raw'
+        ws = _latest_completed_4h_window_start(timezone.now())
+        
+        # Try to get "Latest" index first? 
+        # Actually, for "Realtime" view, we want the CURRENT window logs.
+        # But if we stream to S3, the current window logs are in S3 but scattered.
+        # AND we have a partial index in memory? No, index is updated on upload.
+        # monitor_engine.get_realtime_index_payload handles memory index.
+        
         payload = None
-        source = 's3'
-        idx_key = None
         if realtime:
-            try:
-                payload = monitor_engine.get_realtime_index_payload(task, lt)
-                if isinstance(payload, dict) and payload.get('total'):
-                    source = 'realtime'
-            except Exception:
-                payload = None
-        if source != 'realtime':
-            ws = _latest_completed_4h_window_start(timezone.now())
+             try:
+                 payload = monitor_engine.get_realtime_index_payload(task, lt)
+             except Exception:
+                 pass
+        
+        if not payload:
+            # Fallback to S3 latest completed window
             idx_key = _index_s3_key(task, lt, ws)
             try:
                 obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
                 raw = obj['Body'].read().decode('utf-8', errors='replace')
                 payload = json.loads(raw)
             except Exception:
-                payload = {"files": [], "total": 0, "window_start": ws.isoformat(), "window_end": (ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)).isoformat()}
+                pass
+        
+        if payload and isinstance(payload.get('files'), list):
+            s3_files = payload['files']
+            
+            # AGGREGATION LOGIC for "Too Many Files"
+            # If we have many small chunks for the same pod/window, group them.
+            # But the user wants "Latest 4 hours".
+            # If we group them, we return one entry per Pod.
+            # Name: "{pod_name}_aggregated_{window_start}.log"
+            # But we need to know WHICH files belong to it.
+            # We can't return a list of lists.
+            # We can return "Virtual Files" and handle them in `monitor_log_view`.
+            
+            # Group by pod name (parsed from key)
+            # Key format: .../raw/namespace/pod/date/stamp.log
+            # Regex: .*/raw/([^/]+)/([^/]+)/.*
+            
+            aggregated = {}
+            for f in s3_files:
+                key = f.get('name') or ''
+                # Try parse pod
+                parts = key.split('/')
+                # Expect: logs/monitor/{id}/raw/{ns}/{pod}/{date}/{stamp}.log
+                # If path structure changes, this breaks.
+                # Let's try to match loosely.
+                if '/raw/' in key:
+                    try:
+                        idx = key.find('/raw/')
+                        rest = key[idx+5:] # ns/pod/date/stamp.log
+                        p = rest.split('/')
+                        if len(p) >= 4:
+                            ns, pod = p[0], p[1]
+                            virtual_name = f"{ns}_{pod}_s3_recent.log" # Virtual Name
+                            
+                            if virtual_name not in aggregated:
+                                aggregated[virtual_name] = {
+                                    "name": virtual_name,
+                                    "size": 0,
+                                    "mtime": 0,
+                                    "is_virtual": True,
+                                    "s3_keys": []
+                                }
+                            aggregated[virtual_name]['size'] += int(f.get('size') or 0)
+                            aggregated[virtual_name]['mtime'] = max(aggregated[virtual_name]['mtime'], float(f.get('mtime') or 0))
+                            aggregated[virtual_name]['s3_keys'].append(key)
+                    except:
+                        pass
+                else:
+                    # Keep as is?
+                    pass
+            
+            if aggregated:
+                s3_files = list(aggregated.values())
 
-        files = payload.get('files') if isinstance(payload, dict) else []
-        if not isinstance(files, list):
-            files = []
-
-        if search_query:
-            sq = search_query.lower()
-            files = [f for f in files if sq in str((f.get('name') or '')).lower()]
-
-        reverse = (order == 'desc')
-        if sort_by == 'name':
-            files.sort(key=lambda x: x.get('name') or '', reverse=reverse)
-        elif sort_by == 'size':
-            files.sort(key=lambda x: int(x.get('size') or 0), reverse=reverse)
-        else:
-            files.sort(key=lambda x: float(x.get('mtime') or 0), reverse=reverse)
-
-        total = len(files)
-        start_i = (page - 1) * page_size
-        end_i = start_i + page_size
-        paged_files = files[start_i:end_i]
-        return Response({
-            "files": paged_files,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "latest_index_key": idx_key,
-            "window_start": payload.get('window_start'),
-            "window_end": payload.get('window_end'),
-            "source": source,
-            "realtime": source == 'realtime'
-        })
-
+    # 2. Local Files
     log_dir = os.path.join(base_dir, str(task_id))
-
-    if not os.path.exists(log_dir):
-        return Response({"files": [], "total": 0})
-    
-    files = []
-    try:
+    if os.path.exists(log_dir):
         def is_error_name(name: str) -> bool:
             n = (name or '').lower()
             return n.endswith('_error.log') or ('task_errors_' in n)
 
         for f in os.listdir(log_dir):
             if f.endswith(".log"):
-                # Filter by search query if provided
                 if search_query and search_query not in f.lower():
                     continue
                 if log_type == 'error' and not is_error_name(f):
@@ -254,36 +286,48 @@ def monitor_logs(request):
                     
                 full_path = os.path.join(log_dir, f)
                 stat = os.stat(full_path)
-                files.append({
+                local_files.append({
                     "name": f,
                     "size": stat.st_size,
                     "mtime": stat.st_mtime
                 })
-        
-        # Sort logic
-        reverse = (order == 'desc')
-        if sort_by == 'name':
-            files.sort(key=lambda x: x['name'], reverse=reverse)
-        elif sort_by == 'size':
-            files.sort(key=lambda x: x['size'], reverse=reverse)
-        else: # mtime default
-            files.sort(key=lambda x: x['mtime'], reverse=reverse)
-            
-        # Pagination
-        total = len(files)
-        start = (page - 1) * page_size
-        end = start + page_size
-        paged_files = files[start:end]
-        
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-        
+
+    # Combine
+    files = s3_files + local_files
+    
+    # Filter by search
+    if search_query:
+        sq = search_query.lower()
+        files = [f for f in files if sq in str((f.get('name') or '')).lower()]
+
+    reverse = (order == 'desc')
+    if sort_by == 'name':
+        files.sort(key=lambda x: x.get('name') or '', reverse=reverse)
+    elif sort_by == 'size':
+        files.sort(key=lambda x: int(x.get('size') or 0), reverse=reverse)
+    else:
+        files.sort(key=lambda x: float(x.get('mtime') or 0), reverse=reverse)
+
+    total = len(files)
+    start_i = (page - 1) * page_size
+    end_i = start_i + page_size
+    paged_files = files[start_i:end_i]
+    
+    # We need to store 's3_keys' in the response so the frontend passes it back?
+    # No, frontend just passes 'filename'. 
+    # If filename is virtual, `monitor_log_view` must reconstruct or find the keys.
+    # But `monitor_log_view` is stateless. It doesn't know the keys unless we pass them or query index again.
+    # Querying index again is fine.
+    
     return Response({
         "files": paged_files,
         "total": total,
         "page": page,
-        "page_size": page_size
+        "page_size": page_size,
+        "source": "hybrid",
+        "realtime": realtime
     })
+
 
 
 @api_view(['GET'])
@@ -409,173 +453,266 @@ def monitor_log_view(request):
     except MonitorTask.DoesNotExist:
         return Response({"error": "Task not found"}, status=404)
 
+    # Helper for serving local file
+    def serve_local_file(fpath):
+        try:
+            # If keyword provided, we search
+            if keyword:
+                results = []
+                keywords = keyword.lower().split()
+                with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    for i, line in enumerate(f, 1):
+                        line_lower = line.lower()
+                        if all(k in line_lower for k in keywords):
+                            results.append(line.rstrip())
+                            if len(results) > 2000: 
+                                    results.append(f"... (Matches truncated, found > 2000 lines) ...")
+                                    break
+                return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
+
+            file_size = os.path.getsize(fpath)
+            MAX_SIZE_MB = 50
+            
+            if file_size > MAX_SIZE_MB * 1024 * 1024 and not keyword:
+                if reverse and page == 1:
+                    from collections import deque
+                    with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                        all_lines = list(deque(f, page_size))
+                        all_lines.reverse()
+                        total = page_size + 1
+                        content = "".join(all_lines)
+                        return Response({
+                            "content": content,
+                            "total": total,
+                            "page": 1,
+                            "page_size": page_size,
+                            "warning": "File too large, showing last lines only."
+                        })
+            
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                all_lines = f.readlines()
+                
+            total = len(all_lines)
+            if reverse:
+                all_lines.reverse()
+            
+            p = page
+            if p == -1:
+                import math
+                p = max(1, math.ceil(total / page_size))
+                
+            start = (p - 1) * page_size
+            end = start + page_size
+            
+            content = "".join(all_lines[start:end])
+            
+            return Response({
+                "content": content, 
+                "total": total,
+                "page": p,
+                "page_size": page_size
+            })
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+    # Helper for Virtual S3 File (Aggregated)
+    # Filename format: {ns}_{pod}_s3_recent.log
+    if filename.endswith('_s3_recent.log'):
+        # Reconstruct the logic to find matching keys
+        # We need to query the Index again to find the chunks.
+        # This is slightly inefficient but stateless.
+        s3_client = _get_s3_client(task)
+        if s3_client:
+            # Parse namespace and pod from filename
+            # Format: {ns}_{pod}_s3_recent.log
+            # Caveat: pod name might contain underscores.
+            # But we constructed it as `f"{ns}_{pod}_s3_recent.log"`.
+            # And `ns` usually doesn't have underscores (K8s convention), but might.
+            # Let's assume the suffix is constant.
+            base_name = filename[:-14] # strip "_s3_recent.log"
+            # Split by first underscore? No, ns and pod are separated by _.
+            # We need to match the S3 keys that contain `/raw/{ns}/{pod}/`.
+            # We can just search the index for keys containing `{ns}/{pod}`?
+            # Or iterate all keys in current window index and check if they match the "Virtual Name" logic.
+            
+            lt = 'raw' # Virtual files are only for raw logs
+            ws = _latest_completed_4h_window_start(timezone.now())
+            payload = None
+            
+            # Check realtime index first
+            try:
+                payload = monitor_engine.get_realtime_index_payload(task, lt)
+            except:
+                pass
+            
+            if not payload:
+                # Check S3 index
+                idx_key = _index_s3_key(task, lt, ws)
+                try:
+                    obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
+                    raw = obj['Body'].read().decode('utf-8', errors='replace')
+                    payload = json.loads(raw)
+                except:
+                    pass
+            
+            target_keys = []
+            if payload and isinstance(payload.get('files'), list):
+                for f in payload['files']:
+                    key = f.get('name') or ''
+                    # Check if this key maps to our requested filename
+                    if '/raw/' in key:
+                        try:
+                            idx = key.find('/raw/')
+                            rest = key[idx+5:] 
+                            p = rest.split('/')
+                            if len(p) >= 4:
+                                ns, pod = p[0], p[1]
+                                virtual_name = f"{ns}_{pod}_s3_recent.log"
+                                if virtual_name == filename:
+                                    target_keys.append(key)
+                        except:
+                            pass
+            
+            # Now fetch and concat all target_keys
+            # Sort by key (contains timestamp)
+            target_keys.sort()
+            
+            all_content = []
+            # Limitation: If total size is huge, we might OOM.
+            # But "recent" chunks shouldn't be massive for 4 hours unless verbose.
+            # We enforce a limit?
+            
+            # If search keyword, stream and search
+            if keyword:
+                results = []
+                keywords = keyword.lower().split()
+                line_idx = 1
+                for key in target_keys:
+                    try:
+                        obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                        for line in _iter_s3_lines(obj['Body']):
+                            ll = line.lower()
+                            if all(k in ll for k in keywords):
+                                results.append(line.rstrip('\n'))
+                                if len(results) > 2000:
+                                    break
+                        if len(results) > 2000:
+                            results.append("... (Matches truncated) ...")
+                            break
+                    except:
+                        pass
+                return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
+
+            # Full content fetch (with pagination?)
+            # Pagination across multiple S3 files is hard.
+            # We will fetch ALL and then paginate in memory (inefficient but works for text logs).
+            
+            full_text = ""
+            for key in target_keys:
+                try:
+                    obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                    chunk = obj['Body'].read().decode('utf-8', errors='replace')
+                    full_text += chunk
+                except:
+                    pass
+            
+            # Apply pagination on full_text
+            all_lines = full_text.splitlines(True)
+            total = len(all_lines)
+            if reverse:
+                all_lines.reverse()
+            
+            p = page
+            if p == -1:
+                import math
+                p = max(1, math.ceil(total / page_size))
+            
+            start = (p - 1) * page_size
+            end = start + page_size
+            
+            content = "".join(all_lines[start:end])
+            
+            return Response({
+                "content": content, 
+                "total": total,
+                "page": p,
+                "page_size": page_size
+            })
+
+    # Check Local First
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+    local_path = os.path.join(log_dir, filename)
+    is_safe_local = not (os.path.sep in filename or '..' in filename)
+    
+    if is_safe_local and os.path.exists(local_path):
+        return serve_local_file(local_path)
+
+    # Try S3 Second (for non-virtual raw logs, e.g. history or direct key access)
     s3_client = _get_s3_client(task)
     if s3_client:
         key = filename
         prefixes = _task_s3_prefixes(task)
         if not any(key.startswith(p) for p in prefixes):
-            return Response({"error": "invalid parameters"}, status=400)
+             pass
+        else:
+            try:
+                head = s3_client.head_object(Bucket=task.s3_bucket, Key=key)
+                size = int(head.get('ContentLength') or 0)
+            except Exception:
+                return Response({"error": "File not found"}, status=404)
 
-        try:
-            head = s3_client.head_object(Bucket=task.s3_bucket, Key=key)
-            size = int(head.get('ContentLength') or 0)
-        except Exception:
-            return Response({"error": "File not found"}, status=404)
+            try:
+                if keyword:
+                    results = []
+                    keywords = keyword.lower().split()
+                    obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                    for i, line in enumerate(_iter_s3_lines(obj['Body']), 1):
+                        ll = line.lower()
+                        if all(k in ll for k in keywords):
+                            results.append(line.rstrip('\n'))
+                            if len(results) > 2000:
+                                results.append("... (Matches truncated, found > 2000 lines) ...")
+                                break
+                    return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
 
-        try:
-            if keyword:
-                results = []
-                keywords = keyword.lower().split()
+                MAX_SIZE_MB = 50
+                if size > MAX_SIZE_MB * 1024 * 1024:
+                    if reverse and page == 1:
+                        tail_bytes = min(size, 1024 * 1024)
+                        start = max(0, size - tail_bytes)
+                        obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key, Range=f"bytes={start}-{size-1}")
+                        text = obj['Body'].read().decode('utf-8', errors='replace')
+                        lines = text.splitlines(True)
+                        lines = lines[-page_size:]
+                        lines.reverse()
+                        return Response({
+                            "content": "".join(lines),
+                            "total": page_size + 1,
+                            "page": 1,
+                            "page_size": page_size,
+                            "warning": "File too large, showing last lines only."
+                        })
+                    return Response({"error": "File too large"}, status=413)
+
                 obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
-                for i, line in enumerate(_iter_s3_lines(obj['Body']), 1):
-                    ll = line.lower()
-                    if all(k in ll for k in keywords):
-                        results.append(line.rstrip('\n'))
-                        if len(results) > 2000:
-                            results.append("... (Matches truncated, found > 2000 lines) ...")
-                            break
-                return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
+                text = obj['Body'].read().decode('utf-8', errors='replace')
+                all_lines = text.splitlines(True)
+                total = len(all_lines)
+                if reverse:
+                    all_lines.reverse()
+                
+                p = page
+                if p == -1:
+                    import math
+                    p = max(1, math.ceil(total / page_size))
+                start = (p - 1) * page_size
+                end = start + page_size
+                return Response({"content": "".join(all_lines[start:end]), "total": total, "page": p, "page_size": page_size})
+            except Exception as e:
+                return Response({"error": str(e)}, status=500)
 
-            MAX_SIZE_MB = 50
-            if size > MAX_SIZE_MB * 1024 * 1024:
-                if reverse and page == 1:
-                    tail_bytes = min(size, 1024 * 1024)
-                    start = max(0, size - tail_bytes)
-                    obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key, Range=f"bytes={start}-{size-1}")
-                    text = obj['Body'].read().decode('utf-8', errors='replace')
-                    lines = text.splitlines(True)
-                    if lines and not text.endswith('\n'):
-                        pass
-                    lines = lines[-page_size:]
-                    lines.reverse()
-                    return Response({
-                        "content": "".join(lines),
-                        "total": page_size + 1,
-                        "page": 1,
-                        "page_size": page_size,
-                        "warning": "File too large, showing last lines only."
-                    })
-                return Response({"error": "File too large"}, status=413)
+    return Response({"error": "File not found"}, status=404)
 
-            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
-            text = obj['Body'].read().decode('utf-8', errors='replace')
-            all_lines = text.splitlines(True)
-            total = len(all_lines)
-            if reverse:
-                all_lines.reverse()
-            if page == -1:
-                import math
-                page = max(1, math.ceil(total / page_size))
-            start = (page - 1) * page_size
-            end = start + page_size
-            return Response({"content": "".join(all_lines[start:end]), "total": total, "page": page, "page_size": page_size})
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
-    if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
-        return Response({"error": "invalid parameters"}, status=400)
-         
-    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
-    file_path = os.path.join(log_dir, filename)
-    
-    if not os.path.exists(file_path):
-        return Response({"error": "File not found"}, status=404)
-        
-    try:
-        # If keyword provided, we search (no pagination for search yet, or simple one)
-        if keyword:
-            results = []
-            keywords = keyword.lower().split()
-            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                for i, line in enumerate(f, 1):
-                    line_lower = line.lower()
-                    if all(k in line_lower for k in keywords):
-                        results.append(line.rstrip())
-                        if len(results) > 2000: 
-                             results.append(f"... (Matches truncated, found > 2000 lines) ...")
-                             break
-            return Response({"content": "\n".join(results), "is_search_result": True, "total": len(results)})
-
-        # Pagination logic - Optimized for large files
-        # Instead of readlines(), we use a more memory efficient approach.
-        # However, for reverse=True (show latest lines), we need to read from the end.
-        
-        # Simple optimization:
-        # If file size is small (< 10MB), readlines() is fine.
-        # If large, use 'tail' logic for reverse=True page=1.
-        # Implementing full seek-based line pagination is complex due to variable line lengths.
-        # We will stick to readlines for now but add a safety check for file size.
-        
-        file_size = os.path.getsize(file_path)
-        MAX_SIZE_MB = 50
-        
-        if file_size > MAX_SIZE_MB * 1024 * 1024 and not keyword:
-            # File too big, just read the last N bytes approx?
-            # Or just fail?
-            # Let's try to read only the last 20000 lines if it's too big?
-            # Or just return a warning?
-            # Implementing a safe "tail"
-            if reverse and page == 1:
-                # Read last N lines using a deque
-                from collections import deque
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                    # Read last page_size lines
-                    all_lines = list(deque(f, page_size))
-                    all_lines.reverse() # Latest first
-                    total = page_size + 1 # Fake total to show there might be more
-                    content = "".join(all_lines)
-                    return Response({
-                        "content": content,
-                        "total": total, # Inaccurate but allows viewing
-                        "page": 1,
-                        "page_size": page_size,
-                        "warning": "File too large, showing last lines only."
-                    })
-        
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            all_lines = f.readlines()
-            
-        total = len(all_lines)
-        
-        # If reverse is requested (show latest logs first)
-        if reverse:
-            # For reverse view, page 1 means the last N lines.
-            # But usually users want to scroll down to see older logs?
-            # Or scroll down to see newer logs?
-            # "Reverse display" usually means line N, N-1, N-2...
-            # Let's implement simple reverse: just reverse the list of lines.
-            all_lines.reverse()
-        
-        if page == -1: # Last page (useful for normal order to see tail)
-            import math
-            page = max(1, math.ceil(total / page_size))
-            
-        start = (page - 1) * page_size
-        end = start + page_size
-        
-        # If reverse=True, we should return the *latest* N lines (first page)
-        # The frontend logic for reverse is to show latest logs first.
-        # So page 1 should be the *end* of the file if we were reading normally?
-        # No, we already reversed `all_lines` if reverse=True.
-        # So page 1 of reversed lines = the last N lines of the original file.
-        # This is correct.
-        
-        content = "".join(all_lines[start:end])
-        
-        # Add warning if file is truncated (though we read all lines currently)
-        # Optimization: We should probably use `seek` for huge files instead of readlines()
-        # But user asked for "default 1m" display limit?
-        # Actually user said "display 1m" maybe meaning file size limit or just default page size.
-        # "默认分页 500" -> page_size=500 default.
-        
-        return Response({
-            "content": content, 
-            "total": total,
-            "page": page,
-            "page_size": page_size
-        })
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
 
 @api_view(['GET'])
 @permission_classes([HasRolePermission])
@@ -591,32 +728,31 @@ def monitor_log_download(request):
     except MonitorTask.DoesNotExist:
         return HttpResponseNotFound("File not found")
 
+    # Try Local First
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+    local_path = os.path.join(log_dir, filename)
+    is_safe_local = not (os.path.sep in filename or '..' in filename)
+
+    if is_safe_local and os.path.exists(local_path):
+        return FileResponse(open(local_path, 'rb'), as_attachment=True, filename=filename)
+
+    # Try S3 Second
     s3_client = _get_s3_client(task)
     if s3_client:
         key = filename
         prefixes = _task_s3_prefixes(task)
-        if not any(key.startswith(p) for p in prefixes):
-            return Response({"error": "invalid parameters"}, status=400)
-        try:
-            obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
-        except Exception:
-            return HttpResponseNotFound("File not found")
+        if any(key.startswith(p) for p in prefixes):
+            try:
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                resp = StreamingHttpResponse(obj['Body'], content_type='text/plain; charset=utf-8')
+                out_name = os.path.basename(key) or "log.log"
+                resp['Content-Disposition'] = f'attachment; filename="{out_name}"'
+                return resp
+            except Exception:
+                pass
 
-        resp = StreamingHttpResponse(obj['Body'], content_type='text/plain; charset=utf-8')
-        out_name = os.path.basename(key) or "log.log"
-        resp['Content-Disposition'] = f'attachment; filename="{out_name}"'
-        return resp
+    return HttpResponseNotFound("File not found")
 
-    if os.path.sep in filename or '..' in filename or os.path.sep in task_id or '..' in task_id:
-        return Response({"error": "invalid parameters"}, status=400)
-         
-    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
-    file_path = os.path.join(log_dir, filename)
-    
-    if not os.path.exists(file_path):
-        return HttpResponseNotFound("File not found")
-        
-    return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename)
 
 @api_view(['POST'])
 @permission_classes([HasRolePermission])
@@ -638,44 +774,45 @@ def monitor_log_batch_search(request):
     results = []
     MAX_TOTAL_RESULTS = 2000
     keywords = keyword.lower().split()
+    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
+    prefixes = _task_s3_prefixes(task)
 
-    if s3_client:
-        prefixes = _task_s3_prefixes(task)
-        for key in filenames:
-            if not any(str(key).startswith(p) for p in prefixes):
-                continue
+    for fname in filenames:
+        if len(results) >= MAX_TOTAL_RESULTS:
+            break
+            
+        # Decide if S3 or Local
+        is_s3 = False
+        if s3_client and any(str(fname).startswith(p) for p in prefixes):
+            is_s3 = True
+        
+        if is_s3:
             try:
-                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=fname)
                 for i, line in enumerate(_iter_s3_lines(obj['Body']), 1):
                     ll = line.lower()
                     if all(k in ll for k in keywords):
-                        results.append({"file": key, "line": i, "content": line.strip()})
+                        results.append({"file": fname, "line": i, "content": line.strip()})
                         if len(results) >= MAX_TOTAL_RESULTS:
                             break
             except Exception:
                 pass
-            if len(results) >= MAX_TOTAL_RESULTS:
-                break
-        return Response({"results": results})
-
-    log_dir = os.path.join(monitor_engine.LOG_DIR, str(task_id))
-    for fname in filenames:
-        if os.path.sep in fname or '..' in fname:
-            continue
-        fpath = os.path.join(log_dir, fname)
-        if not os.path.exists(fpath):
-            continue
-        try:
-            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
-                for i, line in enumerate(f, 1):
-                    line_lower = line.lower()
-                    if all(k in line_lower for k in keywords):
-                        results.append({"file": fname, "line": i, "content": line.strip()})
-                        if len(results) >= MAX_TOTAL_RESULTS:
-                            break
-        except Exception:
-            pass
-        if len(results) >= MAX_TOTAL_RESULTS:
-            break
+        else:
+            # Local
+            if os.path.sep in fname or '..' in fname:
+                continue
+            fpath = os.path.join(log_dir, fname)
+            if not os.path.exists(fpath):
+                continue
+            try:
+                with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    for i, line in enumerate(f, 1):
+                        line_lower = line.lower()
+                        if all(k in ll for k in keywords):
+                            results.append({"file": fname, "line": i, "content": line.strip()})
+                            if len(results) >= MAX_TOTAL_RESULTS:
+                                break
+            except Exception:
+                pass
 
     return Response({"results": results})

@@ -213,6 +213,8 @@ def start_with_conn_ids(request):
             "drop_target_before_full_sync": data.get('drop_target_before_full_sync', False),
             "auto_discover_new_tables": data.get('auto_discover_new_tables', True),
             "use_pk_as_mongo_id": data.get('use_pk_as_mongo_id', True),
+            "binlog_filename": data.get('binlog_filename'),
+            "binlog_position": data.get('binlog_position'),
         }
 
         try:
