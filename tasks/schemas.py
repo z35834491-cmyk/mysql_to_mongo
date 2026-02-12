@@ -59,7 +59,7 @@ class SyncTaskRequest(BaseModel):
     mongo_bulk_batch: int = 2000
 
     # 增量同步
-    inc_flush_batch: int = 10000
+    inc_flush_batch: int = 200000
     inc_flush_interval_sec: int = 2
     state_save_interval_sec: int = 2
 
@@ -120,8 +120,8 @@ class SyncTaskRequest(BaseModel):
     # 性能优化
     full_sync_fast_insert_if_empty: bool = False
     drop_target_before_full_sync: bool = False
-    prefetch_queue_size: int = 2
+    prefetch_queue_size: int = 4
     rate_limit_enabled: bool = True
     max_load_avg_ratio: float = 1.5
     min_sleep_ms: int = 5
-    max_sleep_ms: int = 200
+    max_sleep_ms: int = 2000

@@ -375,11 +375,14 @@ class MonitorEngine:
                 
                 unique_name = f"{namespace}_{pod_name}"
                 
-                # Raw Log Path (only used if NOT s3_only)
+                # Raw Log Path
+                # User requirement: NEVER store raw logs locally. Only Error logs are stored locally.
+                # If S3 is enabled, raw logs go to S3.
+                # If S3 is disabled, raw logs are discarded (processed for alerts only).
                 log_file_path = ""
-                if not s3_only:
-                     # Use daily rotation for local raw logs if S3 disabled
-                     log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
+                # if not s3_only:
+                #      # Use daily rotation for local raw logs if S3 disabled
+                #      log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
                 
                 since_seconds = task.poll_interval_seconds + 10
                 
@@ -1181,12 +1184,7 @@ class MonitorEngine:
             # Try old format: name_YYYY-MM-DD.log
             
             try:
-                # Attempt to split by underscore
-                # We expect the date to be YYYY-MM-DD
-                # Pattern matching might be safer
-                
-                # Check for new format: ..._YYYY-MM-DD_HHMM.log
-                # Regex: .*_(\d{4}-\d{2}-\d{2})_(\d{4})\.log
+                # 1. Try new format with time: ..._YYYY-MM-DD_HHMM.log
                 m = re.match(r'.*_(\d{4}-\d{2}-\d{2})_(\d{4})\.log$', fname)
                 if m:
                     date_str = m.group(1)
@@ -1194,12 +1192,19 @@ class MonitorEngine:
                     file_date = datetime.date.fromisoformat(date_str)
                     file_h_start = int(time_str[:2])
                 else:
-                    # Check for old format: ..._YYYY-MM-DD.log
-                    m2 = re.match(r'.*_(\d{4}-\d{2}-\d{2})\.log$', fname)
-                    if m2:
-                        date_str = m2.group(1)
+                    # 2. Try error log format: ..._YYYY-MM-DD_error.log
+                    m_err = re.match(r'.*_(\d{4}-\d{2}-\d{2})_error\.log$', fname)
+                    if m_err:
+                        date_str = m_err.group(1)
                         file_date = datetime.date.fromisoformat(date_str)
-                        file_h_start = 0 # Treat old daily logs as starting at 00:00
+                        file_h_start = 0 
+                    else:
+                        # 3. Try standard date format: ..._YYYY-MM-DD.log (covers task_errors_...)
+                        m2 = re.match(r'.*_(\d{4}-\d{2}-\d{2})\.log$', fname)
+                        if m2:
+                            date_str = m2.group(1)
+                            file_date = datetime.date.fromisoformat(date_str)
+                            file_h_start = 0 # Treat old daily logs as starting at 00:00
             except Exception:
                 continue
 
