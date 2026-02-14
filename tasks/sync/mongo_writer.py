@@ -12,6 +12,30 @@ class MongoWriter:
     def __init__(self, task_id: str, stop_event):
         self.task_id = task_id
         self.stop_event = stop_event
+        self._indexed_collections = set ()
+
+    def _ensure_custom_indexes(self, coll, table: str, coll_name: str):
+        #新表自定义索引，已存在直接跳。
+        if coll_name in self._indexed_collections:
+            return
+
+
+        custom_indexes = [
+            IndexModel([("updated_at", DESCENDING)], background=True),
+            IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], background=True)
+            # 按照上面的格式可以添加修改索引，第一行是但字段，第二行是联合
+        ]
+
+        try:
+            # 如果索引已存在会直接返回成功
+            coll.create_indexes(custom_indexes)
+            self._indexed_collections.add(coll_name)
+            log(self.task_id, f"Ensured custom indexes for t={table} c={coll_name}")
+        except OperationFailure as e:
+            # 捕捉一些基础报错
+            log(self.task_id, f"Failed to create indexes t={table} c={coll_name}: {str(e)[:180]}")
+            # 失败加入 set 中
+            self._indexed_collections.add(coll_name)
 
     def _log_bulk_error(self, table: str, coll_name: str, write_errors: List[dict], max_samples: int = 3):
         code_counter = Counter()
@@ -36,6 +60,8 @@ class MongoWriter:
     def safe_bulk_write(self, coll, ops: List, table: str, coll_name: str, max_retry: int = 6) -> bool:
         if not ops:
             return True
+        # 确认索引已经创建。
+        self._ensure_custom_indexes(coll, table, coll_name)
 
         backoff = 1.0
         for _ in range(max_retry):
