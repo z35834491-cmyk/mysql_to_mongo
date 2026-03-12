@@ -13,6 +13,7 @@ from pymysql.err import OperationalError as MySQLOperationalError
 from pymongo import MongoClient
 from pymongo.write_concern import WriteConcern
 from pymongo.operations import InsertOne, ReplaceOne, UpdateOne, UpdateMany
+from bson import ObjectId
 
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
@@ -588,7 +589,20 @@ class SyncWorker:
                                 if self.cfg.use_pk_as_mongo_id and "_id" in doc:
                                     buf.add(coll_name, ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
                                 else:
-                                    buf.add(coll_name, InsertOne(doc))
+                                    # _id 保持 ObjectId，按 id 字段定位并原地更新（镜像模式）
+                                    pk_field = self.cfg.pk_field
+                                    buf.add(
+                                        coll_name,
+                                        UpdateOne(
+                                            {pk_field: pk_val},
+                                            {
+                                                "$set": doc,
+                                                "$setOnInsert": {"_id": ObjectId()},
+                                                "$unset": {"_is_version": "", "_op": "", "_base_id": "", "_ts": ""},
+                                            },
+                                            upsert=True,
+                                        ),
+                                    )
 
                 # ---------------- Delete: soft mark base doc only ----------------
                 elif isinstance(ev, DeleteRowsEvent) and self.cfg.handle_deletes:
