@@ -9,6 +9,15 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/Login.vue'),
     meta: { title: 'Login', hidden: true }
   },
+  // Django admin: redirect /admin to /admin/ so backend is hit (or user goes to Django admin)
+  {
+    path: '/admin',
+    redirect: () => {
+      window.location.href = '/admin/'
+      return '/dashboard'
+    },
+    meta: { title: 'Admin', hidden: true }
+  },
   {
     path: '/',
     component: AppLayout,
