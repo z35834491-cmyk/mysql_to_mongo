@@ -4,6 +4,8 @@ import random
 from collections import Counter
 from typing import List
 
+from pymongo import ASCENDING, DESCENDING
+from pymongo.operations import IndexModel
 from pymongo.errors import BulkWriteError, AutoReconnect, OperationFailure
 from core.logging import log
 
