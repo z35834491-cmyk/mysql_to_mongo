@@ -376,13 +376,12 @@ class MonitorEngine:
                 unique_name = f"{namespace}_{pod_name}"
                 
                 # Raw Log Path
-                # User requirement: NEVER store raw logs locally. Only Error logs are stored locally.
-                # If S3 is enabled, raw logs go to S3.
-                # If S3 is disabled, raw logs are discarded (processed for alerts only).
+                # If S3 is enabled, raw logs go to S3 (no local).
+                # If S3 is disabled, raw logs go to Local.
                 log_file_path = ""
-                # if not s3_only:
-                #      # Use daily rotation for local raw logs if S3 disabled
-                #      log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
+                if not s3_only:
+                     # Use daily rotation for local raw logs if S3 disabled
+                     log_file_path = os.path.join(task_log_dir, f"{unique_name}_{today_str}.log")
                 
                 since_seconds = task.poll_interval_seconds + 10
                 
@@ -1179,9 +1178,7 @@ class MonitorEngine:
             # Parse filename
             file_date = None
             file_h_start = -1
-            
-            # Try new format: name_YYYY-MM-DD_HHMM.log
-            # Try old format: name_YYYY-MM-DD.log
+            is_4h_chunk = False
             
             try:
                 # 1. Try new format with time: ..._YYYY-MM-DD_HHMM.log
@@ -1191,6 +1188,7 @@ class MonitorEngine:
                     time_str = m.group(2)
                     file_date = datetime.date.fromisoformat(date_str)
                     file_h_start = int(time_str[:2])
+                    is_4h_chunk = True
                 else:
                     # 2. Try error log format: ..._YYYY-MM-DD_error.log
                     m_err = re.match(r'.*_(\d{4}-\d{2}-\d{2})_error\.log$', fname)
@@ -1226,7 +1224,8 @@ class MonitorEngine:
                 should_archive = True
                 should_delete = True # After archive, we treat it as "moved" to S3
             elif file_date == current_date:
-                if file_h_start != -1 and file_h_start < current_h_start:
+                # Only archive/delete INTRA-DAY if it is explicitly a 4h chunk file
+                if is_4h_chunk and file_h_start != -1 and file_h_start < current_h_start:
                     should_archive = True
                     should_delete = True
             
