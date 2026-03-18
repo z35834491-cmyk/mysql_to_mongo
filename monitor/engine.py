@@ -45,12 +45,16 @@ class MonitorEngine:
         if not getattr(task, 's3_bucket', ''):
             return None
         try:
+            endpoint = task.s3_endpoint
+            if endpoint and ('s3.amazonaws.com' in endpoint or endpoint.strip() == ''):
+                endpoint = None
+                
             return boto3.client(
                 's3',
                 region_name=task.s3_region,
                 aws_access_key_id=task.s3_access_key,
                 aws_secret_access_key=task.s3_secret_key,
-                endpoint_url=task.s3_endpoint or None
+                endpoint_url=endpoint or None
             )
         except Exception:
             return None

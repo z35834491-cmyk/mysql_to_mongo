@@ -24,12 +24,20 @@ def _get_s3_client(task):
     if not getattr(task, 's3_bucket', ''):
         return None
     try:
+        # Check if s3_endpoint is something like https://s3.amazonaws.com
+        # For region-specific buckets, passing a generic endpoint URL can force
+        # botocore to ignore the region_name and send requests to the generic endpoint.
+        # It's better to omit endpoint_url entirely if it's the standard AWS endpoint.
+        endpoint = task.s3_endpoint
+        if endpoint and ('s3.amazonaws.com' in endpoint or endpoint.strip() == ''):
+            endpoint = None
+            
         return boto3.client(
             's3',
             region_name=task.s3_region,
             aws_access_key_id=task.s3_access_key,
             aws_secret_access_key=task.s3_secret_key,
-            endpoint_url=task.s3_endpoint or None
+            endpoint_url=endpoint or None
         )
     except Exception:
         return None
