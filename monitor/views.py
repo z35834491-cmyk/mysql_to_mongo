@@ -155,6 +155,23 @@ def monitor_task_detail(request, pk):
         task.delete()
         return Response({"msg": "deleted"})
 
+# Helper to handle S3 Region Redirect
+def _handle_s3_error(e, task):
+    try:
+        import botocore
+        if isinstance(e, botocore.exceptions.ClientError):
+            err_code = e.response.get('Error', {}).get('Code')
+            if err_code in ('301', 'PermanentRedirect'):
+                correct_region = e.response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amz-bucket-region')
+                if correct_region and correct_region != task.s3_region:
+                    print(f"[monitor] S3 Redirect detected! Updating task {task.id} from {task.s3_region} to {correct_region}")
+                    task.s3_region = correct_region
+                    task.save(update_fields=['s3_region'])
+                    return True
+    except Exception:
+        pass
+    return False
+
 @api_view(['GET'])
 @permission_classes([HasRolePermission])
 def monitor_logs(request):
@@ -192,12 +209,6 @@ def monitor_logs(request):
         lt = log_type if log_type in ('raw', 'error') else 'raw'
         ws = _latest_completed_4h_window_start(timezone.now())
         
-        # Try to get "Latest" index first? 
-        # Actually, for "Realtime" view, we want the CURRENT window logs.
-        # But if we stream to S3, the current window logs are in S3 but scattered.
-        # AND we have a partial index in memory? No, index is updated on upload.
-        # monitor_engine.get_realtime_index_payload handles memory index.
-        
         payload = None
         if realtime:
              try:
@@ -212,7 +223,17 @@ def monitor_logs(request):
                 obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
                 raw = obj['Body'].read().decode('utf-8', errors='replace')
                 payload = json.loads(raw)
-            except Exception:
+            except Exception as e:
+                # Handle Redirect
+                if _handle_s3_error(e, task):
+                    # Retry once with new client
+                    s3_client = _get_s3_client(task)
+                    try:
+                        obj = s3_client.get_object(Bucket=task.s3_bucket, Key=idx_key)
+                        raw = obj['Body'].read().decode('utf-8', errors='replace')
+                        payload = json.loads(raw)
+                    except Exception:
+                        pass
                 pass
         
         if payload and isinstance(payload.get('files'), list):
@@ -474,7 +495,17 @@ def monitor_index_detail(request):
         raw = obj['Body'].read().decode('utf-8', errors='replace')
         data = json.loads(raw)
         return Response(data)
-    except Exception:
+    except Exception as e:
+        # Handle Redirect
+        if _handle_s3_error(e, task):
+            s3_client = _get_s3_client(task)
+            try:
+                obj = s3_client.get_object(Bucket=task.s3_bucket, Key=key)
+                raw = obj['Body'].read().decode('utf-8', errors='replace')
+                data = json.loads(raw)
+                return Response(data)
+            except Exception:
+                pass
         return Response({"error": "Index not found"}, status=404)
 
 @api_view(['GET'])
@@ -700,8 +731,17 @@ def monitor_log_view(request):
             try:
                 head = s3_client.head_object(Bucket=task.s3_bucket, Key=key)
                 size = int(head.get('ContentLength') or 0)
-            except Exception:
-                return Response({"error": "File not found"}, status=404)
+            except Exception as e:
+                # Retry if redirect
+                if _handle_s3_error(e, task):
+                    s3_client = _get_s3_client(task)
+                    try:
+                        head = s3_client.head_object(Bucket=task.s3_bucket, Key=key)
+                        size = int(head.get('ContentLength') or 0)
+                    except Exception:
+                        return Response({"error": "File not found after region retry"}, status=404)
+                else:
+                    return Response({"error": "File not found"}, status=404)
 
             try:
                 if keyword:
@@ -751,6 +791,9 @@ def monitor_log_view(request):
                 end = start + page_size
                 return Response({"content": "".join(all_lines[start:end]), "total": total, "page": p, "page_size": page_size})
             except Exception as e:
+                # Handle Redirect for get_object
+                if _handle_s3_error(e, task):
+                    return Response({"error": "Region fixed, please retry"}, status=503) # 503 Service Unavailable (Retry) or simple error
                 return Response({"error": str(e)}, status=500)
 
     return Response({"error": "File not found"}, status=404)
