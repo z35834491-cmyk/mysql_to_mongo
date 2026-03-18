@@ -351,6 +351,9 @@ def monitor_logs_history(request):
     s3_client = _get_s3_client(task)
     if not s3_client:
         return Response({"items": [], "total": 0})
+    
+    # Debug: Print current config
+    print(f"[monitor] Fetching history for task {task.id}: Bucket={task.s3_bucket}, Region={task.s3_region}, Endpoint={task.s3_endpoint}")
 
     lt = log_type if log_type in ('raw', 'error') else 'raw'
     now = timezone.now()
@@ -369,8 +372,11 @@ def monitor_logs_history(request):
 
     prefix = f"logs/monitor/{task.id}/indexes/{lt}/"
     items = []
-    try:
-        paginator = s3_client.get_paginator('list_objects_v2')
+    
+    # Helper to process pagination so we can retry if needed
+    def fetch_items(client):
+        fetched = []
+        paginator = client.get_paginator('list_objects_v2')
         for p in paginator.paginate(Bucket=task.s3_bucket, Prefix=prefix):
             for obj in p.get('Contents', []) or []:
                 key = obj.get('Key') or ''
@@ -383,24 +389,60 @@ def monitor_logs_history(request):
                     date_str = parts[-2]
                     range_str = parts[-1].replace('.json', '')
                     start_h = int(range_str[:2])
-                    ws = datetime.datetime.fromisoformat(date_str).replace(hour=start_h, minute=0, second=0, microsecond=0)
-                    ws = timezone.make_aware(ws, timezone.get_current_timezone())
-                    we = ws + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
+                    ws_dt = datetime.datetime.fromisoformat(date_str).replace(hour=start_h, minute=0, second=0, microsecond=0)
+                    ws_dt = timezone.make_aware(ws_dt, timezone.get_current_timezone())
+                    we_dt = ws_dt + datetime.timedelta(hours=4) - datetime.timedelta(seconds=1)
                 except Exception:
                     continue
-                if we < start_dt or ws > end_dt:
+                if we_dt < start_dt or ws_dt > end_dt:
                     continue
                 lm = obj.get('LastModified')
                 mtime = lm.timestamp() if lm else 0
-                items.append({
+                fetched.append({
                     "key": key,
-                    "window_start": ws.isoformat(),
-                    "window_end": we.isoformat(),
+                    "window_start": ws_dt.isoformat(),
+                    "window_end": we_dt.isoformat(),
                     "mtime": mtime,
                     "size": int(obj.get('Size') or 0),
                 })
+        return fetched
+
+    try:
+        items = fetch_items(s3_client)
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        # Check for Region mismatch (PermanentRedirect)
+        is_redirect = False
+        correct_region = None
+        try:
+            import botocore
+            if isinstance(e, botocore.exceptions.ClientError):
+                err_code = e.response.get('Error', {}).get('Code')
+                if err_code in ('301', 'PermanentRedirect'):
+                    is_redirect = True
+                    correct_region = e.response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amz-bucket-region')
+        except Exception:
+            pass
+            
+        if is_redirect and correct_region and correct_region != task.s3_region:
+            # Auto-fix region and retry
+            print(f"[monitor] S3 Redirect detected! Updating task {task.id} from {task.s3_region} to {correct_region}")
+            task.s3_region = correct_region
+            task.save(update_fields=['s3_region'])
+            s3_client = _get_s3_client(task)
+            try:
+                items = fetch_items(s3_client)
+            except Exception as retry_e:
+                return Response({"error": f"Auto-fixed region to {correct_region}, but retry failed: {str(retry_e)}"}, status=500)
+        else:
+            if is_redirect:
+                msg = f"S3 Region mismatch (PermanentRedirect). "
+                if correct_region:
+                    msg += f"Bucket '{task.s3_bucket}' is in '{correct_region}', but task configured for '{task.s3_region}'. Please update config."
+                else:
+                    msg += f"Please verify your Region setting matches the Bucket '{task.s3_bucket}'."
+                print(f"[monitor] S3 Redirect Error: {msg}")
+                return Response({"error": msg}, status=400)
+            return Response({"error": str(e)}, status=500)
 
     items.sort(key=lambda x: x.get('window_start') or '', reverse=True)
     total = len(items)

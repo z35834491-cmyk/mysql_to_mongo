@@ -1290,6 +1290,22 @@ class MonitorEngine:
                     # Perfect.
                     
                 except Exception as e:
+                    # Check for PermanentRedirect (Region mismatch) during background upload
+                    try:
+                        import botocore
+                        if isinstance(e, botocore.exceptions.ClientError):
+                            err_code = e.response.get('Error', {}).get('Code')
+                            if err_code in ('301', 'PermanentRedirect'):
+                                correct_region = e.response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amz-bucket-region')
+                                if correct_region and correct_region != task.s3_region:
+                                    logger.warning(f"[monitor] Background upload detected S3 Redirect! Updating task {task.id} from {task.s3_region} to {correct_region}")
+                                    task.s3_region = correct_region
+                                    task.save(update_fields=['s3_region'])
+                                    # Force client refresh for next file
+                                    s3_client = self._get_s3_client(task)
+                    except Exception:
+                        pass
+                        
                     logger.error(f"Failed to upload {fname}: {e}")
                     continue # Don't delete if upload failed
             
