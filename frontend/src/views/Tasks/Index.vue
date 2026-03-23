@@ -658,9 +658,41 @@ const applyPerfPreset = () => {
   }
 }
 
+const inferPerfPreset = (p: Record<string, any>): 'balanced' | 'fast' | 'turbo' | 'safe' => {
+  if (
+    Number(p.mysql_fetch_batch) === 20000 &&
+    Number(p.mongo_bulk_batch) === 20000 &&
+    Number(p.inc_flush_batch) === 100000 &&
+    Number(p.prefetch_queue_size) === 16 &&
+    Number(p.inc_flush_interval_sec) === 1 &&
+    p.rate_limit_enabled === false &&
+    Number(p.mongo_max_pool_size) === 300
+  ) {
+    return 'turbo'
+  }
+  if (
+    Number(p.mysql_fetch_batch) === 10000 &&
+    Number(p.mongo_bulk_batch) === 10000 &&
+    Number(p.inc_flush_batch) === 50000 &&
+    Number(p.prefetch_queue_size) === 8
+  ) {
+    return 'fast'
+  }
+  if (
+    Number(p.mysql_fetch_batch) === 2000 &&
+    Number(p.mongo_bulk_batch) === 2000 &&
+    Number(p.inc_flush_batch) === 10000 &&
+    Number(p.prefetch_queue_size) === 2
+  ) {
+    return 'safe'
+  }
+  return 'balanced'
+}
+
 const openPerfConfig = async (row: any) => {
   perfTaskId.value = row.task_id
   perfTaskStatus.value = row.status
+  // Initialize with a neutral preset; after loading server config we infer actual preset.
   perfPreset.value = 'balanced'
   applyPerfPreset()
   perfDialogVisible.value = true
@@ -669,6 +701,7 @@ const openPerfConfig = async (row: any) => {
     const res = await taskApi.getTaskPerfConfig(row.task_id)
     const p = res.perf || {}
     perfForm.value = { ...perfForm.value, ...p }
+    perfPreset.value = inferPerfPreset(perfForm.value)
   } catch (e: any) {
     ElMessage.error(String(e?.message || e || 'Failed to load config'))
   } finally {
