@@ -139,6 +139,7 @@
             <el-select v-model="perfPreset" style="width: 260px" @change="applyPerfPreset">
               <el-option label="Balanced (默认)" value="balanced" />
               <el-option label="High Throughput (追速)" value="fast" />
+              <el-option label="Turbo (极致吞吐)" value="turbo" />
               <el-option label="Conservative (稳一点)" value="safe" />
             </el-select>
           </el-form-item>
@@ -201,8 +202,36 @@
               </el-form-item>
             </el-col>
             <el-col :span="12">
+              <el-form-item label="Min Sleep (ms)">
+                <el-input-number v-model="perfForm.min_sleep_ms" :min="0" :max="1000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
               <el-form-item label="Max Sleep (ms)">
-                <el-input-number v-model="perfForm.max_sleep_ms" :min="0" :max="2000" style="width: 100%" />
+                <el-input-number v-model="perfForm.max_sleep_ms" :min="0" :max="20000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
+          <el-divider content-position="left">Reconnect</el-divider>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Max Retry (0=∞)">
+                <el-input-number v-model="perfForm.inc_reconnect_max_retry" :min="0" :max="1000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Backoff Base (sec)">
+                <el-input-number v-model="perfForm.inc_reconnect_backoff_base_sec" :min="0.1" :max="60" :step="0.1" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Backoff Max (sec)">
+                <el-input-number v-model="perfForm.inc_reconnect_backoff_max_sec" :min="1" :max="600" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -217,6 +246,18 @@
             <el-col :span="12">
               <el-form-item label="Write Concern (w)">
                 <el-input-number v-model="perfForm.mongo_write_w" :min="0" :max="5" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="Socket Timeout (ms)">
+                <el-input-number v-model="perfForm.mongo_socket_timeout_ms" :min="5000" :max="300000" :step="1000" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="Connect Timeout (ms)">
+                <el-input-number v-model="perfForm.mongo_connect_timeout_ms" :min="2000" :max="120000" :step="1000" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -493,7 +534,7 @@ const perfLoading = ref(false)
 const perfSaving = ref(false)
 const perfTaskId = ref('')
 const perfTaskStatus = ref('')
-const perfPreset = ref<'balanced' | 'fast' | 'safe'>('balanced')
+const perfPreset = ref<'balanced' | 'fast' | 'turbo' | 'safe'>('balanced')
 
 const perfForm = ref({
   progress_interval: 10,
@@ -505,10 +546,16 @@ const perfForm = ref({
   prefetch_queue_size: 4,
   rate_limit_enabled: true,
   max_load_avg_ratio: 2.5,
+  min_sleep_ms: 5,
   max_sleep_ms: 80,
+  inc_reconnect_max_retry: 0,
+  inc_reconnect_backoff_base_sec: 1,
+  inc_reconnect_backoff_max_sec: 30,
   mongo_max_pool_size: 100,
   mongo_write_w: 1,
   mongo_write_j: false,
+  mongo_socket_timeout_ms: 45000,
+  mongo_connect_timeout_ms: 20000,
 })
 
 const applyPerfPreset = () => {
@@ -524,10 +571,16 @@ const applyPerfPreset = () => {
       state_save_interval_sec: 2,
       rate_limit_enabled: true,
       max_load_avg_ratio: 1.5,
+      min_sleep_ms: 5,
       max_sleep_ms: 200,
+      inc_reconnect_max_retry: 0,
+      inc_reconnect_backoff_base_sec: 1,
+      inc_reconnect_backoff_max_sec: 30,
       mongo_max_pool_size: 50,
       mongo_write_w: 1,
       mongo_write_j: false,
+      mongo_socket_timeout_ms: 30000,
+      mongo_connect_timeout_ms: 15000,
     }
     return
   }
@@ -543,10 +596,41 @@ const applyPerfPreset = () => {
       state_save_interval_sec: 2,
       rate_limit_enabled: false,
       max_load_avg_ratio: 3.0,
+      min_sleep_ms: 0,
       max_sleep_ms: 20,
+      inc_reconnect_max_retry: 0,
+      inc_reconnect_backoff_base_sec: 1,
+      inc_reconnect_backoff_max_sec: 30,
       mongo_max_pool_size: 200,
       mongo_write_w: 1,
       mongo_write_j: false,
+      mongo_socket_timeout_ms: 60000,
+      mongo_connect_timeout_ms: 30000,
+    }
+    return
+  }
+  if (perfPreset.value === 'turbo') {
+    perfForm.value = {
+      ...perfForm.value,
+      progress_interval: 10,
+      mysql_fetch_batch: 20000,
+      mongo_bulk_batch: 20000,
+      prefetch_queue_size: 16,
+      inc_flush_batch: 100000,
+      inc_flush_interval_sec: 1,
+      state_save_interval_sec: 2,
+      rate_limit_enabled: false,
+      max_load_avg_ratio: 10,
+      min_sleep_ms: 0,
+      max_sleep_ms: 0,
+      inc_reconnect_max_retry: 0,
+      inc_reconnect_backoff_base_sec: 0.5,
+      inc_reconnect_backoff_max_sec: 10,
+      mongo_max_pool_size: 300,
+      mongo_write_w: 1,
+      mongo_write_j: false,
+      mongo_socket_timeout_ms: 120000,
+      mongo_connect_timeout_ms: 30000,
     }
     return
   }
@@ -561,10 +645,16 @@ const applyPerfPreset = () => {
     state_save_interval_sec: 2,
     rate_limit_enabled: true,
     max_load_avg_ratio: 2.5,
+    min_sleep_ms: 5,
     max_sleep_ms: 80,
+    inc_reconnect_max_retry: 0,
+    inc_reconnect_backoff_base_sec: 1,
+    inc_reconnect_backoff_max_sec: 30,
     mongo_max_pool_size: 100,
     mongo_write_w: 1,
     mongo_write_j: false,
+    mongo_socket_timeout_ms: 45000,
+    mongo_connect_timeout_ms: 20000,
   }
 }
 

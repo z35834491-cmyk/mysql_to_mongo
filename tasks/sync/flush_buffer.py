@@ -29,6 +29,7 @@ class FlushBuffer:
         self._pending: Dict[str, List] = {}
         self._lock = threading.Lock()
         self._last_flush_ts = time.time()
+        self._batch_reached = False
 
         self._thread_stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -52,6 +53,8 @@ class FlushBuffer:
         with self._lock:
             ops = self._pending.setdefault(coll_name, [])
             ops.append(op)
+            if len(ops) >= self.batch_size:
+                self._batch_reached = True
 
     def size(self, coll_name: str) -> int:
         with self._lock:
@@ -63,17 +66,15 @@ class FlushBuffer:
             return
 
         with self._lock:
-            items: List[Tuple[str, List]] = [(cn, ops[:]) for cn, ops in self._pending.items() if ops]
-
-        if not items:
-            self._last_flush_ts = now
-            return
+            if not self._pending:
+                self._last_flush_ts = now
+                return
+            items: List[Tuple[str, List]] = list(self._pending.items())
+            self._pending = {}
+            self._batch_reached = False
 
         for cn, ops_copy in items:
             self.writer_func(cn, ops_copy)
-            with self._lock:
-                # 清空原队列
-                self._pending.get(cn, []).clear()
 
         if self.on_flush_done:
             self.on_flush_done()
@@ -82,7 +83,7 @@ class FlushBuffer:
 
     def flush_if_reach_batch(self):
         with self._lock:
-            reach = any(len(ops) >= self.batch_size for ops in self._pending.values())
+            reach = self._batch_reached
         if reach:
             self.flush(force=True)
 

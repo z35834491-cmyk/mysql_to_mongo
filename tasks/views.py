@@ -262,6 +262,9 @@ def task_config(request, task_id: str):
             "mongo_socket_timeout_ms",
             "mongo_connect_timeout_ms",
             "mongo_compressors",
+            "inc_reconnect_max_retry",
+            "inc_reconnect_backoff_base_sec",
+            "inc_reconnect_backoff_max_sec",
         ]
         out = {k: cfg.get(k) for k in perf_keys if k in cfg}
         return Response({"task_id": task_id, "perf": out})
