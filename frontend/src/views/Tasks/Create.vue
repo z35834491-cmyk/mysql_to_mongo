@@ -94,6 +94,14 @@
           <el-form-item label="Pod Namespace">
             <el-input v-model="form.turbo_pod_namespace" placeholder="default (empty = auto)" />
           </el-form-item>
+          <el-form-item label="Turbo Shards">
+            <el-select v-model="form.turbo_shard_count" style="width: 260px">
+              <el-option label="1 (单Pod)" :value="1" />
+              <el-option label="2" :value="2" />
+              <el-option label="4" :value="4" />
+              <el-option label="8" :value="8" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="No Resource Limits">
             <el-switch v-model="form.turbo_no_limit" />
           </el-form-item>
@@ -303,6 +311,7 @@ const form = reactive({
   turbo_mem_request: '',
   turbo_cpu_limit: '',
   turbo_mem_limit: '',
+  turbo_shard_count: 1,
 
   progress_interval: 10,
   mysql_fetch_batch: 2000,

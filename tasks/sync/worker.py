@@ -2,6 +2,7 @@
 import time
 import random
 import threading
+import zlib
 from typing import Optional, Dict, List, Any
 import ssl as _ssl
 from datetime import datetime as dt
@@ -117,6 +118,8 @@ class SyncWorker:
         )
         self.mongo_writer = MongoWriter(cfg.task_id, self.stop_event)
         self.rate = RateLimiter(cfg)
+        self.shard_total = max(1, int(getattr(cfg, "shard_total", 1) or 1))
+        self.shard_index = int(getattr(cfg, "shard_index", 0) or 0)
 
         self._last_state_save_ts = 0.0
         self._last_progress_ts = 0.0
@@ -207,6 +210,14 @@ class SyncWorker:
             reason=reason,
         )
 
+    def _shard_match(self, pk_val: Any) -> bool:
+        if self.shard_total <= 1:
+            return True
+        if pk_val is None:
+            return False
+        h = zlib.crc32(str(pk_val).encode("utf-8")) & 0xFFFFFFFF
+        return (h % self.shard_total) == self.shard_index
+
     # =========================
     # 主流程
     # =========================
@@ -216,6 +227,16 @@ class SyncWorker:
         try:
             self._auto_build_table_map_if_needed()
             state = load_state(self.cfg.task_id)
+
+            # Sharded turbo workers are incremental-only to avoid duplicate full sync work.
+            if self.shard_total > 1:
+                self._metrics["phase"] = "inc_sync"
+                log(self.cfg.task_id, f"Shard mode enabled shard={self.shard_index}/{self.shard_total}; skip full sync")
+                self.do_inc_sync_with_reconnect(
+                    self.cfg.binlog_filename or (state or {}).get("log_file"),
+                    self.cfg.binlog_position or (state or {}).get("log_pos"),
+                )
+                return
 
             if not state or state.get("metrics", {}).get("phase") == "full_sync":
                 # Check if specific binlog position provided in config
@@ -546,10 +567,12 @@ class SyncWorker:
                         data = self.mysql_introspector.maybe_fix_row_unknown_cols(table, data)
                         if not data:
                             continue
+                        pk_val = self.mysql_introspector.extract_pk(table, data)
+                        if not self._shard_match(pk_val):
+                            continue
 
                         doc = self.converter.row_to_base_doc(data)
                         if self.cfg.use_pk_as_mongo_id:
-                            pk_val = self.mysql_introspector.extract_pk(table, data)
                             if pk_val is not None:
                                 doc["_id"] = pk_val
                                 buf.add(coll_name, ReplaceOne({"_id": doc["_id"]}, doc, upsert=True))
@@ -573,6 +596,8 @@ class SyncWorker:
                         pk_val = self.mysql_introspector.extract_pk(table, data)
                         if pk_val is None:
                             log(self.cfg.task_id, f"Update skipped (no pk) table={table} keys={list(data.keys())[:8]}")
+                            continue
+                        if not self._shard_match(pk_val):
                             continue
 
                         base_id = pk_val  # use_pk_as_mongo_id 下 base _id=pk
@@ -619,6 +644,8 @@ class SyncWorker:
                         pk_val = self.mysql_introspector.extract_pk(table, data)
                         if pk_val is None:
                             log(self.cfg.task_id, f"Delete skipped (no pk) table={table} keys={list(data.keys())[:8]}")
+                            continue
+                        if not self._shard_match(pk_val):
                             continue
 
                         if self.cfg.delete_append_new_doc:

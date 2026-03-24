@@ -34,6 +34,7 @@ class TaskManager:
         t.turbo_mem_request = getattr(cfg, "turbo_mem_request", None)
         t.turbo_cpu_limit = getattr(cfg, "turbo_cpu_limit", None)
         t.turbo_mem_limit = getattr(cfg, "turbo_mem_limit", None)
+        t.turbo_shard_count = int(getattr(cfg, "turbo_shard_count", 1) or 1)
 
     def start(self, cfg: SyncTaskRequest):
         save_task_config(cfg)
@@ -43,12 +44,12 @@ class TaskManager:
             t = SyncTask.objects.get(task_id=cfg.task_id)
             self._apply_turbo_fields(t, cfg)
             if t.turbo_enabled:
-                pod_name = self._turbo.start_task_pod(t)
+                pod_names = self._turbo.start_task_pods(t)
                 t.status = "running"
-                t.turbo_pod_name = pod_name
+                t.turbo_pod_name = ",".join(pod_names)
                 t.turbo_phase = "Pending"
                 t.save()
-                log(cfg.task_id, f"Turbo pod started: {pod_name}")
+                log(cfg.task_id, f"Turbo pods started: {pod_names}")
                 return
             t.turbo_pod_name = None
             t.turbo_phase = None
@@ -139,6 +140,7 @@ class TaskManager:
                     "pod_name": t.turbo_pod_name or "",
                     "phase": t.turbo_phase or "",
                     "namespace": t.turbo_pod_namespace or "",
+                    "shard_count": int(t.turbo_shard_count or 1),
                 }
                 if t.turbo_enabled and t.turbo_pod_name and t.status == "running":
                     try:
@@ -169,6 +171,7 @@ class TaskManager:
                 "pod_name": t.turbo_pod_name or "",
                 "phase": t.turbo_phase or "",
                 "namespace": t.turbo_pod_namespace or "",
+                "shard_count": int(t.turbo_shard_count or 1),
             }
             if t.turbo_enabled and t.turbo_pod_name and t.status == "running":
                 try:

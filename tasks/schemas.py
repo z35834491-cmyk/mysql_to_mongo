@@ -1,5 +1,5 @@
 from typing import Optional, Dict, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 class ConnectionConfig(BaseModel):
     id: str
@@ -134,3 +134,15 @@ class SyncTaskRequest(BaseModel):
     turbo_mem_request: Optional[str] = None
     turbo_cpu_limit: Optional[str] = None
     turbo_mem_limit: Optional[str] = None
+    turbo_shard_count: int = 1
+
+    # Runtime shard overrides (used by turbo worker pod command line)
+    shard_total: int = 1
+    shard_index: int = 0
+
+    @field_validator("turbo_shard_count")
+    @classmethod
+    def _validate_turbo_shard_count(cls, v: int) -> int:
+        if v not in (1, 2, 4, 8):
+            raise ValueError("turbo_shard_count must be one of 1/2/4/8")
+        return v

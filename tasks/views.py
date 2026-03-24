@@ -272,6 +272,7 @@ def task_config(request, task_id: str):
             "turbo_mem_request",
             "turbo_cpu_limit",
             "turbo_mem_limit",
+            "turbo_shard_count",
         ]
         out = {k: cfg.get(k) for k in perf_keys if k in cfg}
         return Response({"task_id": task_id, "perf": out})
@@ -299,6 +300,7 @@ def task_config(request, task_id: str):
     t.turbo_mem_request = validated.turbo_mem_request
     t.turbo_cpu_limit = validated.turbo_cpu_limit
     t.turbo_mem_limit = validated.turbo_mem_limit
+    t.turbo_shard_count = int(validated.turbo_shard_count or 1)
     t.save()
     return Response({"msg": "updated", "task_id": task_id})
 

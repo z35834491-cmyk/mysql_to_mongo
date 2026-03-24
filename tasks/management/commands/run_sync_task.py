@@ -10,6 +10,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--task-id", required=True, help="Task id to run")
+        parser.add_argument("--shard-total", type=int, default=1, help="Total shard count")
+        parser.add_argument("--shard-index", type=int, default=0, help="Current shard index")
 
     def handle(self, *args, **options):
         task_id = options["task_id"]
@@ -19,6 +21,12 @@ class Command(BaseCommand):
             raise CommandError(f"Task not found: {task_id}")
 
         cfg = SyncTaskRequest(**(task.config or {}))
+        shard_total = max(1, int(options.get("shard_total") or 1))
+        shard_index = int(options.get("shard_index") or 0)
+        if shard_index < 0 or shard_index >= shard_total:
+            raise CommandError("Invalid shard index/total")
+        cfg.shard_total = shard_total
+        cfg.shard_index = shard_index
         task.status = "running"
         task.save(update_fields=["status", "updated_at"])
 

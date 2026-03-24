@@ -33,6 +33,7 @@ class SyncTask(models.Model):
     turbo_mem_request = models.CharField(max_length=32, blank=True, null=True)
     turbo_cpu_limit = models.CharField(max_length=32, blank=True, null=True)
     turbo_mem_limit = models.CharField(max_length=32, blank=True, null=True)
+    turbo_shard_count = models.IntegerField(default=1)
     turbo_pod_name = models.CharField(max_length=200, blank=True, null=True)
     turbo_phase = models.CharField(max_length=32, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
