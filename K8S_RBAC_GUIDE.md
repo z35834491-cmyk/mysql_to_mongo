@@ -77,6 +77,7 @@ data:
   SYNC_RUNNER_NAMESPACE: "middleware-system"
   SYNC_RUNNER_SERVICE_ACCOUNT: "shark-platform-sa"
   SYNC_RUNNER_IMAGE_PULL_POLICY: "IfNotPresent"
+  SYNC_RUNNER_STATE_PVC: "shark-platform-state-pvc"
 ---
 apiVersion: v1
 kind: Secret

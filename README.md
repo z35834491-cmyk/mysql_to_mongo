@@ -310,6 +310,7 @@ cd frontend && npm run build
 - `SYNC_RUNNER_NAMESPACE`: 默认 namespace（任务未指定时生效）
 - `SYNC_RUNNER_SERVICE_ACCOUNT`: Turbo Pod 使用的 SA（可选）
 - `SYNC_RUNNER_IMAGE_PULL_POLICY`: 默认 `IfNotPresent`
+- `SYNC_RUNNER_STATE_PVC`: Turbo Pod 挂载的 state PVC（默认 `shark-platform-state-pvc`）
 
 ### MySQL 要求
 

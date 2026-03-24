@@ -23,6 +23,9 @@ def _read_incluster_namespace() -> Optional[str]:
 
 
 class TurboPodRunner:
+    def _state_pvc_name(self) -> str:
+        return (os.getenv("SYNC_RUNNER_STATE_PVC") or "").strip() or "shark-platform-state-pvc"
+
     def _get_core_api(self):
         if client is None or k8s_config is None:
             raise RuntimeError("kubernetes package not installed")
@@ -124,8 +127,14 @@ class TurboPodRunner:
             image=self._runner_image(),
             image_pull_policy=(os.getenv("SYNC_RUNNER_IMAGE_PULL_POLICY") or "IfNotPresent"),
             command=["python", "manage.py", "run_sync_task", "--task-id", task.task_id],
-            env=[client.V1EnvVar(name="PYTHONUNBUFFERED", value="1")],
+            env=[
+                client.V1EnvVar(name="PYTHONUNBUFFERED", value="1"),
+                client.V1EnvVar(name="RUN_SYNC_TASK_ONLY", value="1"),
+            ],
             resources=resources,
+            volume_mounts=[
+                client.V1VolumeMount(name="app-state", mount_path="/app/state"),
+            ],
         )
         metadata = client.V1ObjectMeta(
             name=pod_name,
@@ -139,6 +148,14 @@ class TurboPodRunner:
             restart_policy="Never",
             containers=[container],
             service_account_name=service_account,
+            volumes=[
+                client.V1Volume(
+                    name="app-state",
+                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name=self._state_pvc_name()
+                    ),
+                )
+            ],
         )
         body = client.V1Pod(metadata=metadata, spec=spec)
         v1.create_namespaced_pod(namespace=ns, body=body)
