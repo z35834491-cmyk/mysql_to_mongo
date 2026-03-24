@@ -6,10 +6,10 @@
 
 ## 0. 一次性要准备的值（先把这些写下来）
 
-- **namespace**：`middleware-system`
-- **域名**：`ubest-ops.prd.exc888.org`（如仍使用 test 域名，把本文所有域名替换）
-- **目标节点 hostname**：`ip-10-10-12-234.ap-northeast-1.compute.internal`
-- **镜像**：`192.168.12.74:80/bitnamilegacy/ops:v1.0`（按实际 tag 替换）
+- **namespace**：`habit`
+- **域名**：`domain name`（如仍使用 test 域名，把本文所有域名替换）
+- **目标节点 hostname**：`随意`
+- **镜像**：`habit`（按实际 tag 替换）
 - **DJANGO_SECRET_KEY（生产）**：随机字符串，base64 后写入 Secret（不要用示例）
 - **Slack Webhook**：电话告警、日志监控各自要用的 webhook（不同模块配置位置不同）
 
@@ -66,9 +66,9 @@ metadata:
 data:
   DEBUG: "False"
   ALLOWED_HOSTS: "*"
-  CSRF_TRUSTED_ORIGINS: "https://ubest-ops.prd.exc888.org"
-  DEFAULT_MONITOR_NAMESPACE: "biz-system"
-  PUBLIC_URL: "https://ubest-ops.prd.exc888.org"
+  CSRF_TRUSTED_ORIGINS: "domian name"
+  DEFAULT_MONITOR_NAMESPACE: "日志采集的namescape"
+  PUBLIC_URL: "domian name"
 ---
 apiVersion: v1
 kind: Secret
@@ -122,14 +122,14 @@ spec:
     spec:
       serviceAccountName: shark-platform-sa
       nodeSelector:
-        kubernetes.io/hostname: ip-10-10-12-234.ap-northeast-1.compute.internal
+        kubernetes.io/hostname: 绑定节点做不做都行
       tolerations:
       - key: "node-role.kubernetes.io/cluster-tools"
         operator: "Exists"
         effect: "NoSchedule"
       containers:
       - name: shark-platform
-        image: 197461532043.dkr.ecr.ap-northeast-1.amazonaws.com/etz/ops:v1.0
+        image:  imagename 
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -192,7 +192,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-  - host: ubest-ops.prd.exc888.org
+  - host: domian name
     http:
       paths:
       - backend:
