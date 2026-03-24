@@ -26,6 +26,23 @@ class TurboPodRunner:
     def _state_pvc_name(self) -> str:
         return (os.getenv("SYNC_RUNNER_STATE_PVC") or "").strip() or "shark-platform-state-pvc"
 
+    def _state_host_path(self) -> str:
+        return (os.getenv("SYNC_RUNNER_STATE_HOST_PATH") or "").strip()
+
+    def _build_state_volume(self):
+        hp = self._state_host_path()
+        if hp:
+            return client.V1Volume(
+                name="app-state",
+                host_path=client.V1HostPathVolumeSource(path=hp, type="DirectoryOrCreate"),
+            )
+        return client.V1Volume(
+            name="app-state",
+            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                claim_name=self._state_pvc_name()
+            ),
+        )
+
     def _get_core_api(self):
         if client is None or k8s_config is None:
             raise RuntimeError("kubernetes package not installed")
@@ -121,6 +138,9 @@ class TurboPodRunner:
 
         resources = self._resources(task)
         service_account = (os.getenv("SYNC_RUNNER_SERVICE_ACCOUNT") or "").strip() or None
+        node_name = (os.getenv("SYNC_RUNNER_NODE_NAME") or "").strip()
+        if not node_name and (os.getenv("SYNC_RUNNER_PIN_TO_MAIN_NODE") or "").strip() in ("1", "true", "True"):
+            node_name = (os.getenv("MY_NODE_NAME") or "").strip()
 
         container = client.V1Container(
             name="sync-worker",
@@ -148,14 +168,8 @@ class TurboPodRunner:
             restart_policy="Never",
             containers=[container],
             service_account_name=service_account,
-            volumes=[
-                client.V1Volume(
-                    name="app-state",
-                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                        claim_name=self._state_pvc_name()
-                    ),
-                )
-            ],
+            volumes=[self._build_state_volume()],
+            node_name=node_name or None,
         )
         body = client.V1Pod(metadata=metadata, spec=spec)
         v1.create_namespaced_pod(namespace=ns, body=body)
