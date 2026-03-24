@@ -72,6 +72,10 @@
                 <el-icon><Monitor /></el-icon>
                 <span>{{ row.metrics.binlog_file }} : {{ row.metrics.binlog_pos }}</span>
               </div>
+              <div class="binlog-info" v-if="row.turbo?.enabled">
+                <el-icon><Setting /></el-icon>
+                <span>Turbo Pod: {{ row.turbo?.phase || '-' }} {{ row.turbo?.pod_name ? `(${row.turbo.pod_name})` : '' }}</span>
+              </div>
               
               <div class="error-msg" v-if="row.metrics.error">
                 <el-icon><Warning /></el-icon>
@@ -143,6 +147,44 @@
               <el-option label="Conservative (稳一点)" value="safe" />
             </el-select>
           </el-form-item>
+          <el-divider content-position="left">Turbo Pod</el-divider>
+          <el-form-item label="Enable Turbo Pod">
+            <el-switch v-model="perfForm.turbo_enabled" />
+          </el-form-item>
+          <template v-if="perfForm.turbo_enabled">
+            <el-form-item label="Pod Namespace">
+              <el-input v-model="perfForm.turbo_pod_namespace" placeholder="default (empty = auto)" />
+            </el-form-item>
+            <el-form-item label="No Resource Limits">
+              <el-switch v-model="perfForm.turbo_no_limit" />
+            </el-form-item>
+            <template v-if="!perfForm.turbo_no_limit">
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item label="CPU Request">
+                    <el-input v-model="perfForm.turbo_cpu_request" placeholder="e.g. 500m" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="Memory Request">
+                    <el-input v-model="perfForm.turbo_mem_request" placeholder="e.g. 1Gi" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item label="CPU Limit">
+                    <el-input v-model="perfForm.turbo_cpu_limit" placeholder="e.g. 2000m" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="Memory Limit">
+                    <el-input v-model="perfForm.turbo_mem_limit" placeholder="e.g. 4Gi" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </template>
+          </template>
 
           <el-divider content-position="left">Batching</el-divider>
           <el-row :gutter="20">
@@ -556,6 +598,13 @@ const perfForm = ref({
   mongo_write_j: false,
   mongo_socket_timeout_ms: 45000,
   mongo_connect_timeout_ms: 20000,
+  turbo_enabled: false,
+  turbo_no_limit: true,
+  turbo_pod_namespace: '',
+  turbo_cpu_request: '',
+  turbo_mem_request: '',
+  turbo_cpu_limit: '',
+  turbo_mem_limit: '',
 })
 
 const applyPerfPreset = () => {

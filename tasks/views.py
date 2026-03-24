@@ -265,6 +265,13 @@ def task_config(request, task_id: str):
             "inc_reconnect_max_retry",
             "inc_reconnect_backoff_base_sec",
             "inc_reconnect_backoff_max_sec",
+            "turbo_enabled",
+            "turbo_no_limit",
+            "turbo_pod_namespace",
+            "turbo_cpu_request",
+            "turbo_mem_request",
+            "turbo_cpu_limit",
+            "turbo_mem_limit",
         ]
         out = {k: cfg.get(k) for k in perf_keys if k in cfg}
         return Response({"task_id": task_id, "perf": out})
@@ -285,6 +292,13 @@ def task_config(request, task_id: str):
         return Response({"detail": str(e)}, status=400)
 
     t.config = validated.model_dump()
+    t.turbo_enabled = bool(validated.turbo_enabled)
+    t.turbo_no_limit = bool(validated.turbo_no_limit)
+    t.turbo_pod_namespace = validated.turbo_pod_namespace
+    t.turbo_cpu_request = validated.turbo_cpu_request
+    t.turbo_mem_request = validated.turbo_mem_request
+    t.turbo_cpu_limit = validated.turbo_cpu_limit
+    t.turbo_mem_limit = validated.turbo_mem_limit
     t.save()
     return Response({"msg": "updated", "task_id": task_id})
 

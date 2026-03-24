@@ -44,6 +44,9 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
   verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -69,6 +72,11 @@ data:
   CSRF_TRUSTED_ORIGINS: "domian name"
   DEFAULT_MONITOR_NAMESPACE: "日志采集的namescape"
   PUBLIC_URL: "domian name"
+  # Turbo Pod 可选参数（不填则走代码默认值）
+  SYNC_RUNNER_IMAGE: "imagename"
+  SYNC_RUNNER_NAMESPACE: "middleware-system"
+  SYNC_RUNNER_SERVICE_ACCOUNT: "shark-platform-sa"
+  SYNC_RUNNER_IMAGE_PULL_POLICY: "IfNotPresent"
 ---
 apiVersion: v1
 kind: Secret

@@ -26,6 +26,15 @@ class SyncTask(models.Model):
     config = models.JSONField(default=dict) # Store the full Pydantic model dump here
     state = models.JSONField(default=dict)  # Store runtime state (log_pos, metrics)
     status = models.CharField(max_length=50, default="stopped")
+    turbo_enabled = models.BooleanField(default=False)
+    turbo_no_limit = models.BooleanField(default=True)
+    turbo_pod_namespace = models.CharField(max_length=100, blank=True, null=True)
+    turbo_cpu_request = models.CharField(max_length=32, blank=True, null=True)
+    turbo_mem_request = models.CharField(max_length=32, blank=True, null=True)
+    turbo_cpu_limit = models.CharField(max_length=32, blank=True, null=True)
+    turbo_mem_limit = models.CharField(max_length=32, blank=True, null=True)
+    turbo_pod_name = models.CharField(max_length=200, blank=True, null=True)
+    turbo_phase = models.CharField(max_length=32, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

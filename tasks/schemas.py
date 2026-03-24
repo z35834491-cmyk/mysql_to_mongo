@@ -125,3 +125,12 @@ class SyncTaskRequest(BaseModel):
     max_load_avg_ratio: float = 3.5
     min_sleep_ms: int = 5
     max_sleep_ms: int = 20000
+
+    # Turbo Pod execution (optional)
+    turbo_enabled: bool = False
+    turbo_no_limit: bool = True
+    turbo_pod_namespace: Optional[str] = None
+    turbo_cpu_request: Optional[str] = None
+    turbo_mem_request: Optional[str] = None
+    turbo_cpu_limit: Optional[str] = None
+    turbo_mem_limit: Optional[str] = None

@@ -288,6 +288,29 @@ cd frontend && npm run build
 可调字段包括但不限于（与后端 `task_config` 白名单一致）：  
 `mysql_fetch_batch`、`mongo_bulk_batch`、`inc_flush_batch`、`inc_flush_interval_sec`、`state_save_interval_sec`、`prefetch_queue_size`、`progress_interval`、`rate_limit_enabled`、`max_load_avg_ratio`、`min_sleep_ms`、`max_sleep_ms`、`mongo_max_pool_size`、`mongo_write_w`、`mongo_write_j`、`mongo_socket_timeout_ms`、`mongo_connect_timeout_ms`、`mongo_compressors`、`inc_reconnect_max_retry`、`inc_reconnect_backoff_base_sec`、`inc_reconnect_backoff_max_sec`。
 
+### Turbo Pod 执行模式（新）
+
+可在任务配置中开启 **Turbo Pod**，使该任务不在主应用进程内运行，而是创建一个独立临时 Pod 执行：
+
+- `turbo_enabled`: 是否启用 Turbo Pod
+- `turbo_no_limit`: 不限制资源（true 时不设置 requests/limits）
+- `turbo_pod_namespace`: 目标 namespace（留空按默认推断）
+- `turbo_cpu_request` / `turbo_mem_request`
+- `turbo_cpu_limit` / `turbo_mem_limit`
+
+运行行为：
+
+- 启动任务时创建（或重建）`sync-turbo-<task_id>` Pod
+- Pod 内执行：`python manage.py run_sync_task --task-id <task_id>`
+- 停止任务时删除该 Pod（临时 Pod 模式）
+
+相关环境变量（部署时可选）：
+
+- `SYNC_RUNNER_IMAGE`: Turbo Pod 使用的镜像（默认 `shark-platform:latest`）
+- `SYNC_RUNNER_NAMESPACE`: 默认 namespace（任务未指定时生效）
+- `SYNC_RUNNER_SERVICE_ACCOUNT`: Turbo Pod 使用的 SA（可选）
+- `SYNC_RUNNER_IMAGE_PULL_POLICY`: 默认 `IfNotPresent`
+
 ### MySQL 要求
 
 - `binlog_format=ROW`，建议 `binlog_row_image=FULL`（便于 UPDATE 列映射）。

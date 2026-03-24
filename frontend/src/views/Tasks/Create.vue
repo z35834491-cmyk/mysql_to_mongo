@@ -86,6 +86,45 @@
           </el-col>
         </el-row>
 
+        <el-divider content-position="left">Turbo Pod Execution</el-divider>
+        <el-form-item label="Enable Turbo Pod">
+          <el-switch v-model="form.turbo_enabled" />
+        </el-form-item>
+        <template v-if="form.turbo_enabled">
+          <el-form-item label="Pod Namespace">
+            <el-input v-model="form.turbo_pod_namespace" placeholder="default (empty = auto)" />
+          </el-form-item>
+          <el-form-item label="No Resource Limits">
+            <el-switch v-model="form.turbo_no_limit" />
+          </el-form-item>
+          <template v-if="!form.turbo_no_limit">
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="CPU Request">
+                  <el-input v-model="form.turbo_cpu_request" placeholder="e.g. 500m" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Memory Request">
+                  <el-input v-model="form.turbo_mem_request" placeholder="e.g. 1Gi" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="CPU Limit">
+                  <el-input v-model="form.turbo_cpu_limit" placeholder="e.g. 2000m" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="Memory Limit">
+                  <el-input v-model="form.turbo_mem_limit" placeholder="e.g. 4Gi" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </template>
+        </template>
+
         <el-divider content-position="left">Performance (可配置)</el-divider>
         <el-form-item label="Preset">
           <el-select v-model="perfPreset" style="width: 260px" placeholder="Select preset" @change="applyPreset">
@@ -257,6 +296,13 @@ const form = reactive({
   pk_field: 'id',
   binlog_filename: '',
   binlog_position: undefined as number | undefined,
+  turbo_enabled: false,
+  turbo_no_limit: true,
+  turbo_pod_namespace: '',
+  turbo_cpu_request: '',
+  turbo_mem_request: '',
+  turbo_cpu_limit: '',
+  turbo_mem_limit: '',
 
   progress_interval: 10,
   mysql_fetch_batch: 2000,
