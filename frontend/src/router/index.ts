@@ -56,8 +56,14 @@ const routes: Array<RouteRecordRaw> = [
       {
         path: 'database-manager',
         name: 'DatabaseManager',
+        component: () => import('@/views/DatabaseManagerPro/Index.vue'),
+        meta: { title: 'Database Manager', icon: 'Coin', viewPerm: 'view_db_manager' }
+      },
+      {
+        path: 'database-manager-legacy',
+        name: 'DatabaseManagerLegacy',
         component: () => import('@/views/DatabaseManager/Index.vue'),
-        meta: { title: 'Database Manager', icon: 'Coin' }
+        meta: { title: 'Database Manager Legacy', hidden: true }
       },
       {
         path: 'logs',

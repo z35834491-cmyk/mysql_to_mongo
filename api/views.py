@@ -80,6 +80,20 @@ class HasRolePermission(BasePermission):
                 return has('run_inspection')
             if '/inspection/reports' in path:
                 return has('view_inspection')
+        if '/api/db/' in path:
+            if method == 'GET':
+                return has('view_db_manager')
+            if '/sql/jobs/' in path and ('/cancel/' in path or '/pause/' in path or '/resume/' in path):
+                return has('run_sql_dml') or has('run_sql_ddl') or has('run_sql_high_risk')
+            if '/approvals/' in path:
+                return has('approve_sql_execution')
+            if '/audit/' in path:
+                return has('view_sql_audit')
+            if '/backup/' in path or '/restore/' in path or '/rollback/' in path:
+                return has('manage_backup_restore')
+            if '/sql/' in path:
+                return has('run_sql_query') or has('run_sql_dml') or has('run_sql_ddl') or has('run_sql_high_risk')
+            return has('manage_db_instances')
         return True
 
 
@@ -101,6 +115,19 @@ def _ensure_custom_permissions():
         {"codename": "view_deploy", "name": "View Deployments"},
         {"codename": "manage_deploy", "name": "Manage Deployments"},
         {"codename": "manage_users", "name": "Manage Users & Roles"},
+        {"codename": "view_db_manager", "name": "View Database Manager"},
+        {"codename": "manage_db_instances", "name": "Manage Database Instances"},
+        {"codename": "test_db_connection", "name": "Test Database Connection"},
+        {"codename": "view_db_schema", "name": "View Database Schema"},
+        {"codename": "run_sql_query", "name": "Run SQL Query"},
+        {"codename": "run_sql_dml", "name": "Run SQL DML"},
+        {"codename": "run_sql_ddl", "name": "Run SQL DDL"},
+        {"codename": "run_sql_high_risk", "name": "Run High Risk SQL"},
+        {"codename": "approve_sql_execution", "name": "Approve SQL Execution"},
+        {"codename": "view_sql_audit", "name": "View SQL Audit"},
+        {"codename": "export_sql_audit", "name": "Export SQL Audit"},
+        {"codename": "manage_backup_restore", "name": "Manage Backup Restore"},
+        {"codename": "run_db_diagnostics", "name": "Run Database Diagnostics"},
     ]
     for p in perms:
         obj, created = Permission.objects.get_or_create(
