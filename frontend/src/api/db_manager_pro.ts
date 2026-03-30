@@ -89,8 +89,17 @@ export const dbManagerProApi = {
   createAccessRule(data: Record<string, any>) {
     return request.post('db/access-rules/', data)
   },
+  listUsers() {
+    return request.get('/users')
+  },
+  listRoles() {
+    return request.get('/roles')
+  },
   approve(id: number) {
     return request.post(`db/approvals/${id}/approve/`)
+  },
+  remindApproval(id: number) {
+    return request.post(`db/approvals/${id}/remind/`)
   },
   reject(id: number, comment: string) {
     return request.post(`db/approvals/${id}/reject/`, { comment })

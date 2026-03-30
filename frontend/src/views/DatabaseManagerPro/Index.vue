@@ -143,10 +143,12 @@
                   <el-table-column prop="id" label="审批单" width="90" />
                   <el-table-column prop="applicant" label="申请人" width="120" />
                   <el-table-column prop="status" label="状态" width="100" />
+                  <el-table-column prop="overdue" label="超时" width="90" />
                   <el-table-column prop="reason" label="原因" min-width="180" />
                   <el-table-column label="操作" width="150">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="approve(row)" :disabled="row.status !== 'pending'">通过</el-button>
+                      <el-button link type="warning" @click="remind(row)" :disabled="row.status !== 'pending'">催办</el-button>
                       <el-button link type="danger" @click="reject(row)" :disabled="row.status !== 'pending'">拒绝</el-button>
                     </template>
                   </el-table-column>
@@ -191,6 +193,8 @@
                   <el-table-column prop="database_pattern" label="库范围" width="120" />
                   <el-table-column prop="table_pattern" label="表范围" width="120" />
                   <el-table-column prop="actions" label="动作" min-width="160" />
+                  <el-table-column prop="match_explanation" label="命中解释" min-width="220" />
+                  <el-table-column prop="conflicts" label="冲突规则" min-width="160" />
                 </el-table>
               </el-tab-pane>
               <el-tab-pane label="备份恢复" name="backup">
@@ -333,6 +337,19 @@
             <el-option label="critical" value="critical" />
           </el-select>
         </el-form-item>
+        <el-form-item label="SLA(分钟)"><el-input-number v-model="policyForm.sla_minutes" :min="5" :max="1440" /></el-form-item>
+        <el-form-item label="审批流">
+          <div class="flow-config">
+            <div v-for="(step, index) in policyForm.approval_flow" :key="index" class="flow-row">
+              <el-select v-model="step.group_name" placeholder="审批角色组">
+                <el-option v-for="item in roleOptions" :key="item.name" :label="item.name" :value="item.name" />
+              </el-select>
+              <el-input-number v-model="step.sla_minutes" :min="5" :max="1440" />
+              <el-button link type="danger" @click="policyForm.approval_flow.splice(index, 1)">删除</el-button>
+            </div>
+            <el-button size="small" @click="policyForm.approval_flow.push({ group_name: '', sla_minutes: policyForm.sla_minutes })">新增审批节点</el-button>
+          </div>
+        </el-form-item>
         <el-form-item label="启用"><el-switch v-model="policyForm.enabled" /></el-form-item>
       </el-form>
       <template #footer>
@@ -344,8 +361,16 @@
     <el-drawer v-model="accessDrawerVisible" title="访问控制规则" size="560px">
       <el-form :model="accessRuleForm" label-width="120px">
         <el-form-item label="规则名称"><el-input v-model="accessRuleForm.name" /></el-form-item>
-        <el-form-item label="用户 ID"><el-input-number v-model="accessRuleForm.user_id" :min="1" /></el-form-item>
-        <el-form-item label="角色组"><el-input v-model="accessRuleForm.group_name" placeholder="可选，填写 Group 名称" /></el-form-item>
+        <el-form-item label="用户">
+          <el-select v-model="accessRuleForm.user_id" clearable filterable placeholder="选择用户">
+            <el-option v-for="item in userOptions" :key="item.id" :label="item.username" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="角色组">
+          <el-select v-model="accessRuleForm.group_name" clearable filterable placeholder="选择角色组">
+            <el-option v-for="item in roleOptions" :key="item.name" :label="item.name" :value="item.name" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="实例">
           <el-select v-model="accessRuleForm.instance" clearable>
             <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
@@ -404,6 +429,8 @@ const backupRecords = ref<any[]>([])
 const restoreJobs = ref<any[]>([])
 const rollbackJobs = ref<any[]>([])
 const jobs = ref<any[]>([])
+const userOptions = ref<any[]>([])
+const roleOptions = ref<any[]>([])
 const selectedInstance = ref<any>(null)
 const drawerVisible = ref(false)
 const drawerTitle = ref('新增实例')
@@ -442,6 +469,8 @@ const policyForm = reactive({
   db_type_scope: [] as string[],
   sql_type_scope: ['ALTER', 'DROP', 'TRUNCATE', 'UPDATE', 'DELETE', 'INSERT'],
   risk_scope: ['high', 'critical'],
+  approval_flow: [{ group_name: '', sla_minutes: 60 }] as Array<{ group_name: string; sla_minutes: number }>,
+  sla_minutes: 60,
   enabled: true
 })
 const accessRuleForm = reactive({
@@ -555,6 +584,12 @@ const loadAccessRules = async () => {
   accessRules.value = Array.isArray(data) ? data : []
 }
 
+const loadUserRoleOptions = async () => {
+  const [users, roles] = await Promise.all([dbManagerProApi.listUsers(), dbManagerProApi.listRoles()])
+  userOptions.value = Array.isArray(users) ? users : []
+  roleOptions.value = Array.isArray(roles) ? roles : []
+}
+
 const loadBackupData = async () => {
   const [plans, records, restores, rollbacks] = await Promise.all([
     dbManagerProApi.listBackupPlans(),
@@ -663,6 +698,12 @@ const reject = async (row: any) => {
   await Promise.all([loadApprovals(), loadJobs()])
 }
 
+const remind = async (row: any) => {
+  await dbManagerProApi.remindApproval(row.id)
+  ElMessage.success('已发送催办')
+  await loadJobDetail(activeJob.value || { id: row.job_id })
+}
+
 const openPolicyDrawer = () => {
   Object.assign(policyForm, {
     name: '',
@@ -670,6 +711,8 @@ const openPolicyDrawer = () => {
     db_type_scope: selectedInstance.value ? [selectedInstance.value.db_type] : [],
     sql_type_scope: ['ALTER', 'DROP', 'TRUNCATE', 'UPDATE', 'DELETE', 'INSERT'],
     risk_scope: ['high', 'critical'],
+    approval_flow: [{ group_name: '', sla_minutes: 60 }],
+    sla_minutes: 60,
     enabled: true
   })
   policyDrawerVisible.value = true
@@ -781,7 +824,7 @@ const alertType = (decision: string) => {
 }
 
 const refreshAll = async () => {
-  await Promise.all([loadInstances(), loadJobs(), loadApprovals(), loadAudit(), loadPolicies(), loadAccessRules(), loadBackupData()])
+  await Promise.all([loadInstances(), loadJobs(), loadApprovals(), loadAudit(), loadPolicies(), loadAccessRules(), loadBackupData(), loadUserRoleOptions()])
   if (activeJob.value?.id) {
     await loadJobDetail(activeJob.value)
   }
@@ -915,6 +958,18 @@ onBeforeUnmount(() => {
 .diag-desc {
   margin-top: 4px;
   color: #4b5563;
+}
+.flow-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.flow-row {
+  display: grid;
+  grid-template-columns: 1fr 140px 60px;
+  gap: 8px;
+  width: 100%;
 }
 .mb-12 {
   margin-bottom: 12px;

@@ -12,7 +12,7 @@ from api.views import HasRolePermission
 from .engines import DBEngineFactory
 from .models import BackupPlan, BackupRecord, DBAccessRule, DBInstance, DatabaseConnection, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLAuditLog, SQLExecutionJob
 from .serializers import BackupPlanSerializer, BackupRecordSerializer, DBInstanceSerializer, RestoreJobSerializer, RollbackJobSerializer, SQLApprovalPolicySerializer, SQLExecuteRequestSerializer, SQLExecutionJobSerializer, SQLFormatRequestSerializer, SQLReviewRequestSerializer
-from .services import approve_order, cancel_job, create_ai_review_job, create_execution_job, create_restore_job, create_rollback_job, ensure_instance_access, execute_rollback_job, export_audit_rows, explain_sql, filter_accessible_instances, get_schema, get_table_detail, pause_job, reject_order, resume_job, run_backup_plan, run_instance_diagnostics, serialize_access_rule, serialize_backup_plan, serialize_instance, serialize_rollback_job, test_instance, upsert_access_rule, upsert_backup_plan, upsert_instance
+from .services import approval_is_overdue, approve_order, cancel_job, create_ai_review_job, create_execution_job, create_restore_job, create_rollback_job, ensure_instance_access, execute_rollback_job, export_audit_rows, explain_sql, filter_accessible_instances, get_schema, get_table_detail, pause_job, reject_order, remind_approval, resume_job, run_backup_plan, run_instance_diagnostics, serialize_access_rule, serialize_backup_plan, serialize_instance, serialize_rollback_job, test_instance, upsert_access_rule, upsert_backup_plan, upsert_instance
 
 
 def is_readonly(user):
@@ -393,6 +393,9 @@ def approval_list(request):
             "applicant": item.applicant.username,
             "status": item.status,
             "reason": item.reason,
+            "current_node": item.current_node,
+            "pending_steps": list(item.steps.filter(action="pending").values("step_no", "approver_role", "comment")),
+            "overdue": approval_is_overdue(item),
             "submitted_at": item.submitted_at,
             "approved_at": item.approved_at,
             "rejected_at": item.rejected_at,
@@ -414,6 +417,8 @@ def approval_detail(request, pk):
         "submitted_at": order.submitted_at,
         "approved_at": order.approved_at,
         "rejected_at": order.rejected_at,
+        "overdue": approval_is_overdue(order),
+        "steps": list(order.steps.values("step_no", "approver_role", "action", "comment", "acted_at")),
         "ai_review": SQLAIReview.objects.filter(job=order.job).values().first(),
     })
 
@@ -432,6 +437,14 @@ def approval_reject(request, pk):
     order = get_object_or_404(SQLApprovalOrder.objects.select_related("job").filter(job__instance__in=filter_accessible_instances(request.user, DBInstance.objects.all(), action="approve")), pk=pk)
     reject_order(order, request.user, request.data.get("comment", ""))
     return Response({"msg": "rejected"})
+
+
+@api_view(['POST'])
+@permission_classes([HasRolePermission])
+def approval_remind(request, pk):
+    order = get_object_or_404(SQLApprovalOrder.objects.select_related("job").filter(job__instance__in=filter_accessible_instances(request.user, DBInstance.objects.all(), action="approve")), pk=pk)
+    remind_approval(order, request.user)
+    return Response({"msg": "reminded"})
 
 
 @api_view(['GET'])

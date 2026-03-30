@@ -6,17 +6,23 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
+import gzip
+import base64
+from datetime import timedelta
 
 import requests
 import sqlparse
+from cryptography.fernet import Fernet
 from django.conf import settings
 from django.utils import timezone
 
 from ai_ops.models import AIConfig
+from shark_platform.celery import app as celery_app
 
 from .engines import DBEngineFactory
-from .models import BackupPlan, BackupRecord, DBAccessRule, DBInstance, DBInstanceSecret, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLAuditLog, SQLExecutionJob, SQLExecutionLog, SQLExecutionResult
+from .models import BackupPlan, BackupRecord, DBAccessRule, DBInstance, DBInstanceSecret, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLApprovalStep, SQLAuditLog, SQLExecutionJob, SQLExecutionLog, SQLExecutionResult
 
 
 JOB_THREADS = {}
@@ -24,6 +30,15 @@ JOB_LOCK = threading.Lock()
 BACKUP_THREADS = {}
 RESTORE_THREADS = {}
 ROLLBACK_THREADS = {}
+
+try:
+    import boto3
+except ImportError:
+    boto3 = None
+try:
+    import psycopg2.extras
+except ImportError:
+    psycopg2 = None
 
 
 def _normalize_sql(sql: str) -> str:
@@ -51,6 +66,93 @@ def _extract_tables(sql: str):
 
 def _backup_root():
     return Path(getattr(settings, "BASE_DIR", Path.cwd())) / "runtime" / "db_backups"
+
+
+def _trace_id(request_meta=None):
+    return (request_meta or {}).get("trace_id") or uuid.uuid4().hex
+
+
+def _cipher():
+    key = base64.urlsafe_b64encode(hashlib.sha256((settings.SECRET_KEY or "shark-platform").encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _storage_client(storage_config):
+    if not boto3:
+        return None
+    if not storage_config or not storage_config.get("bucket"):
+        return None
+    endpoint = storage_config.get("endpoint")
+    if endpoint and ('s3.amazonaws.com' in endpoint or endpoint.strip() == ''):
+        endpoint = None
+    return boto3.client(
+        "s3",
+        region_name=storage_config.get("region"),
+        aws_access_key_id=storage_config.get("access_key"),
+        aws_secret_access_key=storage_config.get("secret_key"),
+        endpoint_url=endpoint or None,
+    )
+
+
+def _compress_file(path: Path):
+    gz_path = path.with_suffix(path.suffix + ".gz")
+    with open(path, "rb") as src, gzip.open(gz_path, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+    path.unlink(missing_ok=True)
+    return gz_path
+
+
+def _encrypt_file(path: Path):
+    encrypted = path.with_suffix(path.suffix + ".enc")
+    encrypted.write_bytes(_cipher().encrypt(path.read_bytes()))
+    path.unlink(missing_ok=True)
+    return encrypted
+
+
+def _sha256_file(path: Path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fp:
+        while True:
+            chunk = fp.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cleanup_local_backups(plan: BackupPlan):
+    if not plan.retention_days:
+        return
+    expire_before = timezone.now() - timedelta(days=plan.retention_days)
+    stale = plan.records.filter(created_at__lt=expire_before)
+    for record in stale:
+        try:
+            if record.file_uri:
+                Path(record.file_uri).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _cleanup_s3_backups(plan: BackupPlan):
+    storage_config = plan.storage_config or {}
+    client = _storage_client(storage_config)
+    if not client or not plan.retention_days:
+        return
+    expire_before = timezone.now() - timedelta(days=plan.retention_days)
+    stale = plan.records.filter(created_at__lt=expire_before)
+    bucket = storage_config.get("bucket")
+    for record in stale:
+        key = (record.metadata_json or {}).get("object_key")
+        if not key:
+            continue
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+        except Exception:
+            pass
+
+
+def _should_use_celery():
+    return bool(getattr(settings, "CELERY_BROKER_URL", "") or os.environ.get("CELERY_BROKER_URL"))
 
 
 def _match_pattern(value: str, pattern: str) -> bool:
@@ -349,7 +451,7 @@ def create_ai_review_job(instance: DBInstance, user, database_name: str, sql: st
     return job, report
 
 
-def need_approval(instance: DBInstance, sql: str, report=None):
+def matching_approval_policy(instance: DBInstance, sql: str, report=None):
     sql_type = _sql_type(sql)
     policies = SQLApprovalPolicy.objects.filter(enabled=True)
     for policy in policies:
@@ -361,6 +463,13 @@ def need_approval(instance: DBInstance, sql: str, report=None):
             continue
         if policy.risk_scope and report and report.get("risk_level") not in policy.risk_scope:
             continue
+        return policy
+    return None
+
+
+def need_approval(instance: DBInstance, sql: str, report=None):
+    policy = matching_approval_policy(instance, sql, report=report)
+    if policy:
         return True
     if instance.environment == "prod" and sql_type in {"ALTER", "DROP", "TRUNCATE", "UPDATE", "DELETE", "INSERT"}:
         return True
@@ -374,7 +483,7 @@ def append_job_log(job: SQLExecutionJob, message: str, level: str = "info"):
     SQLExecutionLog.objects.create(job=job, seq=seq, level=level, message=message)
 
 
-def _write_audit(job: SQLExecutionJob, request_meta=None):
+def _write_audit(job: SQLExecutionJob, request_meta=None, before_image=None, after_image=None, txn_snapshot=None):
     SQLAuditLog.objects.update_or_create(
         job=job,
         defaults={
@@ -388,10 +497,13 @@ def _write_audit(job: SQLExecutionJob, request_meta=None):
             "affected_rows": job.affected_rows,
             "duration_ms": job.duration_ms,
             "risk_level": job.risk_level,
+            "before_image_json": before_image or [],
+            "after_image_json": after_image or [],
+            "txn_snapshot_json": txn_snapshot or {},
             "success": job.status == "success",
             "client_ip": (request_meta or {}).get("client_ip"),
             "user_agent": (request_meta or {}).get("user_agent", ""),
-            "trace_id": (request_meta or {}).get("trace_id", ""),
+            "trace_id": job.trace_id or (request_meta or {}).get("trace_id", ""),
         },
     )
 
@@ -404,13 +516,20 @@ def _run_sql_job(job_id: int, request_meta=None):
     job.progress_percent = 10
     job.started_at = timezone.now()
     job.save(update_fields=["status", "progress_percent", "started_at", "updated_at"])
-    append_job_log(job, "SQL 作业开始执行")
+    append_job_log(job, f"[trace:{job.trace_id}] SQL 作业开始执行")
+    before_image = []
+    after_image = []
+    txn_snapshot = {"before": _capture_txn_snapshot(job.instance, job.database_name)}
     try:
         if job.execute_mode == "dry_run":
             result = {"headers": [], "rows": [], "affected_rows": 0, "execution_context": {}}
-            append_job_log(job, "Dry Run 模式未实际执行 SQL")
+            append_job_log(job, f"[trace:{job.trace_id}] Dry Run 模式未实际执行 SQL")
         else:
+            before_image = _capture_before_image(job.instance, job.database_name, job.sql_text)
             result = engine.execute_sql(job.database_name or job.instance.default_database, job.sql_text)
+            if job.sql_type == "UPDATE":
+                after_image = _capture_before_image(job.instance, job.database_name, f"DELETE FROM {_extract_tables(job.sql_text)[0]} WHERE {_extract_where_clause(job.sql_text)}")
+        txn_snapshot["after"] = _capture_txn_snapshot(job.instance, job.database_name)
         SQLExecutionResult.objects.update_or_create(
             job=job,
             defaults={
@@ -430,16 +549,16 @@ def _run_sql_job(job_id: int, request_meta=None):
         job.duration_ms = int((time.time() - started) * 1000)
         job.finished_at = timezone.now()
         job.save(update_fields=["execution_context", "status", "progress_percent", "affected_rows", "duration_ms", "finished_at", "updated_at"])
-        append_job_log(job, "SQL 作业执行成功", "success")
+        append_job_log(job, f"[trace:{job.trace_id}] SQL 作业执行成功", "success")
     except Exception as exc:
         job.status = "failed"
         job.error_message = str(exc)
         job.duration_ms = int((time.time() - started) * 1000)
         job.finished_at = timezone.now()
         job.save(update_fields=["status", "error_message", "duration_ms", "finished_at", "updated_at"])
-        append_job_log(job, f"SQL 作业执行失败: {exc}", "error")
+        append_job_log(job, f"[trace:{job.trace_id}] SQL 作业执行失败: {exc}", "error")
     finally:
-        _write_audit(job, request_meta=request_meta)
+        _write_audit(job, request_meta=request_meta, before_image=before_image, after_image=after_image, txn_snapshot=txn_snapshot)
         with JOB_LOCK:
             JOB_THREADS.pop(job.id, None)
 
@@ -463,6 +582,7 @@ def create_execution_job(instance: DBInstance, user, database_name: str, sql: st
         execute_mode=execute_mode,
         status="queued",
         risk_level=report.get("risk_level", "low"),
+        trace_id=_trace_id(request_meta),
     )
     SQLAIReview.objects.update_or_create(
         job=job,
@@ -486,20 +606,32 @@ def create_execution_job(instance: DBInstance, user, database_name: str, sql: st
         job.status = "failed"
         job.error_message = "AI 预审阻断执行"
         job.save(update_fields=["status", "error_message", "updated_at"])
-        append_job_log(job, "AI 预审阻断执行", "error")
+        append_job_log(job, f"[trace:{job.trace_id}] AI 预审阻断执行", "error")
         _write_audit(job, request_meta=request_meta)
         return job, report, None
-    if need_approval(instance, sql, report=report):
+    matched_policy = matching_approval_policy(instance, sql, report=report)
+    if matched_policy or need_approval(instance, sql, report=report):
         order = SQLApprovalOrder.objects.create(job=job, applicant=user, reason="命中审批策略")
+        flow = (matched_policy.approval_flow if matched_policy else []) or [{"group_name": "DBA", "sla_minutes": 60}]
+        for idx, step in enumerate(flow, start=1):
+            SQLApprovalStep.objects.create(
+                order=order,
+                step_no=idx,
+                approver_role=step.get("group_name", ""),
+                comment=f"SLA {step.get('sla_minutes', matched_policy.sla_minutes if matched_policy else 60)} 分钟",
+            )
         job.status = "waiting_approval"
         job.save(update_fields=["status", "updated_at"])
-        append_job_log(job, "SQL 作业进入审批流程")
+        append_job_log(job, f"[trace:{job.trace_id}] SQL 作业进入审批流程")
         return job, report, order
     start_job_async(job, request_meta=request_meta)
     return job, report, None
 
 
 def start_job_async(job: SQLExecutionJob, request_meta=None):
+    if _should_use_celery():
+        celery_app.send_task("db_manager.run_sql_job", args=[job.id, request_meta or {}])
+        return
     with JOB_LOCK:
         if job.id in JOB_THREADS:
             return
@@ -509,17 +641,37 @@ def start_job_async(job: SQLExecutionJob, request_meta=None):
 
 
 def approve_order(order: SQLApprovalOrder, approver, request_meta=None):
+    current_step = order.steps.filter(action="pending").order_by("step_no").first()
+    if current_step:
+        current_step.action = "approved"
+        current_step.approver = approver
+        current_step.acted_at = timezone.now()
+        current_step.comment = f"{current_step.comment}\napproved by {approver.username}".strip()
+        current_step.save(update_fields=["action", "approver", "acted_at", "comment"])
+    job = order.job
+    next_step = order.steps.filter(action="pending").order_by("step_no").first()
+    if next_step:
+        order.current_node = next_step.step_no
+        order.save(update_fields=["current_node"])
+        append_job_log(job, f"[trace:{job.trace_id}] 当前审批节点通过，进入下一节点 {next_step.step_no}", "success")
+        return
     order.status = "approved"
     order.approved_at = timezone.now()
     order.save(update_fields=["status", "approved_at"])
-    job = order.job
-    append_job_log(job, f"审批通过，审批人: {approver.username}", "success")
+    append_job_log(job, f"[trace:{job.trace_id}] 审批通过，审批人: {approver.username}", "success")
     job.status = "queued"
     job.save(update_fields=["status", "updated_at"])
     start_job_async(job, request_meta=request_meta)
 
 
 def reject_order(order: SQLApprovalOrder, approver, comment=""):
+    current_step = order.steps.filter(action="pending").order_by("step_no").first()
+    if current_step:
+        current_step.action = "rejected"
+        current_step.approver = approver
+        current_step.acted_at = timezone.now()
+        current_step.comment = comment
+        current_step.save(update_fields=["action", "approver", "acted_at", "comment"])
     order.status = "rejected"
     order.rejected_at = timezone.now()
     order.reason = comment or order.reason
@@ -575,6 +727,9 @@ def serialize_backup_plan(plan: BackupPlan):
         "schedule_expr": plan.schedule_expr,
         "retention_days": plan.retention_days,
         "storage_uri": plan.storage_uri,
+        "storage_config": plan.storage_config,
+        "compression_enabled": plan.compression_enabled,
+        "encryption_enabled": plan.encryption_enabled,
         "enabled": plan.enabled,
         "last_run_at": plan.last_run_at,
         "next_run_at": plan.next_run_at,
@@ -584,6 +739,16 @@ def serialize_backup_plan(plan: BackupPlan):
 
 
 def serialize_access_rule(rule: DBAccessRule):
+    conflicts = []
+    for other in DBAccessRule.objects.exclude(id=rule.id).filter(enabled=True):
+        if rule.instance_id and other.instance_id and rule.instance_id != other.instance_id:
+            continue
+        if set(rule.actions or []).intersection(other.actions or []) and (
+            _match_pattern(rule.database_pattern, other.database_pattern) or _match_pattern(other.database_pattern, rule.database_pattern)
+        ) and (
+            _match_pattern(rule.table_pattern, other.table_pattern) or _match_pattern(other.table_pattern, rule.table_pattern)
+        ):
+            conflicts.append(other.name)
     return {
         "id": rule.id,
         "name": rule.name,
@@ -596,6 +761,8 @@ def serialize_access_rule(rule: DBAccessRule):
         "table_pattern": rule.table_pattern,
         "sql_types": rule.sql_types,
         "actions": rule.actions,
+        "match_explanation": f"{rule.instance.name if rule.instance_id else '全部实例'} / {rule.database_pattern} / {rule.table_pattern} / {','.join(rule.actions or [])}",
+        "conflicts": conflicts[:5],
         "enabled": rule.enabled,
         "created_at": rule.created_at,
         "updated_at": rule.updated_at,
@@ -637,6 +804,76 @@ def _build_db_cli_env(instance: DBInstance):
     if instance.db_type == "postgresql":
         env["PGPASSWORD"] = password
     return env
+
+
+def _capture_txn_snapshot(instance: DBInstance, database_name: str):
+    engine = DBEngineFactory.get_engine(instance)
+    snapshot = {"db_type": instance.db_type}
+    try:
+        if instance.db_type == "mysql":
+            conn = engine._connect(database_name or instance.default_database)
+            try:
+                with conn.cursor() as c:
+                    c.execute("SHOW MASTER STATUS")
+                    row = c.fetchone() or {}
+                    snapshot.update({"binlog_file": row.get("File"), "binlog_position": row.get("Position")})
+            finally:
+                conn.close()
+        elif instance.db_type == "postgresql":
+            conn = engine._connect(database_name or instance.default_database)
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+                    c.execute("SELECT pg_current_wal_lsn() AS wal_lsn")
+                    row = c.fetchone() or {}
+                    snapshot.update({"wal_lsn": row.get("wal_lsn")})
+            finally:
+                conn.close()
+    except Exception as exc:
+        snapshot["capture_error"] = str(exc)
+    return snapshot
+
+
+def _extract_where_clause(sql: str):
+    match = re.search(r"\bwhere\b(.+?)(?:\border\s+by\b|\blimit\b|;|$)", sql or "", re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _capture_before_image(instance: DBInstance, database_name: str, sql: str):
+    sql_type = _sql_type(sql)
+    if sql_type not in {"UPDATE", "DELETE"}:
+        return []
+    tables = _extract_tables(sql)
+    if not tables:
+        return []
+    table_name = tables[0].split(".")[-1]
+    where_clause = _extract_where_clause(sql)
+    if not where_clause:
+        return []
+    engine = DBEngineFactory.get_engine(instance)
+    try:
+        result = engine.query(database_name or instance.default_database, table_name, {
+            "sql": f"SELECT * FROM {table_name} WHERE {where_clause} LIMIT 200"
+        })
+        return result.get("rows", [])
+    except Exception:
+        return []
+
+
+def _primary_key_field(row: dict):
+    for key in row.keys():
+        if key.lower() == "id" or key.lower().endswith("_id"):
+            return key
+    return next(iter(row.keys()), None)
+
+
+def _sql_literal(value):
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _backup_file_path(plan: BackupPlan):
@@ -715,12 +952,31 @@ def _execute_backup(record_id: int):
             _run_command(cmd, env=env)
         else:
             raise RuntimeError(f"{instance.db_type} 暂未支持真实备份")
+        if plan.compression_enabled and file_path.exists():
+            file_path = _compress_file(file_path)
+        if plan.encryption_enabled and file_path.exists():
+            file_path = _encrypt_file(file_path)
+        checksum = _sha256_file(file_path) if file_path.exists() else ""
+        metadata["checksum_sha256"] = checksum
+        storage_config = plan.storage_config or {}
+        if plan.storage_uri.startswith("s3://") and storage_config.get("bucket"):
+            client = _storage_client(storage_config)
+            if not client:
+                raise RuntimeError("对象存储客户端不可用")
+            object_prefix = plan.storage_uri.replace(f"s3://{storage_config.get('bucket')}", "").strip("/")
+            object_key = "/".join(x for x in [object_prefix, plan.instance.name, file_path.name] if x)
+            client.upload_file(str(file_path), storage_config["bucket"], object_key)
+            metadata["object_key"] = object_key
         record.file_size = file_path.stat().st_size if file_path.exists() else 0
+        record.file_uri = str(file_path)
+        record.checksum_sha256 = metadata.get("checksum_sha256", "")
         record.status = "success"
         record.finished_at = timezone.now()
         metadata["executor"] = "real"
         record.metadata_json = metadata
-        record.save(update_fields=["file_size", "status", "finished_at", "metadata_json"])
+        record.save(update_fields=["file_uri", "file_size", "checksum_sha256", "status", "finished_at", "metadata_json"])
+        _cleanup_local_backups(plan)
+        _cleanup_s3_backups(plan)
     except Exception as exc:
         record.status = "failed"
         record.finished_at = timezone.now()
@@ -743,7 +999,7 @@ def upsert_backup_plan(data, user):
             plan.instance = instance_value
         else:
             plan.instance_id = instance_value
-    for field in ["name", "backup_type", "schedule_expr", "retention_days", "storage_uri", "enabled"]:
+    for field in ["name", "backup_type", "schedule_expr", "retention_days", "storage_uri", "storage_config", "compression_enabled", "encryption_enabled", "enabled"]:
         if field in data:
             setattr(plan, field, data.get(field))
     plan.save()
@@ -760,6 +1016,7 @@ def run_backup_plan(plan: BackupPlan):
         file_uri=str(file_path),
         file_size=0,
         snapshot_ref=f"{plan.instance.name}-{now.strftime('%Y%m%d%H%M%S')}",
+        trace_id=uuid.uuid4().hex,
         status="pending",
         metadata_json={
             "schedule_expr": plan.schedule_expr,
@@ -771,6 +1028,9 @@ def run_backup_plan(plan: BackupPlan):
     plan.last_run_at = now
     plan.next_run_at = now
     plan.save(update_fields=["last_run_at", "next_run_at", "updated_at"])
+    if _should_use_celery():
+        celery_app.send_task("db_manager.run_backup_record", args=[record.id])
+        return record
     with JOB_LOCK:
         if record.id not in BACKUP_THREADS:
             thread = threading.Thread(target=_execute_backup, args=(record.id,), daemon=True)
@@ -784,7 +1044,7 @@ def _execute_restore(job_id: int):
     job.status = "running"
     job.started_at = timezone.now()
     logs = list(job.log_json or [])
-    logs.append({"time": timezone.now().isoformat(), "message": "开始执行恢复任务"})
+    logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 开始执行恢复任务"})
     job.log_json = logs
     job.save(update_fields=["status", "started_at", "log_json"])
     instance = job.instance
@@ -793,6 +1053,15 @@ def _execute_restore(job_id: int):
         if not job.backup_record or not job.backup_record.file_uri:
             raise RuntimeError("缺少备份文件")
         file_path = Path(job.backup_record.file_uri)
+        if file_path.suffix == ".enc":
+            decrypted = file_path.with_suffix("")
+            decrypted.write_bytes(_cipher().decrypt(file_path.read_bytes()))
+            file_path = decrypted
+        if file_path.suffix == ".gz":
+            extracted = file_path.with_suffix("")
+            with gzip.open(file_path, "rb") as src, open(extracted, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            file_path = extracted
         if instance.db_type == "mysql":
             cmd = [
                 shutil.which("mysql") or "mysql",
@@ -830,13 +1099,13 @@ def _execute_restore(job_id: int):
             raise RuntimeError("Redis 恢复需替换 RDB/AOF 文件，当前版本不支持在线恢复")
         else:
             raise RuntimeError(f"{instance.db_type} 暂未支持真实恢复")
-        logs.append({"time": timezone.now().isoformat(), "message": "恢复任务执行成功"})
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 恢复任务执行成功"})
         job.status = "success"
         job.finished_at = timezone.now()
         job.log_json = logs
         job.save(update_fields=["status", "finished_at", "log_json"])
     except Exception as exc:
-        logs.append({"time": timezone.now().isoformat(), "message": f"恢复失败: {exc}"})
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 恢复失败: {exc}"})
         job.status = "failed"
         job.finished_at = timezone.now()
         job.log_json = logs
@@ -853,6 +1122,7 @@ def create_restore_job(instance_id, backup_record_id=None, restore_mode="backup"
         restore_mode=restore_mode,
         target_time=target_time,
         target_txn_id=target_txn_id or "",
+        trace_id=uuid.uuid4().hex,
         status="pending",
         log_json=[
             {"time": timezone.now().isoformat(), "message": "已创建恢复任务"},
@@ -860,6 +1130,9 @@ def create_restore_job(instance_id, backup_record_id=None, restore_mode="backup"
         ],
         created_by=user,
     )
+    if _should_use_celery():
+        celery_app.send_task("db_manager.run_restore_job", args=[job.id])
+        return job
     with JOB_LOCK:
         if job.id not in RESTORE_THREADS:
             thread = threading.Thread(target=_execute_restore, args=(job.id,), daemon=True)
@@ -876,11 +1149,27 @@ def _build_rollback_sql(audit: SQLAuditLog):
     if sql_type == "INSERT":
         return f"-- 请补充主键条件\nDELETE FROM {table_name} WHERE <primary_key_condition>;"
     if sql_type == "UPDATE":
-        return f"-- 请根据审计记录补充回滚前字段值\nUPDATE {table_name} SET <column>=<old_value> WHERE <primary_key_condition>;"
+        rows = audit.before_image_json or []
+        statements = []
+        for row in rows:
+            pk = _primary_key_field(row)
+            if not pk:
+                continue
+            set_clause = ", ".join(f"{col}={_sql_literal(val)}" for col, val in row.items() if col != pk)
+            where_clause = f"{pk}={_sql_literal(row.get(pk))}"
+            statements.append(f"UPDATE {table_name} SET {set_clause} WHERE {where_clause};")
+        return "\n".join(statements) if statements else f"-- 请根据审计记录补充回滚前字段值\nUPDATE {table_name} SET <column>=<old_value> WHERE <primary_key_condition>;"
     if sql_type == "DELETE":
-        return f"-- 请根据备份或审计快照补充被删除记录\nINSERT INTO {table_name} (<columns>) VALUES (<old_values>);"
+        rows = audit.before_image_json or []
+        statements = []
+        for row in rows:
+            columns = ", ".join(row.keys())
+            values = ", ".join(_sql_literal(value) for value in row.values())
+            statements.append(f"INSERT INTO {table_name} ({columns}) VALUES ({values});")
+        return "\n".join(statements) if statements else f"-- 请根据备份或审计快照补充被删除记录\nINSERT INTO {table_name} (<columns>) VALUES (<old_values>);"
     if sql_type in {"ALTER", "DROP", "TRUNCATE", "CREATE"}:
-        return f"-- {sql_type} 属于结构变更，建议优先使用备份恢复或 PITR\n-- 原始 SQL:\n{sql}"
+        snapshot = audit.txn_snapshot_json or {}
+        return f"-- {sql_type} 属于结构变更，建议优先使用备份恢复或 PITR\n-- 事务快照: {json.dumps(snapshot, ensure_ascii=False)}\n-- 原始 SQL:\n{sql}"
     return f"-- 未识别的回滚模板，请人工评估\n-- 原始 SQL:\n{sql}"
 
 
@@ -904,7 +1193,7 @@ def serialize_rollback_job(job: RollbackJob):
 def _execute_rollback(job_id: int):
     job = RollbackJob.objects.select_related("instance", "instance__secret").get(id=job_id)
     logs = list(job.log_json or [])
-    logs.append({"time": timezone.now().isoformat(), "message": "开始执行回滚 SQL"})
+    logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 开始执行回滚 SQL"})
     job.status = "running"
     job.started_at = timezone.now()
     job.log_json = logs
@@ -914,13 +1203,13 @@ def _execute_rollback(job_id: int):
             raise RuntimeError("回滚 SQL 为空")
         engine = DBEngineFactory.get_engine(job.instance)
         engine.execute_sql(job.instance.default_database, job.rollback_sql)
-        logs.append({"time": timezone.now().isoformat(), "message": "回滚 SQL 执行成功"})
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 回滚 SQL 执行成功"})
         job.status = "success"
         job.finished_at = timezone.now()
         job.log_json = logs
         job.save(update_fields=["status", "finished_at", "log_json"])
     except Exception as exc:
-        logs.append({"time": timezone.now().isoformat(), "message": f"回滚失败: {exc}"})
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 回滚失败: {exc}"})
         job.status = "failed"
         job.finished_at = timezone.now()
         job.log_json = logs
@@ -936,6 +1225,7 @@ def create_rollback_job(instance: DBInstance, user, audit: SQLAuditLog = None, s
         source_audit=audit,
         source_txn_id=source_txn_id or "",
         instance=instance,
+        trace_id=uuid.uuid4().hex,
         rollback_sql=rollback_sql,
         status="generated",
         log_json=[
@@ -948,6 +1238,9 @@ def create_rollback_job(instance: DBInstance, user, audit: SQLAuditLog = None, s
 
 
 def execute_rollback_job(job: RollbackJob):
+    if _should_use_celery():
+        celery_app.send_task("db_manager.run_rollback_job", args=[job.id])
+        return
     with JOB_LOCK:
         if job.id not in ROLLBACK_THREADS:
             thread = threading.Thread(target=_execute_rollback, args=(job.id,), daemon=True)
@@ -973,6 +1266,24 @@ def export_audit_rows(queryset):
             "sql_text": item.sql_text,
         })
     return rows
+
+
+def approval_is_overdue(order: SQLApprovalOrder):
+    pending_step = order.steps.filter(action="pending").order_by("step_no").first()
+    if not pending_step:
+        return False
+    match = re.search(r"SLA\s+(\d+)\s*分钟", pending_step.comment or "")
+    if not match:
+        return False
+    sla_minutes = int(match.group(1))
+    return timezone.now() > order.submitted_at + timedelta(minutes=sla_minutes)
+
+
+def remind_approval(order: SQLApprovalOrder, actor):
+    pending_step = order.steps.filter(action="pending").order_by("step_no").first()
+    if not pending_step:
+        return
+    append_job_log(order.job, f"[trace:{order.job.trace_id}] {actor.username} 催办审批节点 {pending_step.step_no}，目标角色 {pending_step.approver_role}", "warning")
 
 
 def run_instance_diagnostics(instance: DBInstance):

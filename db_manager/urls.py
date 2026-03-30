@@ -30,6 +30,7 @@ urlpatterns = [
     path('approvals/<int:pk>/', views.approval_detail),
     path('approvals/<int:pk>/approve/', views.approval_approve),
     path('approvals/<int:pk>/reject/', views.approval_reject),
+    path('approvals/<int:pk>/remind/', views.approval_remind),
     path('approval-policies/', views.approval_policy_list),
     path('approval-policies/<int:pk>/', views.approval_policy_detail),
     path('access-rules/', views.access_rule_list),
