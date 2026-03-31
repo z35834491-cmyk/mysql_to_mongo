@@ -125,7 +125,7 @@ access_log /var/log/nginx/access.json.log access_json;
 说明：
 
 - **`request_time`**：Nginx 秒数（浮点），后端会转为毫秒参与 P50/P95/P99。
-- **`msec` / `time_local` / `@timestamp`**：任一可用于时间轴；优先 `msec` 或数字 `time`。
+- **时间轴按「请求发生时间」**：优先 **`$msec`**（Unix 秒，推荐），其次 **`time_local`**（英文月缩写）、**`$time_iso8601`**（可增字段 `time_iso8601`）。若都解析失败，会退化为 **推送/查询时刻**，图表会挤成一条竖线；服务器 `LC_TIME` 非英文时，旧版仅靠 `strptime` 解析 `time_local` 易失败，请升级 Shark 或务必带 **`msec`**。
 - **真实客户端 IP**：若经 CDN/反代，请使用 `$http_x_forwarded_for` 或 realip 模块，保证 JSON 里 `remote_addr` 为客户端 IP（或增加 `real_ip_header` 后仍用 `$remote_addr`）。
 
 **combined 模式**：后端使用简化正则解析，**无 `request_time` 时延迟为 0**，仅建议过渡使用。

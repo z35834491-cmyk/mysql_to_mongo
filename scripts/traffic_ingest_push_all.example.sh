@@ -15,6 +15,9 @@ export SHARK_BASE="${SHARK_BASE:?请 export SHARK_BASE，如 https://ops.example
 
 # 可选：首次部署跳过历史
 # export INGEST_SKIP_BACKLOG=1
+# 日志行很长或仍 413 时调小单包（默认脚本已约 512KiB/400 行）
+# export BATCH_MAX_BYTES=262144
+# export BATCH_MAX_LINES=200
 
 # 日志目录（按你机器实际路径改）
 LOG_DIR="${LOG_DIR:-/var/log/nginx}"

@@ -168,6 +168,13 @@ sudo tail -n 2000 /var/log/nginx/access.json.log | curl -sS -X POST "${SHARK_BAS
 
 成功示例：`{"accepted":2000,"truncated":false}`
 
+### 11.1 推送出现 HTTP 413（Payload Too Large）
+
+入口 **Nginx / Ingress** 默认 `client_max_body_size` 常为 **1m**，大批量 JSON 行易触发 413。处理方式任选：
+
+- **推送端**：使用仓库脚本 `scripts/traffic_ingest_push_incremental.sh`（已按约 **512KiB / 400 行** 切包）；仍 413 时可 `export BATCH_MAX_BYTES=262144`、`BATCH_MAX_LINES=200`。
+- **Shark 前向代理**：本仓库 `nginx.conf` 已对 `server` 设置 `client_max_body_size 32m;`，部署镜像后生效。**Kubernetes Ingress** 需加注解，例如 Nginx Ingress：`nginx.ingress.kubernetes.io/proxy-body-size: "32m"`。
+
 ---
 
 ## 12. 文件清单

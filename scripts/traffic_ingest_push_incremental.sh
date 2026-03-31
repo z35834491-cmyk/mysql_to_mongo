@@ -7,7 +7,8 @@
 #   NGINX_ACCESS_JSON_LOG   默认 /var/log/nginx/access.json.log
 #   STATE_FILE              状态前缀，默认 /var/lib/traffic-ingest-push/state
 #                             实际文件: ${STATE_FILE}.meta / .partial / .lock
-#   BATCH_MAX_LINES         默认 15000
+#   BATCH_MAX_LINES         默认 400（与 BATCH_MAX_BYTES 同时生效，先到先切）
+#   BATCH_MAX_BYTES         默认 524288（512KiB），避免 Nginx 默认 client_max_body_size 1m 导致 413
 #   CONNECT_TIMEOUT         curl --connect-timeout（秒）默认 30
 #   MAX_TIME                curl --max-time（秒）默认 120
 #   DRY_RUN=1               只打印，不写状态、不 POST
@@ -22,15 +23,20 @@ set -euo pipefail
 
 : "${NGINX_ACCESS_JSON_LOG:=/var/log/nginx/access.json.log}"
 : "${STATE_FILE:=/var/lib/traffic-ingest-push/state}"
-: "${BATCH_MAX_LINES:=15000}"
+: "${BATCH_MAX_LINES:=400}"
+: "${BATCH_MAX_BYTES:=524288}"
 : "${CONNECT_TIMEOUT:=30}"
 : "${MAX_TIME:=120}"
 : "${DRY_RUN:=0}"
 : "${INGEST_SKIP_BACKLOG:=0}"
 
-[[ "$BATCH_MAX_LINES" =~ ^[0-9]+$ ]] || BATCH_MAX_LINES=15000
+[[ "$BATCH_MAX_LINES" =~ ^[0-9]+$ ]] || BATCH_MAX_LINES=400
 (( BATCH_MAX_LINES < 1 )) && BATCH_MAX_LINES=1
 (( BATCH_MAX_LINES > 100000 )) && BATCH_MAX_LINES=100000
+
+[[ "$BATCH_MAX_BYTES" =~ ^[0-9]+$ ]] || BATCH_MAX_BYTES=524288
+(( BATCH_MAX_BYTES < 4096 )) && BATCH_MAX_BYTES=4096
+(( BATCH_MAX_BYTES > 52428800 )) && BATCH_MAX_BYTES=52428800
 
 TOKEN="${TRAFFIC_INGEST_TOKEN:-${TOKEN:-}}"
 
@@ -108,12 +114,45 @@ chunk_ends_with_newline() {
 
 post_file() {
   local body="$1"
-  curl -sS -f -X POST "$INGEST_URL" \
-    --connect-timeout "$CONNECT_TIMEOUT" \
-    --max-time "$MAX_TIME" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: text/plain; charset=utf-8" \
-    --data-binary "@${body}"
+  local code out
+  out=$(mktemp)
+  code=$(
+    curl -sS -o "$out" -w '%{http_code}' -X POST "$INGEST_URL" \
+      --connect-timeout "$CONNECT_TIMEOUT" \
+      --max-time "$MAX_TIME" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: text/plain; charset=utf-8" \
+      --data-binary "@${body}"
+  ) || true
+  if [[ "$code" == "200" ]]; then
+    cat "$out"
+    rm -f "$out"
+    return 0
+  fi
+  local err
+  err=$(head -c 400 "$out" 2>/dev/null || true)
+  rm -f "$out"
+  if [[ "$code" == "413" ]]; then
+    die "HTTP 413 请求体过大。可：① 降低 BATCH_MAX_BYTES（当前 ${BATCH_MAX_BYTES}）或 BATCH_MAX_LINES（当前 ${BATCH_MAX_LINES}）；② 在 Nginx/Ingress 增大 client_max_body_size / proxy-body-size；③ 提高 cron 频率减小单次积压。"
+  fi
+  die "POST 失败 HTTP ${code} ${err}"
+}
+
+# 当前行写入 body 后的字节数（UTF-8 安全）
+line_payload_bytes() {
+  LC_ALL=C printf '%s\n' "$1" | wc -c | tr -d ' '
+}
+
+flush_batch() {
+  local cur_batch="$1"
+  local cnt="$2"
+  local resp
+  [[ -s "$cur_batch" ]] || return 0
+  resp=$(post_file "$cur_batch")
+  echo "$resp"
+  total=$((total + cnt))
+  batches=$((batches + 1))
+  : > "$cur_batch"
 }
 
 run_locked() {
@@ -215,25 +254,24 @@ run_locked() {
   local cur_batch="$TMPDIR/cur_batch"
   : > "$cur_batch"
   local cnt=0
+  local bbytes=0
+  local inc
   while IFS= read -r line || [[ -n "${line:-}" ]]; do
     [[ -z "$line" ]] && continue
+    inc=$(line_payload_bytes "$line")
+    if (( inc > BATCH_MAX_BYTES )); then
+      echo "traffic_ingest: 警告 单行字节数 ${inc} > BATCH_MAX_BYTES=${BATCH_MAX_BYTES}，请调大 BATCH_MAX_BYTES 或入口 Nginx client_max_body_size" >&2
+    fi
+    if (( cnt > 0 && ( cnt >= BATCH_MAX_LINES || bbytes + inc > BATCH_MAX_BYTES ) )); then
+      flush_batch "$cur_batch" "$cnt" || die "POST 失败"
+      cnt=0
+      bbytes=0
+    fi
     printf '%s\n' "$line" >> "$cur_batch"
     cnt=$((cnt + 1))
-    if (( cnt >= BATCH_MAX_LINES )); then
-      resp=$(post_file "$cur_batch") || die "POST 失败: $resp"
-      echo "$resp"
-      total=$((total + cnt))
-      batches=$((batches + 1))
-      : > "$cur_batch"
-      cnt=0
-    fi
+    bbytes=$((bbytes + inc))
   done < "$LINES"
-  if [[ -s "$cur_batch" ]]; then
-    resp=$(post_file "$cur_batch") || die "POST 失败: $resp"
-    echo "$resp"
-    total=$((total + cnt))
-    batches=$((batches + 1))
-  fi
+  flush_batch "$cur_batch" "$cnt" || die "POST 失败"
 
   write_meta "$cur_ino" "$new_off"
   echo "{\"posted_lines\":${total},\"batches\":${batches}}"
