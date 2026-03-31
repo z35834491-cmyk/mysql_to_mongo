@@ -68,7 +68,9 @@
           </div>
           <monaco-sql-editor
             v-model="workbench.sql"
-            :suggestions="completionItems"
+            :language="editorLanguage"
+            :suggestions="mergedEditorSuggestions"
+            :extra-snippets="editorExtraSnippets"
             @keyword-change="handleCompletionKeywordChange"
           />
         </el-card>
@@ -293,19 +295,42 @@
           </el-select>
         </el-form-item>
         <el-form-item label="Host"><el-input v-model="form.host" /></el-form-item>
-        <el-form-item label="Port"><el-input-number v-model="form.port" :min="1" :max="65535" /></el-form-item>
-        <el-form-item label="默认库"><el-input v-model="form.default_database" /></el-form-item>
+        <el-form-item label="Port">
+          <el-input-number v-model="form.port" :min="1" :max="65535" @change="onInstancePortUserChange" />
+        </el-form-item>
+        <el-form-item label="默认库">
+          <el-input v-model="form.default_database" :placeholder="drawerDatabasePlaceholder" />
+        </el-form-item>
         <el-form-item label="用户名"><el-input v-model="form.username" /></el-form-item>
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item>
         <el-form-item label="所属团队"><el-input v-model="form.owner_team" /></el-form-item>
         <el-form-item label="只读实例"><el-switch v-model="form.read_only" /></el-form-item>
         <el-divider content-position="left">PITR 配置</el-divider>
-        <el-form-item label="MySQL Binlog 目录"><el-input v-model="form.extra_config.mysql_binlog_dir" placeholder="/data/mysql/binlog" /></el-form-item>
-        <el-form-item label="PostgreSQL WAL 目录"><el-input v-model="form.extra_config.pg_wal_archive_dir" placeholder="/data/postgres/wal_archive" /></el-form-item>
-        <el-form-item label="PostgreSQL 恢复目录"><el-input v-model="form.extra_config.pg_restore_data_dir" placeholder="/data/postgres/pitr_restore" /></el-form-item>
-        <el-form-item label="pg_ctl 路径"><el-input v-model="form.extra_config.pg_ctl_path" placeholder="/usr/local/bin/pg_ctl" /></el-form-item>
-        <el-form-item label="PITR 恢复端口"><el-input-number v-model="form.extra_config.pg_pitr_port" :min="1024" :max="65535" /></el-form-item>
-        <el-form-item label="自动启动恢复"><el-switch v-model="form.extra_config.pg_auto_start_recovery" /></el-form-item>
+        <template v-if="drawerPitrFields.length">
+          <el-form-item v-for="field in drawerPitrFields" :key="field.key" :label="field.label">
+            <el-input
+              v-if="field.kind === 'text'"
+              v-model="form.extra_config[field.key]"
+              :placeholder="field.placeholder"
+            />
+            <el-input-number
+              v-else-if="field.kind === 'number'"
+              v-model="form.extra_config[field.key]"
+              :min="field.min ?? 1024"
+              :max="field.max ?? 65535"
+              style="width: 100%"
+            />
+            <el-switch v-else-if="field.kind === 'switch'" v-model="form.extra_config[field.key]" />
+          </el-form-item>
+        </template>
+        <el-alert
+          v-else
+          type="info"
+          :closable="false"
+          show-icon
+          title="当前数据库类型无需配置 PITR 本地路径"
+          description="备份/恢复任务仍可按控制台与备份记录流程执行。"
+        />
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
@@ -526,13 +551,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { dbManagerProApi, type DBInstancePayload } from '@/api/db_manager_pro'
 import { useSystemStore } from '@/stores/system'
 import { useRouter } from 'vue-router'
 import MonacoSqlEditor from './components/MonacoSqlEditor.vue'
 import ExplainVisualizer from './components/ExplainVisualizer.vue'
+import { getDbTypePreset } from './dbInstanceTypePresets'
 
 const systemStore = useSystemStore()
 const router = useRouter()
@@ -563,6 +589,9 @@ const activeJob = ref<any>(null)
 const jobLogs = ref<any[]>([])
 const jobResult = ref<any>({ columns_json: [], rows_json: [] })
 const completionItems = ref<any[]>([])
+const portManuallyEdited = ref(false)
+const applyingPresetPort = ref(false)
+const flushingDrawerFromRow = ref(false)
 const diagnosticsReport = ref<any>(null)
 const policyDrawerVisible = ref(false)
 const accessDrawerVisible = ref(false)
@@ -670,6 +699,33 @@ const activeInstanceTitle = computed(() => {
   return `${selectedInstance.value.name} · ${selectedInstance.value.environment} · ${selectedInstance.value.db_type}`
 })
 
+const drawerDatabasePlaceholder = computed(() => getDbTypePreset(form.db_type).defaultDatabasePlaceholder)
+const drawerPitrFields = computed(() => getDbTypePreset(form.db_type).pitrFields)
+
+const editorLanguage = computed(() => getDbTypePreset(selectedInstance.value?.db_type).monacoLanguage)
+const editorExtraSnippets = computed(() => getDbTypePreset(selectedInstance.value?.db_type).editorSnippets)
+
+const mergedEditorSuggestions = computed(() => {
+  const preset = getDbTypePreset(selectedInstance.value?.db_type)
+  const seen = new Set<string>()
+  const out: any[] = []
+  for (const item of completionItems.value || []) {
+    const k = String(item.label || '').toLowerCase()
+    if (k && !seen.has(k)) {
+      seen.add(k)
+      out.push(item)
+    }
+  }
+  for (const item of preset.sqlCompletion) {
+    const k = item.label.toLowerCase()
+    if (!seen.has(k)) {
+      seen.add(k)
+      out.push(item)
+    }
+  }
+  return out
+})
+
 const canRun = computed(() => Boolean(selectedInstance.value?.id && workbench.sql.trim()))
 const autoExecuteModeText = computed(() => {
   const sql = workbench.sql.trim().toUpperCase()
@@ -679,6 +735,7 @@ const autoExecuteModeText = computed(() => {
 })
 
 const resetForm = () => {
+  portManuallyEdited.value = false
   Object.assign(form, {
     id: undefined,
     name: '',
@@ -703,6 +760,24 @@ const resetForm = () => {
   })
 }
 
+const onInstancePortUserChange = () => {
+  if (applyingPresetPort.value) return
+  portManuallyEdited.value = true
+}
+
+watch(
+  () => form.db_type,
+  () => {
+    if (flushingDrawerFromRow.value) return
+    if (portManuallyEdited.value) return
+    applyingPresetPort.value = true
+    form.port = getDbTypePreset(form.db_type).defaultPort
+    nextTick(() => {
+      applyingPresetPort.value = false
+    })
+  }
+)
+
 const openCreateDrawer = () => {
   drawerTitle.value = '新增实例'
   resetForm()
@@ -710,6 +785,7 @@ const openCreateDrawer = () => {
 }
 
 const editInstance = (row: any) => {
+  flushingDrawerFromRow.value = true
   drawerTitle.value = '编辑实例'
   resetForm()
   Object.assign(form, row, {
@@ -724,6 +800,9 @@ const editInstance = (row: any) => {
     }
   })
   drawerVisible.value = true
+  nextTick(() => {
+    flushingDrawerFromRow.value = false
+  })
 }
 
 const submitInstance = async () => {
@@ -818,6 +897,10 @@ const selectInstance = async (row: any) => {
   selectedInstanceId.value = row.id
   await loadDatabaseOptions(row.id)
   workbench.database = row.default_database || databaseOptions.value[0] || ''
+  const preset = getDbTypePreset(row.db_type)
+  if (!workbench.sql.trim()) {
+    workbench.sql = preset.defaultSql
+  }
   await loadCompletion()
   await runDiagnosticsAction()
 }

@@ -1,9 +1,21 @@
-# 本地/测试：MySQL + Mongo RS + Redis + RabbitMQ + Shark Platform
-# 在仓库根目录执行: docker compose -f infra/docker/docker-compose.yml up -d --build
-version: "3.8"
+# Shark Platform 本地编排
+#
+# 默认（仅 Web + SQLite 状态库，不测数据同步）：
+#   docker compose -f infra/docker/docker-compose.yml up -d --build
+#
+# 需要 MySQL / Mongo 副本集 / Redis / RabbitMQ 做同步或中间件联调时加 profile sync：
+#   docker compose -f infra/docker/docker-compose.yml --profile sync up -d --build
+#
+# 若希望应用等 MySQL 健康、Mongo 初始化完成后再启动，可同时带上依赖覆盖文件：
+#   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.sync-depends.yml --profile sync up -d --build
+#
+# 也可在仓库根目录 .env 中设置：COMPOSE_PROFILES=sync
+#
+version: "3.9"
 
 services:
   mysql_source:
+    profiles: ["sync"]
     image: mysql:8.0
     container_name: mysql_source
     ports:
@@ -23,6 +35,10 @@ services:
     restart: unless-stopped
 
   mongo1:
+    profiles: ["sync"]
+    depends_on:
+      mongo_key_init:
+        condition: service_completed_successfully
     image: mongo:latest
     container_name: mongo1
     ports:
@@ -38,6 +54,10 @@ services:
     restart: unless-stopped
 
   mongo2:
+    profiles: ["sync"]
+    depends_on:
+      mongo_key_init:
+        condition: service_completed_successfully
     image: mongo:latest
     container_name: mongo2
     ports:
@@ -53,6 +73,10 @@ services:
     restart: unless-stopped
 
   mongo3:
+    profiles: ["sync"]
+    depends_on:
+      mongo_key_init:
+        condition: service_completed_successfully
     image: mongo:latest
     container_name: mongo3
     ports:
@@ -68,6 +92,7 @@ services:
     restart: unless-stopped
 
   mongo_rs_init:
+    profiles: ["sync"]
     image: mongo:latest
     depends_on:
       - mongo1
@@ -101,6 +126,7 @@ services:
     restart: "no"
 
   mongo_key_init:
+    profiles: ["sync"]
     image: alpine:3.19
     entrypoint: >
       sh -c "
@@ -114,6 +140,7 @@ services:
     restart: "no"
 
   redis:
+    profiles: ["sync"]
     image: redis:latest
     container_name: redis_test
     ports:
@@ -124,6 +151,7 @@ services:
     restart: unless-stopped
 
   rabbitmq:
+    profiles: ["sync"]
     image: rabbitmq:3-management
     container_name: rabbitmq_test
     ports:
@@ -146,11 +174,6 @@ services:
     volumes:
       - ../../state:/app/state
       - ../../logs:/app/logs
-    depends_on:
-      mysql_source:
-        condition: service_healthy
-      mongo_rs_init:
-        condition: service_completed_successfully
     environment:
       - DEBUG=False
       - ALLOWED_HOSTS=*

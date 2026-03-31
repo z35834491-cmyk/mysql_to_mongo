@@ -178,11 +178,20 @@ flowchart TB
 
 ### 方式一：Docker Compose（本地/测试）
 
-在**仓库根目录**执行（MySQL 配置在 `infra/docker/mysql/`，无需再建 `mysql_conf`）：
+在**仓库根目录**执行：
 
 ```bash
+# 仅启动 Shark Platform（不测 MySQL→Mongo 同步时推荐，省资源）
 docker compose -f infra/docker/docker-compose.yml up -d --build
+
+# 同时启动 MySQL / Mongo 副本集 / Redis / RabbitMQ（数据同步或中间件联调）
+docker compose -f infra/docker/docker-compose.yml --profile sync up -d --build
+
+# 可选：应用等待 MySQL 健康与 Mongo RS 初始化后再起（需与 --profile sync 同用）
+docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.sync-depends.yml --profile sync up -d --build
 ```
+
+也可在 `.env` 中设置 `COMPOSE_PROFILES=sync` 后省略 `--profile sync`。MySQL 配置在 `infra/docker/mysql/`。
 
 访问 Web：`http://localhost:8000`（默认超级用户 `admin` / `admin`，由 [entrypoint.sh](./entrypoint.sh) 首次创建，**务必修改密码**）。
 

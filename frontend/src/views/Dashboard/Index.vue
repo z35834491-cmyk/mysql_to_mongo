@@ -1,13 +1,11 @@
 <template>
   <div class="traffic-page">
-    <canvas ref="particleCanvas" class="particles" aria-hidden="true" />
-
-    <header class="traffic-header glass-bar">
-      <div class="header-left">
-        <h1>Traffic Dashboard</h1>
-        <p class="tagline">Nginx access · Blackbox · GeoIP</p>
+    <div class="page-header">
+      <div class="header-info">
+        <h2 class="page-title">Traffic Dashboard</h2>
+        <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
       </div>
-      <div class="header-right">
+      <div class="header-actions">
         <el-radio-group v-model="range" size="small" class="range-group" @change="loadAll">
           <el-radio-button label="1h">1H</el-radio-button>
           <el-radio-button label="6h">6H</el-radio-button>
@@ -21,52 +19,60 @@
           <el-option :value="15" label="15s" />
           <el-option :value="30" label="30s" />
         </el-select>
-        <el-button :icon="Setting" circle size="small" @click="onOpenTrafficConfig" />
-        <el-button :icon="Refresh" circle size="small" :loading="loading" @click="loadAll" />
+        <div class="refresh-status">
+          <span class="refresh-dot" :class="{ active: pollSec > 0 }" />
+          <span>{{ refreshLabel }}</span>
+        </div>
+        <el-button :icon="Setting" size="small" class="toolbar-btn" @click="onOpenTrafficConfig">设置</el-button>
+        <el-button :icon="Refresh" size="small" type="primary" class="toolbar-btn shadow-btn" :loading="loading" @click="loadAll">刷新</el-button>
       </div>
-    </header>
+    </div>
 
     <el-tabs v-model="mainTab" class="main-tabs">
       <el-tab-pane label="流量趋势" name="trend">
-        <div v-if="!overview.log_configured" class="warn-banner glass">
+        <div v-if="!overview.log_configured" class="warn-banner page-panel">
           <el-icon><WarningFilled /></el-icon>
           <span>未配置 Nginx access 日志路径。请在设置中填写或通过环境变量 <code>TRAFFIC_NGINX_ACCESS_LOG</code> 指定。</span>
         </div>
 
         <div class="kpi-row">
-          <div v-for="card in kpiCards" :key="card.key" class="glass kpi-card">
-            <div class="kpi-label">{{ card.label }}</div>
-            <div class="kpi-value">{{ card.value }}</div>
-            <div class="kpi-src">{{ card.source }}</div>
-            <div :ref="(el) => setKpiRef(card.key, el)" class="kpi-spark" />
+          <div v-for="card in kpiCards" :key="card.key" class="page-panel kpi-card">
+            <div class="kpi-head">
+              <div>
+                <div class="kpi-label">{{ card.label }}</div>
+                <div class="kpi-value">{{ card.value }}</div>
+                <div class="kpi-src">{{ card.source }}</div>
+              </div>
+              <div :ref="(el) => setKpiRef(card.key, el)" class="kpi-spark" />
+            </div>
           </div>
         </div>
 
         <el-row :gutter="16" class="chart-row">
-          <el-col :xs="24" :lg="15">
-            <div class="glass chart-wrap">
+          <el-col :xs="24" :xl="16" :lg="15">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">QPS / 请求量</div>
               <div ref="chartQps" class="echart" />
             </div>
-            <div class="glass chart-wrap">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">P50 / P95 / P99 响应时间 (ms)</div>
               <div ref="chartLat" class="echart" />
             </div>
-            <div class="glass chart-wrap">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">状态码吞吐 (req/s)</div>
               <div ref="chartErr" class="echart" />
             </div>
           </el-col>
-          <el-col :xs="24" :lg="9">
-            <div class="glass chart-wrap globe-wrap">
-              <div class="chart-title">全球流量 (3D · echarts-gl)</div>
+          <el-col :xs="24" :xl="8" :lg="9">
+            <div class="page-panel chart-wrap globe-wrap">
+              <div class="chart-title">全球流量分布</div>
               <div ref="chartGlobe" class="echart globe" />
             </div>
-            <div class="glass chart-wrap">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">国家 / 地区分布</div>
               <div ref="chartMap" class="echart map-h" />
             </div>
-            <div class="glass chart-wrap">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">Top 国家请求量</div>
               <div ref="chartCountry" class="echart country-h" />
             </div>
@@ -75,13 +81,13 @@
 
         <el-row :gutter="16" class="bottom-row">
           <el-col :xs="24" :md="8">
-            <div class="glass chart-wrap">
+            <div class="page-panel chart-wrap">
               <div class="chart-title">状态码分布</div>
               <div ref="chartPie" class="echart pie-h" />
             </div>
           </el-col>
           <el-col :xs="24" :md="16">
-            <div class="glass chart-wrap table-wrap">
+            <div class="page-panel chart-wrap table-wrap">
               <div class="chart-title">Top 请求路径</div>
               <el-table :data="pathsRows" size="small" class="dark-table" max-height="280">
                 <el-table-column prop="path" label="Path" min-width="160" show-overflow-tooltip />
@@ -96,7 +102,7 @@
 
         <el-row :gutter="16">
           <el-col :span="24">
-            <div class="glass chart-wrap table-wrap">
+            <div class="page-panel chart-wrap table-wrap">
               <div class="chart-title">慢接口 Top · Top IP</div>
               <el-row :gutter="12">
                 <el-col :xs="24" :md="12">
@@ -128,8 +134,8 @@
           title="当前为模拟数据，后续接入 Jaeger Query API 替换。"
         />
         <el-row :gutter="16" class="flow-row">
-          <el-col :xs="24" :md="14">
-            <div class="glass flow-placeholder">
+          <el-col :xs="24" :lg="16" :md="14">
+            <div class="page-panel flow-placeholder">
               <div class="ph-title">服务依赖拓扑</div>
               <p class="ph-desc">将基于 Jaeger 依赖图 / service map 渲染。现展示占位骨架。</p>
               <div class="ph-grid">
@@ -141,8 +147,8 @@
               </div>
             </div>
           </el-col>
-          <el-col :xs="24" :md="10">
-            <div class="glass chart-wrap table-wrap">
+          <el-col :xs="24" :lg="8" :md="10">
+            <div class="page-panel chart-wrap table-wrap">
               <div class="chart-title">最近 Trace（模拟）</div>
               <el-table :data="traceRows" size="small" class="dark-table" max-height="360">
                 <el-table-column prop="trace_id" label="Trace ID" min-width="120" show-overflow-tooltip />
@@ -195,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import * as echarts from 'echarts'
 import { Refresh, Setting, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -203,23 +209,30 @@ import { trafficApi } from '@/api/traffic'
 
 echarts.registerTheme('shark-traffic', {
   backgroundColor: 'transparent',
+  color: ['#3b82f6', '#60a5fa', '#93c5fd', '#38bdf8', '#2563eb', '#0284c7'],
+  textStyle: {
+    color: '#475569',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
   categoryAxis: {
-    axisLine: { lineStyle: { color: 'rgba(0,191,255,0.25)' } },
-    axisLabel: { color: '#8FB8D9' },
-    splitLine: { lineStyle: { color: 'rgba(0,191,255,0.08)' } },
+    axisLine: { lineStyle: { color: '#cbd5e1' } },
+    axisTick: { show: false },
+    axisLabel: { color: '#64748b' },
+    splitLine: { show: false },
   },
   valueAxis: {
-    axisLine: { show: true, lineStyle: { color: 'rgba(0,191,255,0.25)' } },
-    axisLabel: { color: '#8FB8D9' },
-    splitLine: { lineStyle: { color: 'rgba(0,191,255,0.08)' } },
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { color: '#64748b' },
+    splitLine: { lineStyle: { color: 'rgba(203,213,225,0.55)' } },
   },
   timeAxis: {
-    axisLine: { lineStyle: { color: 'rgba(0,191,255,0.25)' } },
-    axisLabel: { color: '#8FB8D9' },
+    axisLine: { lineStyle: { color: '#cbd5e1' } },
+    axisTick: { show: false },
+    axisLabel: { color: '#64748b' },
   },
 })
 
-const particleCanvas = ref<HTMLCanvasElement | null>(null)
 const range = ref('24h')
 const pollSec = ref(5)
 const loading = ref(false)
@@ -263,8 +276,9 @@ const chartPie = ref<HTMLElement | null>(null)
 const kpiCharts: Record<string, echarts.ECharts | null> = {}
 const charts: Record<string, echarts.ECharts | null> = {}
 let pollId: ReturnType<typeof setInterval> | null = null
-let particleRaf = 0
 let glTried = false
+
+const refreshLabel = computed(() => (pollSec.value > 0 ? `${pollSec.value}s 自动刷新` : '手动刷新'))
 
 const kpiCards = ref([
   { key: 'total', label: '窗口内请求', value: '—', source: 'Nginx access · 聚合' },
@@ -294,10 +308,17 @@ function disposeAllMain() {
 function sparkOption(series: number[][], color: string) {
   const xs = series.map((_, i) => i)
   const ys = series.map((x) => x[1])
-  const top = color === '#00E5A8' ? 'rgba(0,229,168,0.35)' : 'rgba(0,191,255,0.35)'
+  const areaColorMap: Record<string, string> = {
+    'rgb(0,191,255)': 'rgba(0,191,255,0.12)',
+    'rgb(61,165,255)': 'rgba(61,165,255,0.12)',
+    'rgb(94,200,255)': 'rgba(94,200,255,0.12)',
+    'rgb(47,127,209)': 'rgba(47,127,209,0.12)',
+    'rgb(76,201,240)': 'rgba(76,201,240,0.12)',
+  }
   return {
     backgroundColor: 'transparent',
-    grid: { left: 2, right: 2, top: 4, bottom: 2 },
+    animationDuration: 280,
+    grid: { left: 2, right: 2, top: 2, bottom: 2 },
     xAxis: { type: 'category', show: false, data: xs },
     yAxis: { type: 'value', show: false, min: 'dataMin' },
     series: [
@@ -306,15 +327,48 @@ function sparkOption(series: number[][], color: string) {
         data: ys,
         smooth: true,
         symbol: 'none',
-        lineStyle: { width: 1.5, color, shadowBlur: 6, shadowColor: color },
+        lineStyle: { width: 2, color },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: top },
+            { offset: 0, color: areaColorMap[color] || 'rgba(0,191,255,0.12)' },
             { offset: 1, color: 'rgba(0,191,255,0)' },
           ]),
         },
       },
     ],
+  }
+}
+
+const axisTooltip = {
+  trigger: 'axis',
+  backgroundColor: 'rgba(15, 23, 42, 0.94)',
+  borderColor: '#cbd5e1',
+  borderWidth: 1,
+  textStyle: { color: '#f8fafc', fontSize: 12 },
+  extraCssText: 'box-shadow:none;border-radius:10px;padding:10px 12px;',
+}
+
+const itemTooltip = {
+  trigger: 'item',
+  backgroundColor: 'rgba(15, 23, 42, 0.94)',
+  borderColor: '#cbd5e1',
+  borderWidth: 1,
+  textStyle: { color: '#f8fafc', fontSize: 12 },
+  extraCssText: 'box-shadow:none;border-radius:10px;padding:10px 12px;',
+}
+
+function lineSeries(name: string, data: number[][], color: string, extra: Record<string, any> = {}) {
+  return {
+    name,
+    type: 'line',
+    smooth: true,
+    showSymbol: false,
+    symbol: 'none',
+    data,
+    lineStyle: { color, width: 2 },
+    emphasis: { focus: 'series' },
+    animationDuration: 320,
+    ...extra,
   }
 }
 
@@ -330,7 +384,7 @@ function updateKpiCharts() {
     err: e.length ? e : q,
     up: q,
   }
-  const colors = ['#00E5A8', '#00BFFF', '#A78BFA', '#FF6B6B', '#66FFFF']
+  const colors = ['rgb(59,130,246)', 'rgb(96,165,250)', 'rgb(147,197,253)', 'rgb(56,189,248)', 'rgb(37,99,235)']
   keys.forEach((key, i) => {
     const el = kpiRefs[key]
     if (!el) return
@@ -350,36 +404,29 @@ async function renderMainCharts() {
     const c = echarts.init(chartQps.value, 'shark-traffic')
     charts.qps = c
     c.setOption({
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: 'rgba(10,37,64,0.92)',
-        borderColor: 'rgba(0,191,255,0.45)',
-        textStyle: { color: '#E8F4FF' },
-      },
-      legend: { textStyle: { color: '#8FB8D9' }, data: ['QPS', 'Requests/min'] },
+      animationDuration: 320,
+      tooltip: axisTooltip,
+      legend: { top: 8, right: 12, textStyle: { color: '#64748b' }, data: ['QPS', 'Requests/min'] },
+      grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: [{ type: 'value', name: 'QPS' }, { type: 'value', name: 'Req', splitLine: { show: false } }],
       series: [
-        {
-          name: 'QPS',
-          type: 'line',
-          smooth: true,
-          showSymbol: false,
-          data: ts.qps || [],
-          lineStyle: { color: '#00BFFF', width: 2, shadowBlur: 10, shadowColor: 'rgba(0,191,255,0.4)' },
+        lineSeries('QPS', ts.qps || [], '#3b82f6', {
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(0,191,255,0.35)' },
-              { offset: 1, color: 'rgba(0,191,255,0.02)' },
+              { offset: 0, color: 'rgba(59,130,246,0.12)' },
+              { offset: 1, color: 'rgba(59,130,246,0.02)' },
             ]),
           },
-        },
+        }),
         {
           name: 'Requests/min',
           type: 'bar',
           yAxisIndex: 1,
+          barWidth: 10,
           data: (ts.requests || []).map((x: number[]) => [x[0], x[1] / Math.max((ts.bucket_sec || 60) / 60, 1)]),
-          itemStyle: { color: 'rgba(0,229,168,0.35)', borderRadius: [2, 2, 0, 0] },
+          itemStyle: { color: 'rgba(96,165,250,0.45)', borderRadius: [3, 3, 0, 0] },
+          animationDuration: 320,
         },
       ],
     })
@@ -390,23 +437,20 @@ async function renderMainCharts() {
     charts.lat = c
     const lat = ts.latency || {}
     c.setOption({
+      animationDuration: 320,
       tooltip: {
-        trigger: 'axis',
+        ...axisTooltip,
         valueFormatter: (v: number) => `${v} ms`,
-        backgroundColor: 'rgba(10,37,64,0.92)',
-        borderColor: 'rgba(0,191,255,0.45)',
       },
-      legend: { textStyle: { color: '#8FB8D9' } },
+      legend: { top: 8, right: 12, textStyle: { color: '#64748b' } },
+      grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: { type: 'value', name: 'ms' },
-      color: ['#00BFFF', '#00E5A8', '#A78BFA'],
-      series: ['p50', 'p95', 'p99'].map((name) => ({
-        name: name.toUpperCase(),
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data: lat[name] || [],
-      })),
+      series: [
+        lineSeries('P50', lat.p50 || [], '#93c5fd'),
+        lineSeries('P95', lat.p95 || [], '#60a5fa'),
+        lineSeries('P99', lat.p99 || [], '#3b82f6'),
+      ],
     })
   }
 
@@ -415,14 +459,16 @@ async function renderMainCharts() {
     charts.err = c
     const st = ts.status_stack || {}
     c.setOption({
-      tooltip: { trigger: 'axis', backgroundColor: 'rgba(10,37,64,0.92)', borderColor: 'rgba(0,191,255,0.45)' },
-      legend: { textStyle: { color: '#8FB8D9' } },
+      animationDuration: 320,
+      tooltip: axisTooltip,
+      legend: { top: 8, right: 12, textStyle: { color: '#64748b' } },
+      grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: { type: 'value' },
       series: [
-        { name: '2xx', type: 'line', stack: 's', areaStyle: { opacity: 0.35 }, lineStyle: { width: 0 }, itemStyle: { color: '#00E5A8' }, data: st['2xx'] || [] },
-        { name: '4xx', type: 'line', stack: 's', areaStyle: { opacity: 0.4 }, lineStyle: { width: 0 }, itemStyle: { color: '#FBBF24' }, data: st['4xx'] || [] },
-        { name: '5xx', type: 'line', stack: 's', areaStyle: { opacity: 0.45 }, lineStyle: { width: 0 }, itemStyle: { color: '#FF6B6B' }, data: st['5xx'] || [] },
+        { name: '2xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(147,197,253,0.18)' }, lineStyle: { width: 0, color: '#93c5fd' }, data: st['2xx'] || [] },
+        { name: '4xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(96,165,250,0.18)' }, lineStyle: { width: 0, color: '#60a5fa' }, data: st['4xx'] || [] },
+        { name: '5xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(59,130,246,0.22)' }, lineStyle: { width: 0, color: '#3b82f6' }, data: st['5xx'] || [] },
       ],
     })
   }
@@ -432,9 +478,11 @@ async function renderMainCharts() {
     charts.country = c
     const items = [...geoItems.value].sort((a, b) => b.requests - a.requests).slice(0, 10)
     c.setOption({
-      grid: { left: 88, right: 16, top: 8, bottom: 8 },
-      xAxis: { type: 'value', axisLabel: { color: '#8FB8D9' }, splitLine: { lineStyle: { color: 'rgba(0,191,255,0.08)' } } },
-      yAxis: { type: 'category', data: items.map((i) => i.name || i.code).reverse(), axisLabel: { color: '#E8F4FF' } },
+      animationDuration: 320,
+      tooltip: itemTooltip,
+      grid: { left: 92, right: 16, top: 12, bottom: 12 },
+      xAxis: { type: 'value' },
+      yAxis: { type: 'category', data: items.map((i) => i.name || i.code).reverse(), axisLabel: { color: '#475569' } },
       series: [
         {
           type: 'bar',
@@ -443,8 +491,8 @@ async function renderMainCharts() {
           itemStyle: {
             borderRadius: [0, 6, 6, 0],
             color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-              { offset: 0, color: 'rgba(0,191,255,0.2)' },
-              { offset: 1, color: '#00BFFF' },
+              { offset: 0, color: 'rgba(96,165,250,0.24)' },
+              { offset: 1, color: '#3b82f6' },
             ]),
           },
         },
@@ -456,13 +504,17 @@ async function renderMainCharts() {
     const c = echarts.init(chartPie.value, 'shark-traffic')
     charts.pie = c
     c.setOption({
-      tooltip: { trigger: 'item', backgroundColor: 'rgba(10,37,64,0.92)', borderColor: 'rgba(0,191,255,0.45)' },
+      animationDuration: 320,
+      tooltip: itemTooltip,
+      legend: { bottom: 8, textStyle: { color: '#64748b', fontSize: 12 } },
       series: [
         {
           type: 'pie',
-          radius: ['42%', '68%'],
-          itemStyle: { borderRadius: 6, borderColor: '#0a1628', borderWidth: 2 },
-          label: { color: '#E8F4FF' },
+          radius: ['52%', '74%'],
+          center: ['50%', '44%'],
+          itemStyle: { borderRadius: 4, borderColor: '#ffffff', borderWidth: 2 },
+          label: { color: '#475569', fontSize: 12 },
+          labelLine: { lineStyle: { color: '#94a3b8' } },
           data: statusPie.value.length ? statusPie.value : [{ name: '无数据', value: 1 }],
         },
       ],
@@ -485,20 +537,22 @@ async function initGlobeAndMap() {
         .filter((g) => g.lat && g.lng && g.requests > 0)
         .map((g) => [g.lng, g.lat, g.requests])
       c.setOption({
+        animationDuration: 320,
         globe: {
           baseTexture:
             'https://echarts.apache.org/examples/data-gl/asset/world.topo.bathy.200401.jpg',
           shading: 'lambert',
-          light: { ambient: { intensity: 0.6 }, main: { intensity: 0.15 } },
-          viewControl: { autoRotate: true, autoRotateSpeed: 3, distance: 150 },
+          environment: '#f8fafc',
+          light: { ambient: { intensity: 0.95 }, main: { intensity: 0.2 } },
+          viewControl: { autoRotate: false, distance: 160, alpha: 24, beta: 160 },
+          itemStyle: { color: '#dbeafe', borderColor: '#cbd5e1', borderWidth: 0.5 },
         },
         series: [
           {
             type: 'scatter3D',
             coordinateSystem: 'globe',
-            blendMode: 'lighter',
-            symbolSize: (val: number[]) => Math.min(26, 5 + Math.log1p(val[2]) * 3),
-            itemStyle: { color: '#00BFFF', opacity: 0.9 },
+            symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
+            itemStyle: { color: '#3b82f6', opacity: 0.82 },
             data: scatter,
           },
         ],
@@ -508,7 +562,7 @@ async function initGlobeAndMap() {
         const c = echarts.init(chartGlobe.value, 'shark-traffic')
         charts.globe = c
         c.setOption({
-          title: { text: 'echarts-gl 未加载', left: 'center', top: 'center', textStyle: { color: '#8FB8D9', fontSize: 12 } },
+          title: { text: 'echarts-gl 未加载', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
         })
       }
     }
@@ -527,10 +581,9 @@ async function initGlobeAndMap() {
       }
       const data = geoItems.value.map((g) => [g.lng, g.lat, g.requests, g.name || g.code])
       c.setOption({
+        animationDuration: 320,
         tooltip: {
-          trigger: 'item',
-          backgroundColor: 'rgba(10,37,64,0.92)',
-          borderColor: 'rgba(0,191,255,0.45)',
+          ...itemTooltip,
           formatter: (p: any) => {
             const v = p.value as number[]
             const n = v?.[2]
@@ -541,31 +594,31 @@ async function initGlobeAndMap() {
         geo: {
           map: 'world',
           roam: true,
-          itemStyle: { areaColor: 'rgba(10,37,64,0.92)', borderColor: 'rgba(0,191,255,0.35)' },
-          emphasis: { itemStyle: { areaColor: 'rgba(0,191,255,0.25)' } },
+          itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1', borderWidth: 0.8 },
+          emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { color: '#1e293b' } },
         },
         visualMap: {
           min: 0,
           max: Math.max(...geoItems.value.map((g) => g.requests), 1),
-          calculable: true,
-          inRange: { color: ['#0A2540', '#0066CC', '#00BFFF'] },
-          textStyle: { color: '#8FB8D9' },
+          calculable: false,
+          inRange: { color: ['#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6'] },
+          textStyle: { color: '#64748b' },
           left: 8,
-          bottom: 24,
+          bottom: 20,
         },
         series: [
           {
             type: 'scatter',
             coordinateSystem: 'geo',
             data,
-            symbolSize: (val: number[]) => Math.min(28, 6 + Math.sqrt((val[2] as number) || 0)),
-            itemStyle: { color: '#00BFFF', shadowBlur: 10, shadowColor: 'rgba(0,191,255,0.5)' },
+            symbolSize: (val: number[]) => Math.min(18, 5 + Math.sqrt((val[2] as number) || 0)),
+            itemStyle: { color: '#3b82f6', opacity: 0.85 },
           },
         ],
       })
     } catch {
       c.setOption({
-        title: { text: '地图数据加载失败', left: 'center', top: 'center', textStyle: { color: '#8FB8D9', fontSize: 12 } },
+        title: { text: '地图数据加载失败', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
       })
     }
   }
@@ -658,47 +711,9 @@ function setupPoll() {
 
 watch(pollSec, setupPoll)
 
-function particles() {
-  const c = particleCanvas.value
-  if (!c) return
-  const ctx = c.getContext('2d')
-  if (!ctx) return
-  const dpr = window.devicePixelRatio || 1
-  const w = (c.width = c.offsetWidth * dpr)
-  const h = (c.height = c.offsetHeight * dpr)
-  c.style.width = `${c.offsetWidth}px`
-  c.style.height = `${c.offsetHeight}px`
-  const dots = Array.from({ length: 48 }, () => ({
-    x: Math.random() * w,
-    y: Math.random() * h,
-    r: Math.random() * 1.5 + 0.3,
-    vx: (Math.random() - 0.5) * 0.25,
-    vy: (Math.random() - 0.5) * 0.25,
-    a: Math.random() * 0.5 + 0.15,
-  }))
-  const tick = () => {
-    ctx.clearRect(0, 0, w, h)
-    dots.forEach((d) => {
-      d.x += d.vx * dpr
-      d.y += d.vy * dpr
-      if (d.x < 0) d.x = w
-      if (d.x > w) d.x = 0
-      if (d.y < 0) d.y = h
-      if (d.y > h) d.y = 0
-      ctx.beginPath()
-      ctx.fillStyle = `rgba(0,191,255,${d.a})`
-      ctx.arc(d.x, d.y, d.r * dpr, 0, Math.PI * 2)
-      ctx.fill()
-    })
-    particleRaf = requestAnimationFrame(tick)
-  }
-  tick()
-}
-
 onMounted(() => {
   loadAll()
   setupPoll()
-  nextTick(() => particles())
   window.addEventListener('resize', onResize)
 })
 
@@ -709,7 +724,6 @@ function onResize() {
 
 onUnmounted(() => {
   if (pollId) clearInterval(pollId)
-  cancelAnimationFrame(particleRaf)
   disposeAllMain()
   window.removeEventListener('resize', onResize)
 })
@@ -717,25 +731,12 @@ onUnmounted(() => {
 
 <style scoped>
 .traffic-page {
-  min-height: calc(100vh - 80px);
-  position: relative;
-  padding: 16px 20px 32px;
-  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(0, 191, 255, 0.12), transparent),
-    linear-gradient(180deg, #050810 0%, #0a1628 45%, #050810 100%);
-  color: #e8f4ff;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.particles {
-  position: fixed;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.55;
-}
-
-.traffic-header,
+.page-header,
 .main-tabs,
 .kpi-row,
 .chart-row,
@@ -745,161 +746,198 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-.glass-bar {
+.page-panel {
+  background: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 12px;
+  box-shadow: none;
+}
+.page-panel:hover {
+  border-color: #e2e8f0;
+}
+
+.page-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 20px;
-  margin-bottom: 16px;
-  border-radius: 14px;
-  background: rgba(10, 37, 64, 0.45);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(0, 191, 255, 0.28);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  gap: 16px;
 }
 
-.header-left h1 {
+.page-title {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
-  background: linear-gradient(90deg, #fff, #00bfff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #1e293b;
 }
-.tagline {
+.page-subtitle {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: #64748b;
 }
-.header-right {
+.header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+.refresh-status {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+}
+.refresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #94a3b8;
+}
+.refresh-dot.active {
+  background: #3b82f6;
+  animation: dashboardPulse 1.6s ease-in-out infinite;
+}
+.toolbar-btn {
+  border-radius: 8px;
+}
+.shadow-btn {
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+.poll-select :deep(.el-input__wrapper) {
+  background: #ffffff;
+  box-shadow: none;
+  border: 1px solid #dbe2ea;
+  color: #334155;
+}
 .range-group :deep(.el-radio-button__inner) {
-  background: rgba(0, 191, 255, 0.08);
-  border-color: rgba(0, 191, 255, 0.25);
-  color: #8fb8d9;
+  background: #ffffff;
+  border-color: #dbe2ea;
+  color: #64748b;
+  box-shadow: none;
 }
 .range-group :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: linear-gradient(90deg, #00bfff, #0088cc);
+  background: #3b82f6;
+  border-color: #3b82f6;
   color: #fff;
-  box-shadow: 0 0 12px rgba(0, 191, 255, 0.45);
 }
 
 .main-tabs :deep(.el-tabs__header) {
   margin-bottom: 16px;
 }
+.main-tabs :deep(.el-tabs__nav-wrap::after) {
+  background: #e2e8f0;
+}
 .main-tabs :deep(.el-tabs__item) {
-  color: #8fb8d9;
+  color: #64748b;
   font-weight: 600;
 }
 .main-tabs :deep(.el-tabs__item.is-active) {
-  color: #00bfff;
+  color: #3b82f6;
 }
 .main-tabs :deep(.el-tabs__active-bar) {
-  background: linear-gradient(90deg, #00bfff, transparent);
-  height: 3px;
+  background: #3b82f6;
+  height: 2px;
 }
 
 .warn-banner {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   margin-bottom: 14px;
-  border-radius: 10px;
   font-size: 13px;
-  color: #fcd34d;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.08);
+  color: #b45309;
+  border-color: #fcd34d;
+  background: #fffbeb;
 }
 .warn-banner code {
   font-size: 11px;
-  color: #fde68a;
-}
-
-.glass {
-  background: rgba(10, 37, 64, 0.42);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 191, 255, 0.22);
-  border-radius: 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.glass:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 36px rgba(0, 191, 255, 0.12);
+  color: #92400e;
 }
 
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
+  gap: 16px;
   margin-bottom: 16px;
 }
-@media (max-width: 1200px) {
+@media (max-width: 1439px) {
   .kpi-row {
     grid-template-columns: repeat(3, 1fr);
   }
 }
-@media (max-width: 768px) {
+@media (max-width: 1023px) {
   .kpi-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 767px) {
+  .kpi-row {
+    grid-template-columns: 1fr;
   }
 }
 .kpi-card {
-  padding: 12px 14px 8px;
-  min-height: 118px;
+  padding: 14px 16px;
+  min-height: 132px;
+}
+.kpi-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 .kpi-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  line-height: 16px;
   color: #64748b;
 }
 .kpi-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #00bfff;
-  margin: 4px 0;
-  text-shadow: 0 0 20px rgba(0, 191, 255, 0.35);
+  margin: 10px 0 8px;
+  color: #3b82f6;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 .kpi-src {
-  font-size: 10px;
-  color: #475569;
-  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: #94a3b8;
 }
 .kpi-spark {
-  height: 36px;
-  width: 100%;
+  width: 88px;
+  height: 40px;
+  flex-shrink: 0;
 }
 
 .chart-wrap {
-  padding: 12px 14px 8px;
+  padding: 12px 14px 10px;
   margin-bottom: 16px;
 }
 .chart-title {
-  font-size: 13px;
+  margin-bottom: 10px;
+  color: #475569;
+  font-size: 14px;
   font-weight: 600;
-  color: #94a3b8;
-  margin-bottom: 6px;
 }
 .echart {
   width: 100%;
   height: 260px;
 }
 .globe-wrap .globe {
-  height: 300px;
+  height: 280px;
 }
 .map-h {
   height: 260px;
 }
 .country-h {
-  height: 220px;
+  height: 240px;
 }
 .pie-h {
   height: 280px;
@@ -907,17 +945,22 @@ onUnmounted(() => {
 
 .jaeger-alert {
   margin-bottom: 16px;
-  background: rgba(0, 191, 255, 0.08);
-  border: 1px solid rgba(0, 191, 255, 0.25);
+}
+.jaeger-alert :deep(.el-alert__content) {
+  color: #475569;
+}
+.jaeger-alert :deep(.el-alert) {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
 }
 .flow-placeholder {
   padding: 24px;
   min-height: 360px;
 }
 .ph-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #00bfff;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
   margin-bottom: 8px;
 }
 .ph-desc {
@@ -934,36 +977,71 @@ onUnmounted(() => {
 }
 .ph-node {
   padding: 16px 24px;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 191, 255, 0.45);
-  color: #00bfff;
-  box-shadow: 0 0 16px rgba(0, 191, 255, 0.15);
+  border-radius: 10px;
+  border: 1px solid #dbe2ea;
+  background: #f8fafc;
+  color: #334155;
   font-weight: 600;
 }
 .ph-node.dim {
-  opacity: 0.55;
+  opacity: 0.72;
 }
 .ph-edge {
   width: 40px;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #00bfff, transparent);
+  background: linear-gradient(90deg, transparent, #60a5fa, transparent);
 }
 
 .dark-table {
-  --el-table-bg-color: transparent;
-  --el-table-tr-bg-color: rgba(0, 191, 255, 0.04);
-  --el-table-header-bg-color: rgba(0, 191, 255, 0.1);
-  --el-table-text-color: #e8f4ff;
-  --el-table-border-color: rgba(0, 191, 255, 0.15);
+  --el-table-bg-color: #ffffff;
+  --el-table-tr-bg-color: #ffffff;
+  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-text-color: #334155;
+  --el-table-header-text-color: #64748b;
+  --el-table-border-color: #f1f5f9;
+}
+.dark-table :deep(.el-table__inner-wrapper::before) {
+  background-color: #f1f5f9;
+}
+.dark-table :deep(th.el-table__cell),
+.dark-table :deep(td.el-table__cell) {
+  background: transparent;
+}
+@keyframes dashboardPulse {
+  0%, 100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 </style>
 
 <style>
 .traffic-dialog .el-dialog {
-  background: #0a1628;
-  border: 1px solid rgba(0, 191, 255, 0.3);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: none;
 }
 .traffic-dialog .el-dialog__title {
-  color: #e8f4ff;
+  color: #1e293b;
+}
+.traffic-dialog .el-form-item__label,
+.traffic-dialog .el-input__inner,
+.traffic-dialog .el-select__placeholder,
+.traffic-dialog .el-dialog__body {
+  color: #475569;
+}
+.traffic-dialog .el-input__wrapper,
+.traffic-dialog .el-select__wrapper,
+.traffic-dialog .el-textarea__inner {
+  background: #ffffff;
+  box-shadow: none;
+}
+.traffic-dialog .el-textarea__inner,
+.traffic-dialog .el-input__wrapper,
+.traffic-dialog .el-select__wrapper {
+  border: 1px solid #dbe2ea;
 }
 </style>

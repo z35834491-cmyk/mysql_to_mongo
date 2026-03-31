@@ -4,7 +4,9 @@
 
 | 路径 | 说明 |
 |------|------|
-| [docker/docker-compose.yml](./docker/docker-compose.yml) | 本地全栈。在**仓库根目录**执行：`docker compose -f infra/docker/docker-compose.yml up -d --build` |
+| [docker/docker-compose.yml](./docker/docker-compose.yml) | 本地编排。**默认只起应用**（SQLite 状态库）。加 `--profile sync` 再起 MySQL / Mongo 副本集 / Redis / RabbitMQ |
+| [docker/docker-compose.sync-depends.yml](./docker/docker-compose.sync-depends.yml) | 可选：与 `sync` profile 联用，让应用等待 MySQL 与 Mongo 初始化完成 |
+| [docker/.env.example](./docker/.env.example) | `COMPOSE_PROFILES=sync` 示例 |
 | [docker/mysql/](./docker/mysql/) | MySQL `my.cnf` 与可选 `init/` SQL |
 | [kubernetes/](./kubernetes/) | 示例 Deployment / Service / ConfigMap+Secret / PVC |
 

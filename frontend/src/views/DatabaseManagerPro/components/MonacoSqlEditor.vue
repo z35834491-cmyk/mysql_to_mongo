@@ -8,13 +8,17 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import loader from '@monaco-editor/loader'
 
+type EditorSnippet = { label: string; insertText: string; detail?: string }
+
 const props = withDefaults(defineProps<{
   modelValue: string
   language?: string
   suggestions?: Array<{ label: string; detail?: string; schema?: string; table?: string; column?: string }>
+  extraSnippets?: EditorSnippet[]
 }>(), {
   language: 'sql',
-  suggestions: () => []
+  suggestions: () => [],
+  extraSnippets: () => []
 })
 
 const emit = defineEmits<{
@@ -30,16 +34,29 @@ let hoverDisposable: any = null
 let changeDisposable: any = null
 let resizeObserver: ResizeObserver | null = null
 
-const snippets = [
+const defaultSqlSnippets: EditorSnippet[] = [
   { label: 'SELECT 模板', insertText: 'SELECT ${1:*}\\nFROM ${2:table_name}\\nWHERE ${3:condition};', detail: '基础查询模板' },
   { label: 'UPDATE 模板', insertText: 'UPDATE ${1:table_name}\\nSET ${2:column} = ${3:value}\\nWHERE ${4:id} = ${5:1};', detail: '更新模板' },
   { label: 'DELETE 模板', insertText: 'DELETE FROM ${1:table_name}\\nWHERE ${2:id} = ${3:1};', detail: '删除模板' }
 ]
 
+const activeSnippets = () => {
+  const lang = props.language || 'sql'
+  const base = ['sql', 'mysql', 'pgsql'].includes(lang) ? defaultSqlSnippets : []
+  return [...base, ...props.extraSnippets]
+}
+
+const isSqlLikeLanguage = () => ['sql', 'mysql', 'pgsql'].includes(props.language || 'sql')
+
 const applyMarkers = () => {
   if (!monacoRef || !editor) return
   const model = editor.getModel()
-  const value = model?.getValue() || ''
+  if (!model) return
+  if (!isSqlLikeLanguage()) {
+    monacoRef.editor.setModelMarkers(model, 'sql-guard', [])
+    return
+  }
+  const value = model.getValue() || ''
   const markers: any[] = []
   const openCount = (value.match(/\(/g) || []).length
   const closeCount = (value.match(/\)/g) || []).length
@@ -68,11 +85,12 @@ const applyMarkers = () => {
 
 const registerCompletion = () => {
   if (!monacoRef) return
+  const lang = props.language || 'sql'
   if (providerDisposable) {
     providerDisposable.dispose()
   }
-  providerDisposable = monacoRef.languages.registerCompletionItemProvider('sql', {
-    triggerCharacters: ['.', ' ', '_'],
+  providerDisposable = monacoRef.languages.registerCompletionItemProvider(lang, {
+    triggerCharacters: ['.', ' ', '_', '$', '{'],
     provideCompletionItems(model: any, position: any) {
       const word = model.getWordUntilPosition(position)
       const range = {
@@ -91,7 +109,7 @@ const registerCompletion = () => {
             documentation: item.detail || '',
             range
           })),
-          ...snippets.map((item) => ({
+          ...activeSnippets().map((item) => ({
             label: item.label,
             kind: monacoRef.languages.CompletionItemKind.Snippet,
             insertText: item.insertText,
@@ -106,7 +124,7 @@ const registerCompletion = () => {
   if (hoverDisposable) {
     hoverDisposable.dispose()
   }
-  hoverDisposable = monacoRef.languages.registerHoverProvider('sql', {
+  hoverDisposable = monacoRef.languages.registerHoverProvider(lang, {
     provideHover(model: any, position: any) {
       const word = model.getWordAtPosition(position)
       if (!word) return null
@@ -163,6 +181,20 @@ watch(() => props.modelValue, (value) => {
 watch(() => props.suggestions, () => {
   registerCompletion()
 }, { deep: true })
+
+watch(() => props.extraSnippets, () => {
+  registerCompletion()
+}, { deep: true })
+
+watch(() => props.language, (lang) => {
+  if (!monacoRef || !editor) return
+  const model = editor.getModel()
+  if (model) {
+    monacoRef.editor.setModelLanguage(model, lang)
+  }
+  registerCompletion()
+  applyMarkers()
+})
 
 onBeforeUnmount(() => {
   if (changeDisposable) changeDisposable.dispose()
