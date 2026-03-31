@@ -10,9 +10,14 @@ export type TrafficLogSourceRow = {
 export const trafficApi = {
   sources: () => request.get('/traffic/sources') as Promise<{ items: { id: string; label: string }[] }>,
   /** 一次拉齐大盘数据，长超时；替代多路 overview/timeseries/geo/top 并行 */
-  snapshot: (range: string, source?: string) =>
+  snapshot: (range: string, source?: string, opts?: { start?: string; end?: string }) =>
     request.get('/traffic/snapshot', {
-      params: { range, ...(source ? { source } : {}) },
+      params: {
+        range,
+        ...(source ? { source } : {}),
+        ...(opts?.start ? { start: opts.start } : {}),
+        ...(opts?.end ? { end: opts.end } : {}),
+      },
       timeout: 120000,
     }) as Promise<Record<string, unknown>>,
   overview: (range: string, source?: string) =>

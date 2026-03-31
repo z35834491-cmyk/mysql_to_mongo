@@ -20,6 +20,17 @@ def is_configured() -> bool:
     return bool(redis_url())
 
 
+def traffic_redis_client():
+    """Shared Redis client for traffic features (ingest buffer, rollup buffer). None if not configured."""
+    if not is_configured():
+        return None
+    try:
+        return _client()
+    except Exception as e:
+        logger.warning("traffic_redis_client: %s", e)
+        return None
+
+
 def _client():
     import redis
 

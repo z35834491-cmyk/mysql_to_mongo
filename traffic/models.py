@@ -91,3 +91,45 @@ class TrafficDashboardConfig(models.Model):
 
     def __str__(self):
         return "Traffic Dashboard Config"
+
+
+class TrafficMinuteRollup(models.Model):
+    """
+    Per-minute aggregates persisted from ingest (Redis buffer → flush job).
+    Enables arbitrary time-range charts without re-scanning the full raw log tail.
+    """
+
+    bucket_start = models.DateTimeField(
+        db_index=True,
+        help_text="UTC minute start (inclusive).",
+    )
+    source_id = models.CharField(
+        max_length=64,
+        db_index=True,
+        default="",
+        blank=True,
+        help_text="Matches ingest ?source= / X-Traffic-Source; empty = default.",
+    )
+    requests = models.PositiveIntegerField(default=0)
+    sum_latency_ms = models.PositiveBigIntegerField(default=0)
+    count_latency = models.PositiveIntegerField(default=0)
+    status_2xx = models.PositiveIntegerField(default=0)
+    status_4xx = models.PositiveIntegerField(default=0)
+    status_5xx = models.PositiveIntegerField(default=0)
+    p50_ms = models.FloatField(null=True, blank=True)
+    p95_ms = models.FloatField(null=True, blank=True)
+    p99_ms = models.FloatField(null=True, blank=True)
+    geo_counts = models.JSONField(default=dict, blank=True)
+    top_paths = models.JSONField(default=list, blank=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["bucket_start", "source_id"]
+        unique_together = [("bucket_start", "source_id")]
+        indexes = [
+            models.Index(fields=["bucket_start", "source_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.bucket_start.isoformat()} {self.source_id!r} n={self.requests}"

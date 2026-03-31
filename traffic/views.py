@@ -1,5 +1,8 @@
 import os
-from typing import Tuple
+from datetime import datetime, timedelta, timezone as dt_timezone
+from typing import Optional, Tuple
+
+from django.utils.dateparse import parse_datetime
 
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -22,7 +25,11 @@ from .services.log_sources import (
     redis_key_for_ingest,
     sources_for_api,
 )
+from .services.nginx_log import records_from_lines
+from .services.geoip_lookup import enrich_records
 from .services.redis_log_buffer import is_configured as redis_buffer_configured, push_raw_lines
+from .services.rollup_buffer import rollup_enabled, rollup_ingest_append
+from .services.rollup_query import build_rollups_snapshot
 
 
 def _access_log_mode(cfg: TrafficDashboardConfig) -> str:
@@ -67,6 +74,35 @@ def _load_enriched(source_id: str = ""):
 
 def _query_source(request) -> str:
     return (request.GET.get("source") or "").strip()
+
+
+def _parse_custom_time_bounds(request) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Optional ?start=&end= ISO-8601 (UTC or offset). Used for historical charts from TrafficMinuteRollup.
+    Max span 90 days. End must not be more than 5 minutes in the future.
+    """
+    start_s = (request.GET.get("start") or "").strip()
+    end_s = (request.GET.get("end") or "").strip()
+    if not start_s or not end_s:
+        return None, None
+    start = parse_datetime(start_s)
+    end = parse_datetime(end_s)
+    if not start or not end:
+        return None, None
+    from django.utils import timezone as dj_tz
+
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=dt_timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=dt_timezone.utc)
+    now = dj_tz.now()
+    if end > now + timedelta(minutes=5):
+        end = now + timedelta(minutes=5)
+    if end <= start:
+        return None, None
+    if (end - start) > timedelta(days=90):
+        return None, None
+    return start, end
 
 
 @api_view(["GET"])
@@ -118,9 +154,16 @@ def traffic_top(request):
 def traffic_snapshot(request):
     """
     一次返回大盘所需数据，只解析 / GeoIP 一遍，避免 7 路并行把 Redis 与 CPU 打满导致 503/超时。
+    可选 ?start=&end= ISO8601：从持久化分钟聚合表读取任意区间（需开启 TRAFFIC_ROLLUP_ENABLED 并完成 ingest + traffic_rollup_flush）。
     """
-    range_key = request.GET.get("range", "24h")
     source = _query_source(request)
+    start, end = _parse_custom_time_bounds(request)
+    if start is not None and end is not None:
+        cfg = TrafficDashboardConfig.load()
+        inspection = InspectionConfig.load()
+        return Response(build_rollups_snapshot(start, end, source, cfg, inspection))
+
+    range_key = request.GET.get("range", "24h")
     cfg, recs = _load_enriched(source)
     inspection = InspectionConfig.load()
     ov = overview_kpis(recs, range_key)
@@ -311,4 +354,11 @@ def traffic_ingest(request):
     )
     key = redis_key_for_ingest(cfg, ingest_source)
     n = push_raw_lines(lines, key, _redis_cap(cfg))
+    if rollup_enabled() and n > 0:
+        try:
+            recs = records_from_lines(lines, cfg.log_format)
+            enrich_records(recs, cfg.geoip_db_path)
+            rollup_ingest_append(recs, ingest_source or "")
+        except Exception:
+            pass
     return Response({"accepted": n, "truncated": truncated})

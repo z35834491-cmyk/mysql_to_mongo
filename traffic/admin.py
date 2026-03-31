@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import TrafficDashboardConfig
+from .models import TrafficDashboardConfig, TrafficMinuteRollup
 
 
 @admin.register(TrafficDashboardConfig)
@@ -31,3 +31,29 @@ class TrafficDashboardConfigAdmin(admin.ModelAdmin):
         "updated_at",
     )
     readonly_fields = ("updated_at",)
+
+
+@admin.register(TrafficMinuteRollup)
+class TrafficMinuteRollupAdmin(admin.ModelAdmin):
+    list_display = ("bucket_start", "source_id", "requests", "updated_at")
+    list_filter = ("source_id",)
+    ordering = ("-bucket_start",)
+    readonly_fields = (
+        "bucket_start",
+        "source_id",
+        "requests",
+        "sum_latency_ms",
+        "count_latency",
+        "status_2xx",
+        "status_4xx",
+        "status_5xx",
+        "p50_ms",
+        "p95_ms",
+        "p99_ms",
+        "geo_counts",
+        "top_paths",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False

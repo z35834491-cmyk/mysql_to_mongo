@@ -4,15 +4,32 @@
       <div class="header-info">
         <h2 class="page-title">Traffic Dashboard</h2>
         <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
+        <p v-if="overview.rollup" class="rollup-hint">
+          自定义时间范围：数据来自已落库的分钟聚合；慢接口与 Top IP 依赖原始日志扫描，此模式下为空。需环境变量
+          <code>TRAFFIC_ROLLUP_ENABLED=1</code>，并定时执行 <code>python manage.py traffic_rollup_flush</code>。
+        </p>
       </div>
       <div class="header-actions">
-        <el-radio-group v-model="range" size="small" class="range-group" @change="() => loadAll(false)">
+        <el-radio-group v-model="range" size="small" class="range-group" @change="onRangePresetChange">
           <el-radio-button label="1h">1H</el-radio-button>
           <el-radio-button label="6h">6H</el-radio-button>
           <el-radio-button label="24h">24H</el-radio-button>
           <el-radio-button label="7d">7D</el-radio-button>
           <el-radio-button label="30d">30D</el-radio-button>
+          <el-radio-button label="custom">自定义</el-radio-button>
         </el-radio-group>
+        <el-date-picker
+          v-if="range === 'custom'"
+          v-model="customTimeRange"
+          type="datetimerange"
+          range-separator="—"
+          start-placeholder="开始"
+          end-placeholder="结束"
+          size="small"
+          class="custom-range-picker"
+          :shortcuts="customRangeShortcuts"
+          @change="onCustomRangePicked"
+        />
         <el-select
           v-model="trafficSource"
           size="small"
@@ -357,6 +374,23 @@ echarts.registerTheme('shark-traffic', {
 })
 
 const range = ref('24h')
+const customTimeRange = ref<[Date, Date] | null>(null)
+const customRangeShortcuts = [
+  {
+    text: '最近 24 小时',
+    value: () => {
+      const e = new Date()
+      return [new Date(e.getTime() - 86400000), e] as [Date, Date]
+    },
+  },
+  {
+    text: '最近 7 天',
+    value: () => {
+      const e = new Date()
+      return [new Date(e.getTime() - 7 * 86400000), e] as [Date, Date]
+    },
+  },
+]
 const pollSec = ref(5)
 const loading = ref(false)
 const softRefreshing = ref(false)
@@ -1131,14 +1165,35 @@ function traceTableRowClass({ row }: { row: any }) {
   return 'traffic-trow'
 }
 
+function onRangePresetChange() {
+  if (range.value === 'custom' && !customTimeRange.value) {
+    const e = new Date()
+    customTimeRange.value = [new Date(e.getTime() - 86400000), e]
+  }
+  void loadAll(false)
+}
+
+function onCustomRangePicked() {
+  if (range.value === 'custom') void loadAll(false)
+}
+
 async function loadAll(silent = false) {
   if (!silent) loading.value = true
   else softRefreshing.value = true
   try {
     const r = range.value
     const src = currentSourceParam()
+    const snapParams =
+      r === 'custom' && customTimeRange.value && customTimeRange.value.length === 2
+        ? {
+            start: customTimeRange.value[0].toISOString(),
+            end: customTimeRange.value[1].toISOString(),
+          }
+        : undefined
     const [snap, tr] = await Promise.all([
-      trafficApi.snapshot(r, src) as Promise<any>,
+      (snapParams
+        ? trafficApi.snapshot('24h', src, snapParams)
+        : trafficApi.snapshot(r, src)) as Promise<any>,
       trafficApi.jaegerTraces() as Promise<any>,
     ])
     const ov = snap.overview || {}
@@ -1282,6 +1337,28 @@ onUnmounted(() => {
   margin: 4px 0 0;
   font-size: 14px;
   color: #64748b;
+}
+.rollup-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+  max-width: 720px;
+}
+.rollup-hint code {
+  font-size: 11px;
+  padding: 1px 4px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 4px;
+}
+.custom-range-picker {
+  width: 320px;
+  margin-left: 4px;
+}
+.custom-range-picker :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  box-shadow: none;
+  border: 1px solid #dbe2ea;
 }
 .header-actions {
   display: flex;
