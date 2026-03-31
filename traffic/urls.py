@@ -14,4 +14,5 @@ urlpatterns = [
         name="traffic_jaeger_traces_mock",
     ),
     path("traffic/config", views.traffic_dashboard_config, name="traffic_dashboard_config"),
+    path("traffic/ingest", views.traffic_ingest, name="traffic_ingest"),
 ]

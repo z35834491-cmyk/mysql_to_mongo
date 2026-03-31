@@ -150,13 +150,17 @@ def normalize_json_record(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def load_records(
-    access_path: str, log_format: str, max_tail_bytes: int
-) -> List[Dict[str, Any]]:
-    lines = read_log_tail(access_path, max_tail_bytes)
+def records_from_lines(lines: List[str], log_format: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for ln in lines:
         rec = parse_log_line(ln, log_format)
         if rec:
             out.append(rec)
     return out
+
+
+def load_records(
+    access_path: str, log_format: str, max_tail_bytes: int
+) -> List[Dict[str, Any]]:
+    lines = read_log_tail(access_path, max_tail_bytes)
+    return records_from_lines(lines, log_format)

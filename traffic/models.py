@@ -4,11 +4,24 @@ from django.db import models
 class TrafficDashboardConfig(models.Model):
     """Singleton (pk=1): Nginx log paths, GeoIP, Prometheus for Blackbox."""
 
+    ACCESS_LOG_MODE_FILE = "file"
+    ACCESS_LOG_MODE_REDIS = "redis"
+    ACCESS_LOG_MODE_CHOICES = [
+        (ACCESS_LOG_MODE_FILE, "Local file (pod / shared volume)"),
+        (ACCESS_LOG_MODE_REDIS, "Remote ingest → Redis buffer (separate Nginx host)"),
+    ]
+
     enabled = models.BooleanField(default=True)
+    access_log_mode = models.CharField(
+        max_length=16,
+        default=ACCESS_LOG_MODE_FILE,
+        choices=ACCESS_LOG_MODE_CHOICES,
+        help_text="file = read access_log_path on Shark; redis = read lines pushed via POST /api/traffic/ingest (needs TRAFFIC_REDIS_URL).",
+    )
     access_log_path = models.CharField(
         max_length=1024,
         blank=True,
-        help_text="Nginx access log file path (JSON or combined). Empty = env TRAFFIC_NGINX_ACCESS_LOG.",
+        help_text="Nginx access log file path (JSON or combined). Empty = env TRAFFIC_NGINX_ACCESS_LOG. Used when access_log_mode=file.",
     )
     error_log_path = models.CharField(
         max_length=1024,
@@ -22,12 +35,22 @@ class TrafficDashboardConfig(models.Model):
     )
     max_tail_bytes = models.PositiveIntegerField(
         default=5_242_880,
-        help_text="Max bytes read from end of access log per request.",
+        help_text="Max bytes read from end of access log per request (file mode only).",
+    )
+    redis_log_key = models.CharField(
+        max_length=256,
+        default="traffic:access:lines",
+        blank=True,
+        help_text="Redis list key for buffered access log lines (redis mode).",
+    )
+    redis_max_lines = models.PositiveIntegerField(
+        default=200_000,
+        help_text="Max lines kept in Redis list (RPUSH + LTRIM keeps the most recent N lines).",
     )
     geoip_db_path = models.CharField(
         max_length=1024,
         blank=True,
-        help_text="MaxMind GeoLite2-City.mmdb or GeoIP2-City.mmdb. Empty = env TRAFFIC_GEOIP_DB or no GeoIP.",
+        help_text="MaxMind GeoIP2 / GeoLite2 City database path (.mmdb). Empty = env TRAFFIC_GEOIP_DB or no GeoIP.",
     )
     use_inspection_prometheus = models.BooleanField(
         default=True,

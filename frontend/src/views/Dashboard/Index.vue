@@ -162,25 +162,50 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="configOpen" title="Traffic 数据源配置" width="560px" class="traffic-dialog">
-      <el-form :model="cfgForm" label-width="140px">
+    <el-dialog v-model="configOpen" title="Traffic 数据源配置" width="640px" class="traffic-dialog">
+      <el-form :model="cfgForm" label-width="150px">
         <el-form-item label="启用采集">
           <el-switch v-model="cfgForm.enabled" />
         </el-form-item>
-        <el-form-item label="Access log 路径">
+        <el-form-item label="采集模式">
+          <el-select v-model="cfgForm.access_log_mode" style="width: 100%">
+            <el-option label="本地文件（Pod/共享卷）" value="file" />
+            <el-option label="远程推送 → Redis（独立 Nginx）" value="redis" />
+          </el-select>
+          <div v-if="cfgForm.access_log_mode === 'redis'" class="form-hint">
+            K8s 内设置环境变量 <code>TRAFFIC_REDIS_URL</code>；Nginx 侧用 cron/filebeat 等向
+            <code>POST /api/traffic/ingest</code> 推送 NDJSON（Bearer <code>TRAFFIC_INGEST_TOKEN</code>）。Redis 已连通：
+            <el-tag :type="cfgForm.redis_env_configured ? 'success' : 'danger'" size="small" class="ml-6">
+              {{ cfgForm.redis_env_configured ? '已配置' : '未配置 URL' }}
+            </el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="cfgForm.access_log_mode === 'file'" label="Access log 路径">
           <el-input v-model="cfgForm.access_log_path" placeholder="/var/log/nginx/access.json.log" />
         </el-form-item>
+        <template v-if="cfgForm.access_log_mode === 'redis'">
+          <el-form-item label="Redis List Key">
+            <el-input v-model="cfgForm.redis_log_key" placeholder="traffic:access:lines" />
+          </el-form-item>
+          <el-form-item label="Redis 最大行数">
+            <el-input-number v-model="cfgForm.redis_max_lines" :min="5000" :max="2000000" style="width: 100%" />
+          </el-form-item>
+        </template>
         <el-form-item label="日志格式">
           <el-select v-model="cfgForm.log_format">
             <el-option label="JSON 行" value="json" />
             <el-option label="Combined" value="combined" />
           </el-select>
         </el-form-item>
-        <el-form-item label="尾部读取字节">
+        <el-form-item v-if="cfgForm.access_log_mode === 'file'" label="尾部读取字节">
           <el-input-number v-model="cfgForm.max_tail_bytes" :min="65536" :max="52428800" />
         </el-form-item>
-        <el-form-item label="GeoIP mmdb">
-          <el-input v-model="cfgForm.geoip_db_path" placeholder="/usr/share/GeoIP/GeoLite2-City.mmdb" />
+        <el-form-item label="MaxMind mmdb">
+          <el-input
+            v-model="cfgForm.geoip_db_path"
+            placeholder="/usr/share/GeoIP/GeoLite2-City.mmdb 或 GeoIP2-City.mmdb"
+          />
+          <div class="form-hint">MaxMind GeoIP2 / GeoLite2 城市库；可与环境变量 TRAFFIC_GEOIP_DB 二选一（后台优先）。</div>
         </el-form-item>
         <el-form-item label="使用巡检 Prometheus">
           <el-switch v-model="cfgForm.use_inspection_prometheus" />
@@ -250,10 +275,14 @@ const traceRows = ref<any[]>([])
 
 const cfgForm = reactive({
   enabled: true,
+  access_log_mode: 'file' as 'file' | 'redis',
   access_log_path: '',
   error_log_path: '',
   log_format: 'json',
   max_tail_bytes: 5242880,
+  redis_log_key: 'traffic:access:lines',
+  redis_max_lines: 200000,
+  redis_env_configured: false,
   geoip_db_path: '',
   use_inspection_prometheus: true,
   prometheus_url_override: '',
@@ -281,11 +310,11 @@ let glTried = false
 const refreshLabel = computed(() => (pollSec.value > 0 ? `${pollSec.value}s 自动刷新` : '手动刷新'))
 
 const kpiCards = ref([
-  { key: 'total', label: '窗口内请求', value: '—', source: 'Nginx access · 聚合' },
-  { key: 'qps', label: 'QPS (近60s)', value: '—', source: 'Nginx access' },
-  { key: 'lat', label: '平均响应', value: '—', source: 'request_time' },
-  { key: 'err', label: '错误率', value: '—', source: '4xx+5xx' },
-  { key: 'up', label: '可用性', value: '—', source: 'Blackbox / 日志' },
+  { key: 'total', label: '窗口内请求', value: '—', source: '' },
+  { key: 'qps', label: 'QPS (近60s)', value: '—', source: '' },
+  { key: 'lat', label: '平均响应', value: '—', source: '' },
+  { key: 'err', label: '错误率', value: '—', source: '' },
+  { key: 'up', label: '可用性', value: '—', source: '' },
 ])
 
 function disposeChart(c?: echarts.ECharts | null) {
@@ -406,7 +435,7 @@ async function renderMainCharts() {
     c.setOption({
       animationDuration: 320,
       tooltip: axisTooltip,
-      legend: { top: 8, right: 12, textStyle: { color: '#64748b' }, data: ['QPS', 'Requests/min'] },
+      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' }, data: ['QPS', 'Requests/min'] },
       grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: [{ type: 'value', name: 'QPS' }, { type: 'value', name: 'Req', splitLine: { show: false } }],
@@ -442,7 +471,7 @@ async function renderMainCharts() {
         ...axisTooltip,
         valueFormatter: (v: number) => `${v} ms`,
       },
-      legend: { top: 8, right: 12, textStyle: { color: '#64748b' } },
+      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
       grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: { type: 'value', name: 'ms' },
@@ -461,7 +490,7 @@ async function renderMainCharts() {
     c.setOption({
       animationDuration: 320,
       tooltip: axisTooltip,
-      legend: { top: 8, right: 12, textStyle: { color: '#64748b' } },
+      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
       grid: { left: 48, right: 20, top: 48, bottom: 28 },
       xAxis: { type: 'time' },
       yAxis: { type: 'value' },
@@ -506,7 +535,7 @@ async function renderMainCharts() {
     c.setOption({
       animationDuration: 320,
       tooltip: itemTooltip,
-      legend: { bottom: 8, textStyle: { color: '#64748b', fontSize: 12 } },
+      legend: { bottom: 8, left: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
       series: [
         {
           type: 'pie',
@@ -627,15 +656,15 @@ async function initGlobeAndMap() {
 function updateKpiText() {
   const o = overview.value || {}
   kpiCards.value = [
-    { key: 'total', label: '窗口内请求', value: fmtNum(o.total_requests), source: 'Nginx access · 聚合' },
-    { key: 'qps', label: 'QPS (近60s)', value: fmtNum(o.qps), source: 'Nginx access' },
-    { key: 'lat', label: '平均响应', value: `${o.latency_avg_ms ?? 0} ms`, source: 'request_time' },
-    { key: 'err', label: '错误率', value: `${o.error_rate_pct ?? 0}%`, source: '4xx+5xx' },
+    { key: 'total', label: '窗口内请求', value: fmtNum(o.total_requests), source: '' },
+    { key: 'qps', label: 'QPS (近60s)', value: fmtNum(o.qps), source: '' },
+    { key: 'lat', label: '平均响应', value: `${o.latency_avg_ms ?? 0} ms`, source: '' },
+    { key: 'err', label: '错误率', value: `${o.error_rate_pct ?? 0}%`, source: '' },
     {
       key: 'up',
       label: '可用性',
       value: o.availability_pct != null ? `${o.availability_pct}%` : '—',
-      source: 'Blackbox Exporter',
+      source: '',
     },
   ]
 }
@@ -1043,5 +1072,21 @@ onUnmounted(() => {
 .traffic-dialog .el-input__wrapper,
 .traffic-dialog .el-select__wrapper {
   border: 1px solid #dbe2ea;
+}
+.traffic-dialog .form-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.traffic-dialog .form-hint code {
+  font-size: 11px;
+  padding: 1px 4px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 4px;
+}
+.traffic-dialog .ml-6 {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 </style>
