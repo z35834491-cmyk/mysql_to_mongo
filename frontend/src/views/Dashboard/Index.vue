@@ -45,6 +45,10 @@
           <el-icon><WarningFilled /></el-icon>
           <span>未配置 Nginx access 日志路径。请在设置中填写或通过环境变量 <code>TRAFFIC_NGINX_ACCESS_LOG</code> 指定。</span>
         </div>
+        <div v-if="trafficSampleHint" class="warn-banner page-panel hint-truncate">
+          <el-icon><WarningFilled /></el-icon>
+          <span>{{ trafficSampleHint }}</span>
+        </div>
 
         <div class="kpi-row">
           <div v-for="card in kpiCards" :key="card.key" class="page-panel kpi-card">
@@ -80,7 +84,7 @@
               <div ref="chartGlobe" class="echart globe" />
             </div>
             <div class="page-panel chart-wrap">
-              <div class="chart-title">国家 / 地区分布</div>
+              <div class="chart-title">国家 / 地区热力</div>
               <div ref="chartMap" class="echart map-h" />
             </div>
             <div class="page-panel chart-wrap">
@@ -360,6 +364,9 @@ const kpiCharts: Record<string, echarts.ECharts | null> = {}
 const charts: Record<string, echarts.ECharts | null> = {}
 let pollId: ReturnType<typeof setInterval> | null = null
 let glTried = false
+let globeScheduleTimer: ReturnType<typeof setTimeout> | null = null
+
+const trafficSampleHint = ref('')
 
 const refreshLabel = computed(() => (pollSec.value > 0 ? `${pollSec.value}s 自动刷新` : '手动刷新'))
 
@@ -383,6 +390,10 @@ function disposeChart(c?: echarts.ECharts | null) {
 }
 
 function disposeAllMain() {
+  if (globeScheduleTimer != null) {
+    clearTimeout(globeScheduleTimer)
+    globeScheduleTimer = null
+  }
   Object.keys(charts).forEach((k) => {
     disposeChart(charts[k])
     charts[k] = null
@@ -633,111 +644,120 @@ async function renderMainCharts() {
     })
   }
 
-  await initGlobeAndMap()
+  await initMapChart()
+  globeScheduleTimer = window.setTimeout(() => {
+    globeScheduleTimer = null
+    void initGlobeChart()
+  }, 120)
 }
 
-async function initGlobeAndMap() {
-  if (chartGlobe.value && !charts.globe) {
-    try {
-      if (!glTried) {
-        await import('echarts-gl')
-        glTried = true
-      }
+async function initGlobeChart() {
+  if (!chartGlobe.value || charts.globe) return
+  try {
+    if (!glTried) {
+      await import('echarts-gl')
+      glTried = true
+    }
+    const c = echarts.init(chartGlobe.value, 'shark-traffic')
+    charts.globe = c
+    const scatter = geoItems.value
+      .filter((g) => g.lat && g.lng && g.requests > 0)
+      .map((g) => [g.lng, g.lat, g.requests])
+    c.setOption({
+      animationDuration: 320,
+      globe: {
+        baseTexture: trafficMapAsset('traffic-maps/globe-texture.jpg'),
+        shading: 'lambert',
+        environment: '#f8fafc',
+        light: { ambient: { intensity: 0.95 }, main: { intensity: 0.2 } },
+        viewControl: { autoRotate: false, distance: 160, alpha: 24, beta: 160 },
+        itemStyle: { color: '#dbeafe', borderColor: '#cbd5e1', borderWidth: 0.5 },
+      },
+      series: [
+        {
+          type: 'scatter3D',
+          coordinateSystem: 'globe',
+          symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
+          itemStyle: { color: '#3b82f6', opacity: 0.82 },
+          data: scatter,
+        },
+      ],
+    })
+  } catch {
+    if (chartGlobe.value) {
       const c = echarts.init(chartGlobe.value, 'shark-traffic')
       charts.globe = c
-      const scatter = geoItems.value
-        .filter((g) => g.lat && g.lng && g.requests > 0)
-        .map((g) => [g.lng, g.lat, g.requests])
       c.setOption({
-        animationDuration: 320,
-        globe: {
-          baseTexture: trafficMapAsset('traffic-maps/globe-texture.jpg'),
-          shading: 'lambert',
-          environment: '#f8fafc',
-          light: { ambient: { intensity: 0.95 }, main: { intensity: 0.2 } },
-          viewControl: { autoRotate: false, distance: 160, alpha: 24, beta: 160 },
-          itemStyle: { color: '#dbeafe', borderColor: '#cbd5e1', borderWidth: 0.5 },
-        },
-        series: [
-          {
-            type: 'scatter3D',
-            coordinateSystem: 'globe',
-            symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
-            itemStyle: { color: '#3b82f6', opacity: 0.82 },
-            data: scatter,
-          },
-        ],
+        title: { text: 'echarts-gl 未加载', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
       })
-    } catch {
-      if (chartGlobe.value) {
-        const c = echarts.init(chartGlobe.value, 'shark-traffic')
-        charts.globe = c
-        c.setOption({
-          title: { text: 'echarts-gl 未加载', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
-        })
-      }
     }
   }
+}
 
-  if (chartMap.value && !charts.map) {
-    const c = echarts.init(chartMap.value, 'shark-traffic')
-    charts.map = c
+async function initMapChart() {
+  if (!chartMap.value || charts.map) return
+  const c = echarts.init(chartMap.value, 'shark-traffic')
+  charts.map = c
+  try {
+    const worldJson = await loadWorldGeoJson()
     try {
-      const worldJson = await loadWorldGeoJson()
-      try {
-        echarts.registerMap('world', worldJson as any)
-      } catch {
-        /* already registered */
-      }
-      const data = geoItems.value.map((g) => [g.lng, g.lat, g.requests, g.name || g.code])
-      const reqVals = geoItems.value.map((g) => Number(g.requests) || 0)
-      const vmax = reqVals.length ? Math.max(1, ...reqVals) : 1
-      c.setOption({
-        animationDuration: 320,
-        tooltip: {
-          ...itemTooltip,
-          formatter: (p: any) => {
-            const v = p.value as number[]
-            const n = v?.[2]
-            const name = v?.[3] || p.name || ''
-            return `${name}<br/>请求: ${n ?? '-'}`
-          },
-        },
-        geo: {
-          map: 'world',
-          roam: true,
-          itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1', borderWidth: 0.8 },
-          emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { color: '#1e293b' } },
-        },
-        visualMap: {
-          min: 0,
-          max: vmax,
-          calculable: false,
-          inRange: { color: ['#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6'] },
-          textStyle: { color: '#64748b' },
-          left: 8,
-          bottom: 20,
-        },
-        series: [
-          {
-            type: 'scatter',
-            coordinateSystem: 'geo',
-            data,
-            symbolSize: (val: number[]) => Math.min(18, 5 + Math.sqrt((val[2] as number) || 0)),
-            itemStyle: { color: '#3b82f6', opacity: 0.85 },
-          },
-        ],
-      })
+      echarts.registerMap('world', worldJson as any)
     } catch {
-      c.setOption({
-        title: {
-          text: '地图数据加载失败（请确认已部署 frontend/public/traffic-maps/world.json）',
-          left: 'center',
-          top: 'center',
-          textStyle: { color: '#64748b', fontSize: 11 },
-        },
-      })
+      /* already registered */
     }
+    const heatData = geoItems.value
+      .filter((g) => g.lat && g.lng && g.requests > 0)
+      .map((g) => [g.lng, g.lat, g.requests])
+    const reqVals = geoItems.value.map((g) => Number(g.requests) || 0)
+    const vmax = reqVals.length ? Math.max(1, ...reqVals) : 1
+    c.setOption({
+      animationDuration: 320,
+      tooltip: {
+        ...itemTooltip,
+        formatter: (p: any) => {
+          const v = p.value as number[]
+          if (Array.isArray(v) && v.length >= 3) {
+            return `经度 ${v[0]?.toFixed?.(2) ?? v[0]} 纬度 ${v[1]?.toFixed?.(2) ?? v[1]}<br/>请求量: ${v[2]}`
+          }
+          return `${p.name || ''}<br/>${p.value ?? ''}`
+        },
+      },
+      geo: {
+        map: 'world',
+        roam: true,
+        itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1', borderWidth: 0.8 },
+        emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { color: '#1e293b' } },
+      },
+      visualMap: {
+        min: 0,
+        max: vmax,
+        calculable: true,
+        inRange: { color: ['#0c4a6e', '#0369a1', '#0ea5e9', '#38bdf8', '#fbbf24', '#f97316'] },
+        textStyle: { color: '#64748b' },
+        left: 8,
+        bottom: 20,
+      },
+      series: [
+        {
+          name: '请求热度',
+          type: 'heatmap',
+          coordinateSystem: 'geo',
+          data: heatData,
+          pointSize: 12,
+          blurSize: 18,
+          emphasis: { itemStyle: { shadowBlur: 12 } },
+        } as any,
+      ],
+    })
+  } catch {
+    c.setOption({
+      title: {
+        text: '地图数据加载失败（请确认已部署 frontend/public/traffic-maps/world.json）',
+        left: 'center',
+        top: 'center',
+        textStyle: { color: '#64748b', fontSize: 11 },
+      },
+    })
   }
 }
 
@@ -797,27 +817,27 @@ function removeLogSource(index: number) {
 
 async function loadAll() {
   loading.value = true
+  trafficSampleHint.value = ''
   try {
     const r = range.value
     const src = currentSourceParam()
-    const [ov, ts, geo, paths, slow, status, ip, tr] = await Promise.all([
-      trafficApi.overview(r, src) as Promise<any>,
-      trafficApi.timeseries(r, src) as Promise<any>,
-      trafficApi.geo(r, 'country', '', src) as Promise<any>,
-      trafficApi.top(r, 'paths', 10, src) as Promise<any>,
-      trafficApi.top(r, 'slow', 10, src) as Promise<any>,
-      trafficApi.top(r, 'status', 20, src) as Promise<any>,
-      trafficApi.top(r, 'ip', 10, src) as Promise<any>,
+    const [snap, tr] = await Promise.all([
+      trafficApi.snapshot(r, src) as Promise<any>,
       trafficApi.jaegerTraces() as Promise<any>,
     ])
+    const ov = snap.overview || {}
     overview.value = ov
-    timeseries.value = ts
-    geoItems.value = geo.items || []
-    pathsRows.value = paths.items || []
-    slowRows.value = slow.items || []
-    ipRows.value = ip.items || []
-    statusPie.value = status.items || []
+    timeseries.value = snap.timeseries || {}
+    geoItems.value = (snap.geo && snap.geo.items) || []
+    pathsRows.value = (snap.top_paths && snap.top_paths.items) || []
+    slowRows.value = (snap.top_slow && snap.top_slow.items) || []
+    statusPie.value = (snap.top_status && snap.top_status.items) || []
+    ipRows.value = (snap.top_ip && snap.top_ip.items) || []
     traceRows.value = tr.traces || []
+    const meta = snap.meta
+    if (meta && meta.sample_may_be_truncated) {
+      trafficSampleHint.value = `为降低超时与 503，当前统计仅使用最近约 ${meta.dashboard_line_cap} 条日志；可调环境变量 TRAFFIC_DASHBOARD_MAX_LINES（或缩短时间范围）。`
+    }
     updateKpiText()
     await nextTick()
     disposeAllMain()
@@ -924,6 +944,15 @@ onUnmounted(() => {
 }
 .page-panel:hover {
   border-color: #e2e8f0;
+}
+
+.hint-truncate {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+.hint-truncate .el-icon {
+  color: #d97706;
 }
 
 .page-header {

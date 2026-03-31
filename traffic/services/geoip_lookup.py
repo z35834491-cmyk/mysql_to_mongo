@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import Dict, Optional
+from functools import lru_cache
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def _get_reader(path: str):
         return None
 
 
-def lookup_ip(ip: str, geoip_db_path: str) -> Dict[str, Optional[str]]:
+def _lookup_ip_uncached(ip: str, resolved_mmdb_path: str) -> Dict[str, Optional[str]]:
     """Return country_code, country_name, subdivision, lat, lng hints."""
     result = {
         "country_code": None,
@@ -63,8 +64,7 @@ def lookup_ip(ip: str, geoip_db_path: str) -> Dict[str, Optional[str]]:
                 return result
         except ValueError:
             pass
-    path = _geoip_path(geoip_db_path)
-    reader = _get_reader(path)
+    reader = _get_reader(resolved_mmdb_path)
     if reader is None:
         result["country_code"] = "??"
         result["country_name"] = "Unknown"
@@ -84,6 +84,36 @@ def lookup_ip(ip: str, geoip_db_path: str) -> Dict[str, Optional[str]]:
         result["country_code"] = "??"
         result["country_name"] = "Unknown"
     return result
+
+
+@lru_cache(maxsize=100_000)
+def _lookup_ip_cached_tuple(ip: str, resolved_mmdb_path: str) -> Tuple[
+    Optional[str],
+    Optional[str],
+    Optional[str],
+    Optional[float],
+    Optional[float],
+]:
+    d = _lookup_ip_uncached(ip, resolved_mmdb_path)
+    return (
+        d["country_code"],
+        d["country_name"],
+        d["subdivision"],
+        d["lat"],
+        d["lng"],
+    )
+
+
+def lookup_ip(ip: str, geoip_db_path: str) -> Dict[str, Optional[str]]:
+    resolved = (_geoip_path(geoip_db_path) or "").strip()
+    cc, cn, sd, la, ln = _lookup_ip_cached_tuple((ip or "").strip(), resolved)
+    return {
+        "country_code": cc,
+        "country_name": cn,
+        "subdivision": sd,
+        "lat": la,
+        "lng": ln,
+    }
 
 
 def enrich_records(records, geoip_db_path: str):

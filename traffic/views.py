@@ -1,4 +1,5 @@
 import os
+from typing import Tuple
 
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -37,11 +38,29 @@ def _redis_cap(cfg: TrafficDashboardConfig) -> int:
     return max(1_000, min(n, 2_000_000))
 
 
+def _dashboard_fetch_limits() -> Tuple[int, int]:
+    """UI 拉取上限：减轻多接口重复读 Redis / 大文件与 GeoIP 压力（ingest 不受影响）。"""
+    try:
+        rl = int(os.environ.get("TRAFFIC_DASHBOARD_MAX_LINES", "35000"))
+    except ValueError:
+        rl = 35000
+    rl = max(5000, min(rl, 500_000))
+    try:
+        tb = int(os.environ.get("TRAFFIC_DASHBOARD_MAX_TAIL_BYTES", str(4 * 1024 * 1024)))
+    except ValueError:
+        tb = 4 * 1024 * 1024
+    tb = max(262_144, min(tb, 52_428_800))
+    return rl, tb
+
+
 def _load_enriched(source_id: str = ""):
     cfg = TrafficDashboardConfig.load()
     if not cfg.enabled:
         return cfg, []
-    recs = load_raw_records(cfg, source_id)
+    rl, tb = _dashboard_fetch_limits()
+    recs = load_raw_records(
+        cfg, source_id, redis_line_cap=rl, max_tail_bytes_override=tb
+    )
     enrich_records(recs, cfg.geoip_db_path)
     return cfg, recs
 
@@ -92,6 +111,43 @@ def traffic_top(request):
     limit = int(request.GET.get("limit", "10"))
     _, recs = _load_enriched(_query_source(request))
     return Response(top_lists(recs, range_key, top_type, limit))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def traffic_snapshot(request):
+    """
+    一次返回大盘所需数据，只解析 / GeoIP 一遍，避免 7 路并行把 Redis 与 CPU 打满导致 503/超时。
+    """
+    range_key = request.GET.get("range", "24h")
+    source = _query_source(request)
+    cfg, recs = _load_enriched(source)
+    inspection = InspectionConfig.load()
+    rl, _tb = _dashboard_fetch_limits()
+    ov = overview_kpis(recs, range_key)
+    bb = fetch_blackbox_summary(cfg, inspection)
+    ov["blackbox"] = bb
+    if bb.get("availability_pct") is not None:
+        ov["availability_pct"] = bb["availability_pct"]
+    ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
+    ov["access_log_mode"] = _access_log_mode(cfg)
+    capped = _access_log_mode(cfg) == "redis" and len(recs) >= rl
+    return Response(
+        {
+            "overview": ov,
+            "timeseries": aggregate_timeseries(recs, range_key),
+            "geo": geo_aggregate(recs, range_key, "country", ""),
+            "top_paths": top_lists(recs, range_key, "paths", 10),
+            "top_slow": top_lists(recs, range_key, "slow", 10),
+            "top_status": top_lists(recs, range_key, "status", 20),
+            "top_ip": top_lists(recs, range_key, "ip", 10),
+            "meta": {
+                "records_used": len(recs),
+                "dashboard_line_cap": rl,
+                "sample_may_be_truncated": capped,
+            },
+        }
+    )
 
 
 @api_view(["GET"])

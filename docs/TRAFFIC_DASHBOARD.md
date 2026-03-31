@@ -57,6 +57,8 @@ npm run build
 | `TRAFFIC_REDIS_URL` | Redis 连接串，如 `redis://redis.traffic.svc.cluster.local:6379/1`。建议**独立 logical DB**，避免与 Celery 等混用。未设置时 Redis 模式不可用。 |
 | `TRAFFIC_INGEST_TOKEN` | `POST /api/traffic/ingest` 的 Bearer 密钥；**未设置则接入接口返回 503**。 |
 | `TRAFFIC_INGEST_MAX_BODY_LINES` | 可选，单次请求最大行数（默认 `20000`，上限 `100000`）。 |
+| `TRAFFIC_DASHBOARD_MAX_LINES` | **Redis 模式**：Traffic 大盘单次从 List 尾部最多读取行数（默认 `35000`），减轻并行请求导致的超时/503；ingest 仍受 `redis_max_lines` 限制。 |
+| `TRAFFIC_DASHBOARD_MAX_TAIL_BYTES` | **文件模式**：单次尾部读取字节上限（默认 `4MB`），与后台 `max_tail_bytes` 取较小值。 |
 | `REDIS_URL` | 若未设 `TRAFFIC_REDIS_URL`，会回退读取（兼容其他组件）。 |
 
 示例（文件模式 + GeoIP）：
@@ -194,6 +196,7 @@ access_log /var/log/nginx/access.json.log access_json;
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
+| GET | `/api/traffic/snapshot?range=24h&source=all` | 登录 | **推荐**：一次返回 `overview` / `timeseries` / `geo` / `top_*` / `meta`，只读 Redis·解析·GeoIP 一遍，避免多接口并行打满服务 |
 | GET | `/api/traffic/overview?range=24h` | 登录 | KPI + spark + Blackbox；`log_configured` 在 file/redis 就绪时为 true |
 | GET | `/api/traffic/timeseries?range=24h` | 登录 | QPS、请求量、延迟、状态码 |
 | GET | `/api/traffic/geo?range=24h&granularity=country` | 登录 | 国家；`granularity=province&country=CN` 省份 |
@@ -216,8 +219,10 @@ access_log /var/log/nginx/access.json.log access_json;
 
 ## 10. 性能与限制（当前实现）
 
+- **大盘接口**：前端默认走 **`/api/traffic/snapshot`**；单请求超时可在前端设为 120s。旧版多路 `overview`+`timeseries`+… 并行时，易重复拉 Redis、重复 GeoIP，易触发 **网关 503/超时**。
+- **抽样上限**：环境变量 **`TRAFFIC_DASHBOARD_MAX_LINES`**（默认 35000）、**`TRAFFIC_DASHBOARD_MAX_TAIL_BYTES`**（默认 4MB）限制**展示用**读取量；**ingest** 仍写入完整 `redis_max_lines`。
 - **文件模式**：每次请求读日志尾部，适合中小流量；超高 QPS 建议 Vector/ClickHouse 等。
-- **Redis 模式**：每次请求拉取 List 尾部最多 **redis_max_lines** 行；ingest 为 **RPUSH + LTRIM**，内存与行数成正比；推送端应控制批量大小与频率。
+- **Redis 模式**：ingest 为 **RPUSH + LTRIM**；大盘读取受 `TRAFFIC_DASHBOARD_MAX_LINES` 与 `redis_max_lines` 共同约束。
 - 世界地图依赖外网 CDN；内网请自建 `world.json` URL（见 `frontend/src/views/Dashboard/Index.vue`）。
 - 3D 地球贴图来自 `echarts.apache.org`；离线可换本地 URL。
 

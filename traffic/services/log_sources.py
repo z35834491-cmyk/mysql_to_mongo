@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..models import TrafficDashboardConfig
 from .nginx_log import load_records, records_from_lines
@@ -85,29 +85,53 @@ def normalized_log_sources(cfg: TrafficDashboardConfig) -> List[Dict[str, Any]]:
     return out
 
 
-def load_records_for_source(cfg: TrafficDashboardConfig, src: Dict[str, Any]) -> List[Dict[str, Any]]:
+def load_records_for_source(
+    cfg: TrafficDashboardConfig,
+    src: Dict[str, Any],
+    *,
+    redis_line_cap: Optional[int] = None,
+    max_tail_bytes_override: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     mode = _access_mode(cfg)
     if mode == TrafficDashboardConfig.ACCESS_LOG_MODE_REDIS:
         key = (src.get("redis_key") or "").strip() or legacy_redis_key(cfg)
-        lines = fetch_tail_lines(key, redis_cap(cfg))
+        cap = redis_cap(cfg)
+        if redis_line_cap is not None:
+            cap = min(cap, max(1000, redis_line_cap))
+        lines = fetch_tail_lines(key, cap)
         return records_from_lines(lines, cfg.log_format)
     path = (src.get("file_path") or "").strip()
     if not path:
         return []
-    return load_records(path, cfg.log_format, cfg.max_tail_bytes)
+    mtb = cfg.max_tail_bytes
+    if max_tail_bytes_override is not None:
+        mtb = min(mtb, max(65536, max_tail_bytes_override))
+    return load_records(path, cfg.log_format, mtb)
 
 
-def load_raw_records(cfg: TrafficDashboardConfig, source_id: str) -> List[Dict[str, Any]]:
+def load_raw_records(
+    cfg: TrafficDashboardConfig,
+    source_id: str,
+    *,
+    redis_line_cap: Optional[int] = None,
+    max_tail_bytes_override: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     sources = normalized_log_sources(cfg)
     sid = (source_id or "").strip()
     if sid and sid != "all":
         src = next((s for s in sources if s["id"] == sid), None)
         if not src:
             return []
-        return load_records_for_source(cfg, src)
+        return load_records_for_source(
+            cfg, src, redis_line_cap=redis_line_cap, max_tail_bytes_override=max_tail_bytes_override
+        )
     acc: List[Dict[str, Any]] = []
     for s in sources:
-        acc.extend(load_records_for_source(cfg, s))
+        acc.extend(
+            load_records_for_source(
+                cfg, s, redis_line_cap=redis_line_cap, max_tail_bytes_override=max_tail_bytes_override
+            )
+        )
     return acc
 
 

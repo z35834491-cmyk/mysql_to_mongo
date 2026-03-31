@@ -9,6 +9,12 @@ export type TrafficLogSourceRow = {
 
 export const trafficApi = {
   sources: () => request.get('/traffic/sources') as Promise<{ items: { id: string; label: string }[] }>,
+  /** 一次拉齐大盘数据，长超时；替代多路 overview/timeseries/geo/top 并行 */
+  snapshot: (range: string, source?: string) =>
+    request.get('/traffic/snapshot', {
+      params: { range, ...(source ? { source } : {}) },
+      timeout: 120000,
+    }) as Promise<Record<string, unknown>>,
   overview: (range: string, source?: string) =>
     request.get('/traffic/overview', { params: { range, ...(source ? { source } : {}) } }),
   timeseries: (range: string, source?: string) =>
@@ -22,7 +28,7 @@ export const trafficApi = {
       params: { range, type, limit, ...(source ? { source } : {}) },
     }),
   blackbox: () => request.get('/traffic/blackbox'),
-  jaegerTraces: () => request.get('/traffic/jaeger/traces'),
+  jaegerTraces: () => request.get('/traffic/jaeger/traces', { timeout: 20000 }),
   getConfig: () => request.get('/traffic/config'),
   saveConfig: (data: Record<string, unknown>) => request.post('/traffic/config', data),
 }

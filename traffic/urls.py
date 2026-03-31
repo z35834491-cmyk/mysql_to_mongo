@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path("traffic/sources", views.traffic_sources, name="traffic_sources"),
+    path("traffic/snapshot", views.traffic_snapshot, name="traffic_snapshot"),
     path("traffic/overview", views.traffic_overview, name="traffic_overview"),
     path("traffic/timeseries", views.traffic_timeseries, name="traffic_timeseries"),
     path("traffic/geo", views.traffic_geo, name="traffic_geo"),
