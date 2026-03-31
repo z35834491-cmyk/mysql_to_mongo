@@ -6,7 +6,7 @@
         <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
       </div>
       <div class="header-actions">
-        <el-radio-group v-model="range" size="small" class="range-group" @change="loadAll">
+        <el-radio-group v-model="range" size="small" class="range-group" @change="() => loadAll(false)">
           <el-radio-button label="1h">1H</el-radio-button>
           <el-radio-button label="6h">6H</el-radio-button>
           <el-radio-button label="24h">24H</el-radio-button>
@@ -20,7 +20,7 @@
           style="width: 168px"
           placeholder="日志源"
           :disabled="sourceOptions.length <= 1"
-          @change="loadAll"
+          @change="() => loadAll(false)"
         >
           <el-option v-for="s in sourceOptions" :key="s.id" :label="s.label" :value="s.id" />
         </el-select>
@@ -30,12 +30,21 @@
           <el-option :value="15" label="15s" />
           <el-option :value="30" label="30s" />
         </el-select>
-        <div class="refresh-status">
-          <span class="refresh-dot" :class="{ active: pollSec > 0 }" />
+        <div class="refresh-status" :class="{ syncing: softRefreshing }">
+          <span class="refresh-dot" :class="{ active: pollSec > 0 || softRefreshing }" />
           <span>{{ refreshLabel }}</span>
         </div>
         <el-button :icon="Setting" size="small" class="toolbar-btn" @click="onOpenTrafficConfig">设置</el-button>
-        <el-button :icon="Refresh" size="small" type="primary" class="toolbar-btn shadow-btn" :loading="loading" @click="loadAll">刷新</el-button>
+        <el-button
+          :icon="Refresh"
+          size="small"
+          type="primary"
+          class="toolbar-btn shadow-btn"
+          :loading="loading"
+          @click="() => loadAll(false)"
+        >
+          刷新
+        </el-button>
       </div>
     </div>
 
@@ -45,11 +54,6 @@
           <el-icon><WarningFilled /></el-icon>
           <span>未配置 Nginx access 日志路径。请在设置中填写或通过环境变量 <code>TRAFFIC_NGINX_ACCESS_LOG</code> 指定。</span>
         </div>
-        <div v-if="trafficSampleHint" class="warn-banner page-panel hint-truncate">
-          <el-icon><WarningFilled /></el-icon>
-          <span>{{ trafficSampleHint }}</span>
-        </div>
-
         <div class="kpi-row">
           <div v-for="card in kpiCards" :key="card.key" class="page-panel kpi-card">
             <div class="kpi-head">
@@ -104,7 +108,14 @@
           <el-col :xs="24" :md="16">
             <div class="page-panel chart-wrap table-wrap">
               <div class="chart-title">Top 请求路径</div>
-              <el-table :data="pathsRows" size="small" class="dark-table" max-height="280">
+              <el-table
+                :data="pathsRows"
+                :row-key="rowKeyPath"
+                :row-class-name="pathsTableRowClass"
+                size="small"
+                class="dark-table traffic-data-table"
+                max-height="280"
+              >
                 <el-table-column prop="path" label="Path" min-width="160" show-overflow-tooltip />
                 <el-table-column prop="requests" label="Req" width="80" />
                 <el-table-column prop="p95_ms" label="P95 ms" width="90" />
@@ -121,14 +132,28 @@
               <div class="chart-title">慢接口 Top · Top IP</div>
               <el-row :gutter="12">
                 <el-col :xs="24" :md="12">
-                  <el-table :data="slowRows" size="small" class="dark-table" max-height="220">
+                  <el-table
+                    :data="slowRows"
+                    :row-key="rowKeyPath"
+                    :row-class-name="slowTableRowClass"
+                    size="small"
+                    class="dark-table traffic-data-table"
+                    max-height="220"
+                  >
                     <el-table-column prop="path" label="Path" min-width="140" show-overflow-tooltip />
                     <el-table-column prop="p95_ms" label="P95" width="80" />
                     <el-table-column prop="p99_ms" label="P99" width="80" />
                   </el-table>
                 </el-col>
                 <el-col :xs="24" :md="12">
-                  <el-table :data="ipRows" size="small" class="dark-table" max-height="220">
+                  <el-table
+                    :data="ipRows"
+                    :row-key="rowKeyIp"
+                    :row-class-name="ipTableRowClass"
+                    size="small"
+                    class="dark-table traffic-data-table"
+                    max-height="220"
+                  >
                     <el-table-column prop="ip" label="IP" width="140" />
                     <el-table-column prop="country" label="Region" width="100" />
                     <el-table-column prop="requests" label="Req" width="80" />
@@ -165,7 +190,14 @@
           <el-col :xs="24" :lg="8" :md="10">
             <div class="page-panel chart-wrap table-wrap">
               <div class="chart-title">最近 Trace（模拟）</div>
-              <el-table :data="traceRows" size="small" class="dark-table" max-height="360">
+              <el-table
+                :data="traceRows"
+                :row-key="rowKeyTrace"
+                :row-class-name="traceTableRowClass"
+                size="small"
+                class="dark-table traffic-data-table"
+                max-height="360"
+              >
                 <el-table-column prop="trace_id" label="Trace ID" min-width="120" show-overflow-tooltip />
                 <el-table-column prop="root_service" label="Service" width="110" />
                 <el-table-column prop="duration_ms" label="ms" width="70" />
@@ -204,6 +236,17 @@
           </el-form-item>
           <el-form-item label="Redis 最大行数">
             <el-input-number v-model="cfgForm.redis_max_lines" :min="5000" :max="2000000" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="大盘读取行数上限">
+            <el-input-number
+              v-model="cfgForm.dashboard_fetch_max_lines"
+              :min="5000"
+              :max="500000"
+              style="width: 100%"
+            />
+            <div class="form-hint">
+              每次加载 Traffic 大盘从 Redis List 尾部最多读取的行数（越小越快，图表为抽样）；与上方「Redis 最大行数」不同，后者为 ingest 保留总量。
+            </div>
           </el-form-item>
         </template>
         <el-form-item label="日志格式">
@@ -316,6 +359,7 @@ echarts.registerTheme('shark-traffic', {
 const range = ref('24h')
 const pollSec = ref(5)
 const loading = ref(false)
+const softRefreshing = ref(false)
 const mainTab = ref('trend')
 const configOpen = ref(false)
 const trafficSource = ref('all')
@@ -330,6 +374,19 @@ const ipRows = ref<any[]>([])
 const statusPie = ref<any[]>([])
 const traceRows = ref<any[]>([])
 
+const pathsRowFlash = ref<Record<string, boolean>>({})
+const slowRowFlash = ref<Record<string, boolean>>({})
+const ipRowFlash = ref<Record<string, boolean>>({})
+const traceRowFlash = ref<Record<string, boolean>>({})
+
+const prevTableSigs = {
+  paths: {} as Record<string, string>,
+  slow: {} as Record<string, string>,
+  ip: {} as Record<string, string>,
+  trace: {} as Record<string, string>,
+}
+let tableFlashClearTimer: number | null = null
+
 const cfgForm = reactive({
   enabled: true,
   access_log_mode: 'file' as 'file' | 'redis',
@@ -339,6 +396,7 @@ const cfgForm = reactive({
   max_tail_bytes: 5242880,
   redis_log_key: 'traffic:access:lines',
   redis_max_lines: 200000,
+  dashboard_fetch_max_lines: 35000,
   redis_env_configured: false,
   log_sources: [] as TrafficLogSourceRow[],
   geoip_db_path: '',
@@ -362,11 +420,43 @@ const chartPie = ref<HTMLElement | null>(null)
 
 const kpiCharts: Record<string, echarts.ECharts | null> = {}
 const charts: Record<string, echarts.ECharts | null> = {}
-let pollId: ReturnType<typeof setInterval> | null = null
+let pollId: number | null = null
 let glTried = false
-let globeScheduleTimer: ReturnType<typeof setTimeout> | null = null
+let globeScheduleTimer: number | null = null
+let worldGeoJsonCache: unknown | null = null
 
-const trafficSampleHint = ref('')
+type MainChartKey = 'qps' | 'lat' | 'err' | 'globe' | 'map' | 'country' | 'pie'
+
+function chartDisposed(c: echarts.ECharts | null | undefined): boolean {
+  return !c || !!(c as { isDisposed?: () => boolean }).isDisposed?.()
+}
+
+function disposeMainChartsOnly() {
+  if (globeScheduleTimer != null) {
+    clearTimeout(globeScheduleTimer)
+    globeScheduleTimer = null
+  }
+  Object.keys(charts).forEach((k) => {
+    disposeChart(charts[k])
+    charts[k] = null
+  })
+}
+
+function getOrInitMain(el: HTMLElement | null, key: MainChartKey): echarts.ECharts | null {
+  if (!el) return null
+  let c = charts[key]
+  if (!chartDisposed(c)) return c as echarts.ECharts
+  c = echarts.init(el, 'shark-traffic')
+  charts[key] = c
+  return c
+}
+
+async function ensureWorldGeoJson(): Promise<unknown> {
+  if (worldGeoJsonCache == null) {
+    worldGeoJsonCache = await loadWorldGeoJson()
+  }
+  return worldGeoJsonCache
+}
 
 const refreshLabel = computed(() => (pollSec.value > 0 ? `${pollSec.value}s 自动刷新` : '手动刷新'))
 
@@ -404,7 +494,7 @@ function disposeAllMain() {
   })
 }
 
-function sparkOption(series: number[][], color: string) {
+function sparkOption(series: number[][], color: string, animMs = 280) {
   const xs = series.map((_, i) => i)
   const ys = series.map((x) => x[1])
   const areaColorMap: Record<string, string> = {
@@ -416,7 +506,7 @@ function sparkOption(series: number[][], color: string) {
   }
   return {
     backgroundColor: 'transparent',
-    animationDuration: 280,
+    animationDuration: animMs,
     grid: { left: 2, right: 2, top: 2, bottom: 2 },
     xAxis: { type: 'category', show: false, data: xs },
     yAxis: { type: 'value', show: false, min: 'dataMin' },
@@ -480,7 +570,13 @@ async function loadWorldGeoJson(): Promise<unknown> {
   }
 }
 
-function lineSeries(name: string, data: number[][], color: string, extra: Record<string, any> = {}) {
+function lineSeries(
+  name: string,
+  data: number[][],
+  color: string,
+  extra: Record<string, any> = {},
+  animMs = 320,
+) {
   return {
     name,
     type: 'line',
@@ -490,12 +586,12 @@ function lineSeries(name: string, data: number[][], color: string, extra: Record
     data,
     lineStyle: { color, width: 2 },
     emphasis: { focus: 'series' },
-    animationDuration: 320,
+    animationDuration: animMs,
     ...extra,
   }
 }
 
-function updateKpiCharts() {
+function updateKpiCharts(soft = false) {
   const q = overview.value?.series?.qps || []
   const e = overview.value?.series?.error_rate || []
   const rq = timeseries.value?.requests || []
@@ -508,6 +604,7 @@ function updateKpiCharts() {
     up: q,
   }
   const colors = ['rgb(59,130,246)', 'rgb(96,165,250)', 'rgb(147,197,253)', 'rgb(56,189,248)', 'rgb(37,99,235)']
+  const anim = soft ? 100 : 280
   keys.forEach((key, i) => {
     const el = kpiRefs[key]
     if (!el) return
@@ -516,143 +613,35 @@ function updateKpiCharts() {
       c = echarts.init(el, 'shark-traffic')
       kpiCharts[key] = c
     }
-    c.setOption(sparkOption(dataMap[key] || [], colors[i % colors.length]), true)
+    c.setOption(sparkOption(dataMap[key] || [], colors[i % colors.length], anim), true)
   })
 }
 
-async function renderMainCharts() {
-  disposeAllMain()
-  const ts = timeseries.value
-  if (chartQps.value) {
-    const c = echarts.init(chartQps.value, 'shark-traffic')
-    charts.qps = c
-    c.setOption({
-      animationDuration: 320,
-      tooltip: axisTooltip,
-      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' }, data: ['QPS', 'Requests/min'] },
-      grid: { left: 48, right: 20, top: 48, bottom: 28 },
-      xAxis: { type: 'time' },
-      yAxis: [{ type: 'value', name: 'QPS' }, { type: 'value', name: 'Req', splitLine: { show: false } }],
-      series: [
-        lineSeries('QPS', ts.qps || [], '#3b82f6', {
-          areaStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(59,130,246,0.12)' },
-              { offset: 1, color: 'rgba(59,130,246,0.02)' },
-            ]),
+async function ensureGlobeChart(soft: boolean, anim: number) {
+  if (!chartGlobe.value) return
+  const scatter = geoItems.value
+    .filter((g) => g.lat && g.lng && g.requests > 0)
+    .map((g) => [g.lng, g.lat, g.requests])
+  const existing = charts.globe
+  if (!chartDisposed(existing)) {
+    existing!.setOption(
+      {
+        animationDuration: anim,
+        series: [
+          {
+            type: 'scatter3D',
+            coordinateSystem: 'globe',
+            symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
+            itemStyle: { color: '#3b82f6', opacity: 0.82 },
+            data: scatter,
           },
-        }),
-        {
-          name: 'Requests/min',
-          type: 'bar',
-          yAxisIndex: 1,
-          barWidth: 10,
-          data: (ts.requests || []).map((x: number[]) => [x[0], x[1] / Math.max((ts.bucket_sec || 60) / 60, 1)]),
-          itemStyle: { color: 'rgba(96,165,250,0.45)', borderRadius: [3, 3, 0, 0] },
-          animationDuration: 320,
-        },
-      ],
-    })
-  }
-
-  if (chartLat.value) {
-    const c = echarts.init(chartLat.value, 'shark-traffic')
-    charts.lat = c
-    const lat = ts.latency || {}
-    c.setOption({
-      animationDuration: 320,
-      tooltip: {
-        ...axisTooltip,
-        valueFormatter: (v: number) => `${v} ms`,
+        ],
       },
-      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
-      grid: { left: 48, right: 20, top: 48, bottom: 28 },
-      xAxis: { type: 'time' },
-      yAxis: { type: 'value', name: 'ms' },
-      series: [
-        lineSeries('P50', lat.p50 || [], '#93c5fd'),
-        lineSeries('P95', lat.p95 || [], '#60a5fa'),
-        lineSeries('P99', lat.p99 || [], '#3b82f6'),
-      ],
-    })
+      true,
+    )
+    return
   }
-
-  if (chartErr.value) {
-    const c = echarts.init(chartErr.value, 'shark-traffic')
-    charts.err = c
-    const st = ts.status_stack || {}
-    c.setOption({
-      animationDuration: 320,
-      tooltip: axisTooltip,
-      legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
-      grid: { left: 48, right: 20, top: 48, bottom: 28 },
-      xAxis: { type: 'time' },
-      yAxis: { type: 'value' },
-      series: [
-        { name: '2xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(147,197,253,0.18)' }, lineStyle: { width: 0, color: '#93c5fd' }, data: st['2xx'] || [] },
-        { name: '4xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(96,165,250,0.18)' }, lineStyle: { width: 0, color: '#60a5fa' }, data: st['4xx'] || [] },
-        { name: '5xx', type: 'line', stack: 's', smooth: true, showSymbol: false, areaStyle: { color: 'rgba(59,130,246,0.22)' }, lineStyle: { width: 0, color: '#3b82f6' }, data: st['5xx'] || [] },
-      ],
-    })
-  }
-
-  if (chartCountry.value) {
-    const c = echarts.init(chartCountry.value, 'shark-traffic')
-    charts.country = c
-    const items = [...geoItems.value].sort((a, b) => b.requests - a.requests).slice(0, 10)
-    c.setOption({
-      animationDuration: 320,
-      tooltip: itemTooltip,
-      grid: { left: 92, right: 16, top: 12, bottom: 12 },
-      xAxis: { type: 'value' },
-      yAxis: { type: 'category', data: items.map((i) => i.name || i.code).reverse(), axisLabel: { color: '#475569' } },
-      series: [
-        {
-          type: 'bar',
-          data: items.map((i) => i.requests).reverse(),
-          barWidth: 12,
-          itemStyle: {
-            borderRadius: [0, 6, 6, 0],
-            color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-              { offset: 0, color: 'rgba(96,165,250,0.24)' },
-              { offset: 1, color: '#3b82f6' },
-            ]),
-          },
-        },
-      ],
-    })
-  }
-
-  if (chartPie.value) {
-    const c = echarts.init(chartPie.value, 'shark-traffic')
-    charts.pie = c
-    c.setOption({
-      animationDuration: 320,
-      tooltip: itemTooltip,
-      legend: { bottom: 8, left: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
-      series: [
-        {
-          type: 'pie',
-          radius: ['52%', '74%'],
-          center: ['50%', '44%'],
-          itemStyle: { borderRadius: 4, borderColor: '#ffffff', borderWidth: 2 },
-          label: { color: '#475569', fontSize: 12 },
-          labelLine: { lineStyle: { color: '#94a3b8' } },
-          data: statusPie.value.length ? statusPie.value : [{ name: '无数据', value: 1 }],
-        },
-      ],
-    })
-  }
-
-  await initMapChart()
-  globeScheduleTimer = window.setTimeout(() => {
-    globeScheduleTimer = null
-    void initGlobeChart()
-  }, 120)
-}
-
-async function initGlobeChart() {
-  if (!chartGlobe.value || charts.globe) return
+  if (soft) return
   try {
     if (!glTried) {
       await import('echarts-gl')
@@ -660,11 +649,8 @@ async function initGlobeChart() {
     }
     const c = echarts.init(chartGlobe.value, 'shark-traffic')
     charts.globe = c
-    const scatter = geoItems.value
-      .filter((g) => g.lat && g.lng && g.requests > 0)
-      .map((g) => [g.lng, g.lat, g.requests])
     c.setOption({
-      animationDuration: 320,
+      animationDuration: anim,
       globe: {
         baseTexture: trafficMapAsset('traffic-maps/globe-texture.jpg'),
         shading: 'lambert',
@@ -694,70 +680,266 @@ async function initGlobeChart() {
   }
 }
 
-async function initMapChart() {
-  if (!chartMap.value || charts.map) return
-  const c = echarts.init(chartMap.value, 'shark-traffic')
-  charts.map = c
+async function ensureMapChart(soft: boolean, anim: number) {
+  if (!chartMap.value) return
+  const c = getOrInitMain(chartMap.value, 'map')
+  if (!c) return
+  const heatData = geoItems.value
+    .filter((g) => g.lat && g.lng && g.requests > 0)
+    .map((g) => [g.lng, g.lat, g.requests])
+  const reqVals = geoItems.value.map((g) => Number(g.requests) || 0)
+  const vmax = reqVals.length ? Math.max(1, ...reqVals) : 1
+  const mapOption = {
+    animationDuration: anim,
+    tooltip: {
+      ...itemTooltip,
+      formatter: (p: any) => {
+        const v = p.value as number[]
+        if (Array.isArray(v) && v.length >= 3) {
+          return `经度 ${v[0]?.toFixed?.(2) ?? v[0]} 纬度 ${v[1]?.toFixed?.(2) ?? v[1]}<br/>请求量: ${v[2]}`
+        }
+        return `${p.name || ''}<br/>${p.value ?? ''}`
+      },
+    },
+    geo: {
+      map: 'world',
+      roam: true,
+      itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1', borderWidth: 0.8 },
+      emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { color: '#1e293b' } },
+    },
+    visualMap: {
+      min: 0,
+      max: vmax,
+      calculable: true,
+      inRange: { color: ['#0c4a6e', '#0369a1', '#0ea5e9', '#38bdf8', '#fbbf24', '#f97316'] },
+      textStyle: { color: '#64748b' },
+      left: 8,
+      bottom: 20,
+    },
+    series: [
+      {
+        name: '请求热度',
+        type: 'heatmap',
+        coordinateSystem: 'geo',
+        data: heatData,
+        pointSize: 12,
+        blurSize: 18,
+        emphasis: { itemStyle: { shadowBlur: 12 } },
+      } as any,
+    ],
+  }
   try {
-    const worldJson = await loadWorldGeoJson()
+    const worldJson = await ensureWorldGeoJson()
     try {
       echarts.registerMap('world', worldJson as any)
     } catch {
       /* already registered */
     }
-    const heatData = geoItems.value
-      .filter((g) => g.lat && g.lng && g.requests > 0)
-      .map((g) => [g.lng, g.lat, g.requests])
-    const reqVals = geoItems.value.map((g) => Number(g.requests) || 0)
-    const vmax = reqVals.length ? Math.max(1, ...reqVals) : 1
-    c.setOption({
-      animationDuration: 320,
-      tooltip: {
-        ...itemTooltip,
-        formatter: (p: any) => {
-          const v = p.value as number[]
-          if (Array.isArray(v) && v.length >= 3) {
-            return `经度 ${v[0]?.toFixed?.(2) ?? v[0]} 纬度 ${v[1]?.toFixed?.(2) ?? v[1]}<br/>请求量: ${v[2]}`
-          }
-          return `${p.name || ''}<br/>${p.value ?? ''}`
+    c.setOption(mapOption, true)
+  } catch {
+    c.setOption(
+      {
+        title: {
+          text: '地图数据加载失败（请确认已部署 frontend/public/traffic-maps/world.json）',
+          left: 'center',
+          top: 'center',
+          textStyle: { color: '#64748b', fontSize: 11 },
         },
       },
-      geo: {
-        map: 'world',
-        roam: true,
-        itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1', borderWidth: 0.8 },
-        emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { color: '#1e293b' } },
+      true,
+    )
+  }
+}
+
+async function renderMainCharts(opts?: { soft?: boolean }) {
+  const soft = opts?.soft === true
+  const anim = soft ? 120 : 320
+  if (!soft) {
+    disposeMainChartsOnly()
+  } else if (globeScheduleTimer != null) {
+    clearTimeout(globeScheduleTimer)
+    globeScheduleTimer = null
+  }
+
+  const ts = timeseries.value
+  const qpsC = getOrInitMain(chartQps.value, 'qps')
+  if (qpsC) {
+    qpsC.setOption(
+      {
+        animationDuration: anim,
+        tooltip: axisTooltip,
+        legend: { top: 8, left: 'center', textStyle: { color: '#64748b' }, data: ['QPS', 'Requests/min'] },
+        grid: { left: 48, right: 20, top: 48, bottom: 28 },
+        xAxis: { type: 'time' },
+        yAxis: [{ type: 'value', name: 'QPS' }, { type: 'value', name: 'Req', splitLine: { show: false } }],
+        series: [
+          lineSeries(
+            'QPS',
+            ts.qps || [],
+            '#3b82f6',
+            {
+              areaStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: 'rgba(59,130,246,0.12)' },
+                  { offset: 1, color: 'rgba(59,130,246,0.02)' },
+                ]),
+              },
+            },
+            anim,
+          ),
+          {
+            name: 'Requests/min',
+            type: 'bar',
+            yAxisIndex: 1,
+            barWidth: 10,
+            data: (ts.requests || []).map((x: number[]) => [x[0], x[1] / Math.max((ts.bucket_sec || 60) / 60, 1)]),
+            itemStyle: { color: 'rgba(96,165,250,0.45)', borderRadius: [3, 3, 0, 0] },
+            animationDuration: anim,
+          },
+        ],
       },
-      visualMap: {
-        min: 0,
-        max: vmax,
-        calculable: true,
-        inRange: { color: ['#0c4a6e', '#0369a1', '#0ea5e9', '#38bdf8', '#fbbf24', '#f97316'] },
-        textStyle: { color: '#64748b' },
-        left: 8,
-        bottom: 20,
+      true,
+    )
+  }
+
+  const lat = ts.latency || {}
+  const latC = getOrInitMain(chartLat.value, 'lat')
+  if (latC) {
+    latC.setOption(
+      {
+        animationDuration: anim,
+        tooltip: {
+          ...axisTooltip,
+          valueFormatter: (v: number) => `${v} ms`,
+        },
+        legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
+        grid: { left: 48, right: 20, top: 48, bottom: 28 },
+        xAxis: { type: 'time' },
+        yAxis: { type: 'value', name: 'ms' },
+        series: [
+          lineSeries('P50', lat.p50 || [], '#93c5fd', {}, anim),
+          lineSeries('P95', lat.p95 || [], '#60a5fa', {}, anim),
+          lineSeries('P99', lat.p99 || [], '#3b82f6', {}, anim),
+        ],
       },
-      series: [
-        {
-          name: '请求热度',
-          type: 'heatmap',
-          coordinateSystem: 'geo',
-          data: heatData,
-          pointSize: 12,
-          blurSize: 18,
-          emphasis: { itemStyle: { shadowBlur: 12 } },
-        } as any,
-      ],
-    })
-  } catch {
-    c.setOption({
-      title: {
-        text: '地图数据加载失败（请确认已部署 frontend/public/traffic-maps/world.json）',
-        left: 'center',
-        top: 'center',
-        textStyle: { color: '#64748b', fontSize: 11 },
+      true,
+    )
+  }
+
+  const st = ts.status_stack || {}
+  const errC = getOrInitMain(chartErr.value, 'err')
+  if (errC) {
+    errC.setOption(
+      {
+        animationDuration: anim,
+        tooltip: axisTooltip,
+        legend: { top: 8, left: 'center', textStyle: { color: '#64748b' } },
+        grid: { left: 48, right: 20, top: 48, bottom: 28 },
+        xAxis: { type: 'time' },
+        yAxis: { type: 'value' },
+        series: [
+          {
+            name: '2xx',
+            type: 'line',
+            stack: 's',
+            smooth: true,
+            showSymbol: false,
+            animationDuration: anim,
+            areaStyle: { color: 'rgba(147,197,253,0.18)' },
+            lineStyle: { width: 0, color: '#93c5fd' },
+            data: st['2xx'] || [],
+          },
+          {
+            name: '4xx',
+            type: 'line',
+            stack: 's',
+            smooth: true,
+            showSymbol: false,
+            animationDuration: anim,
+            areaStyle: { color: 'rgba(96,165,250,0.18)' },
+            lineStyle: { width: 0, color: '#60a5fa' },
+            data: st['4xx'] || [],
+          },
+          {
+            name: '5xx',
+            type: 'line',
+            stack: 's',
+            smooth: true,
+            showSymbol: false,
+            animationDuration: anim,
+            areaStyle: { color: 'rgba(59,130,246,0.22)' },
+            lineStyle: { width: 0, color: '#3b82f6' },
+            data: st['5xx'] || [],
+          },
+        ],
       },
-    })
+      true,
+    )
+  }
+
+  const items = [...geoItems.value].sort((a, b) => b.requests - a.requests).slice(0, 10)
+  const countryC = getOrInitMain(chartCountry.value, 'country')
+  if (countryC) {
+    countryC.setOption(
+      {
+        animationDuration: anim,
+        tooltip: itemTooltip,
+        grid: { left: 92, right: 16, top: 12, bottom: 12 },
+        xAxis: { type: 'value' },
+        yAxis: { type: 'category', data: items.map((i) => i.name || i.code).reverse(), axisLabel: { color: '#475569' } },
+        series: [
+          {
+            type: 'bar',
+            data: items.map((i) => i.requests).reverse(),
+            barWidth: 12,
+            animationDuration: anim,
+            itemStyle: {
+              borderRadius: [0, 6, 6, 0],
+              color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                { offset: 0, color: 'rgba(96,165,250,0.24)' },
+                { offset: 1, color: '#3b82f6' },
+              ]),
+            },
+          },
+        ],
+      },
+      true,
+    )
+  }
+
+  const pieC = getOrInitMain(chartPie.value, 'pie')
+  if (pieC) {
+    pieC.setOption(
+      {
+        animationDuration: anim,
+        tooltip: itemTooltip,
+        legend: { bottom: 8, left: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
+        series: [
+          {
+            type: 'pie',
+            radius: ['52%', '74%'],
+            center: ['50%', '44%'],
+            itemStyle: { borderRadius: 4, borderColor: '#ffffff', borderWidth: 2 },
+            label: { color: '#475569', fontSize: 12 },
+            labelLine: { lineStyle: { color: '#94a3b8' } },
+            animationDuration: anim,
+            data: statusPie.value.length ? statusPie.value : [{ name: '无数据', value: 1 }],
+          },
+        ],
+      },
+      true,
+    )
+  }
+
+  await ensureMapChart(soft, anim)
+
+  if (soft) {
+    void ensureGlobeChart(true, anim)
+  } else {
+    globeScheduleTimer = window.setTimeout(() => {
+      globeScheduleTimer = null
+      void ensureGlobeChart(false, anim)
+    }, 120)
   }
 }
 
@@ -815,9 +997,143 @@ function removeLogSource(index: number) {
   cfgForm.log_sources.splice(index, 1)
 }
 
-async function loadAll() {
-  loading.value = true
-  trafficSampleHint.value = ''
+function rowKeyPath(row: any) {
+  return String(row?.path ?? '')
+}
+
+function rowKeyIp(row: any) {
+  return String(row?.ip ?? '')
+}
+
+function rowKeyTrace(row: any) {
+  const id = row?.trace_id
+  if (id != null && String(id)) return String(id)
+  return `trace-${row?.root_service ?? 'x'}-${row?.duration_ms ?? 0}-${row?.status ?? ''}`
+}
+
+function sigPathRow(row: any) {
+  return `${row.requests}|${row.p95_ms}|${row.errors_5xx}|${row.share_pct}`
+}
+
+function sigSlowRow(row: any) {
+  return `${row.p95_ms}|${row.p99_ms}|${row.requests ?? ''}`
+}
+
+function sigIpRow(row: any) {
+  return `${row.requests}|${row.country ?? ''}`
+}
+
+function sigTraceRow(row: any) {
+  return `${row.duration_ms}|${row.status}|${row.root_service ?? ''}`
+}
+
+function diffRowFlash(
+  rows: any[],
+  prev: Record<string, string>,
+  sigFn: (row: any) => string,
+  keyFn: (row: any) => string,
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {}
+  for (const row of rows) {
+    const k = keyFn(row)
+    if (!k) continue
+    const s = sigFn(row)
+    if (prev[k] !== undefined && prev[k] !== s) {
+      out[k] = true
+    }
+  }
+  return out
+}
+
+function syncTablePrevSigs() {
+  const p: Record<string, string> = {}
+  for (const row of pathsRows.value) {
+    const k = rowKeyPath(row)
+    if (k) p[k] = sigPathRow(row)
+  }
+  prevTableSigs.paths = p
+
+  const s: Record<string, string> = {}
+  for (const row of slowRows.value) {
+    const k = rowKeyPath(row)
+    if (k) s[k] = sigSlowRow(row)
+  }
+  prevTableSigs.slow = s
+
+  const i: Record<string, string> = {}
+  for (const row of ipRows.value) {
+    const k = rowKeyIp(row)
+    if (k) i[k] = sigIpRow(row)
+  }
+  prevTableSigs.ip = i
+
+  const t: Record<string, string> = {}
+  for (const row of traceRows.value) {
+    const k = rowKeyTrace(row)
+    if (k) t[k] = sigTraceRow(row)
+  }
+  prevTableSigs.trace = t
+}
+
+function clearTableRowFlash() {
+  pathsRowFlash.value = {}
+  slowRowFlash.value = {}
+  ipRowFlash.value = {}
+  traceRowFlash.value = {}
+}
+
+function applyRowFlashAfterLoad(silent: boolean) {
+  if (tableFlashClearTimer != null) {
+    clearTimeout(tableFlashClearTimer)
+    tableFlashClearTimer = null
+  }
+
+  if (!silent) {
+    clearTableRowFlash()
+    syncTablePrevSigs()
+    return
+  }
+
+  pathsRowFlash.value = diffRowFlash(pathsRows.value, prevTableSigs.paths, sigPathRow, rowKeyPath)
+  slowRowFlash.value = diffRowFlash(slowRows.value, prevTableSigs.slow, sigSlowRow, rowKeyPath)
+  ipRowFlash.value = diffRowFlash(ipRows.value, prevTableSigs.ip, sigIpRow, rowKeyIp)
+  traceRowFlash.value = diffRowFlash(traceRows.value, prevTableSigs.trace, sigTraceRow, rowKeyTrace)
+
+  syncTablePrevSigs()
+
+  tableFlashClearTimer = window.setTimeout(() => {
+    clearTableRowFlash()
+    tableFlashClearTimer = null
+  }, 1400)
+}
+
+function pathsTableRowClass({ row }: { row: any }) {
+  const k = rowKeyPath(row)
+  if (k && pathsRowFlash.value[k]) return 'traffic-trow traffic-trow--updated'
+  return 'traffic-trow'
+}
+
+function slowTableRowClass({ row }: { row: any }) {
+  const k = rowKeyPath(row)
+  if (k && slowRowFlash.value[k]) return 'traffic-trow traffic-trow--updated'
+  return 'traffic-trow'
+}
+
+function ipTableRowClass({ row }: { row: any }) {
+  const k = rowKeyIp(row)
+  if (k && ipRowFlash.value[k]) return 'traffic-trow traffic-trow--updated'
+  return 'traffic-trow'
+}
+
+function traceTableRowClass({ row }: { row: any }) {
+  const k = rowKeyTrace(row)
+  if (k && traceRowFlash.value[k]) return 'traffic-trow traffic-trow--updated'
+  return 'traffic-trow'
+}
+
+async function loadAll(silent = false) {
+  if (!silent) loading.value = true
+  else softRefreshing.value = true
   try {
     const r = range.value
     const src = currentSourceParam()
@@ -834,19 +1150,16 @@ async function loadAll() {
     statusPie.value = (snap.top_status && snap.top_status.items) || []
     ipRows.value = (snap.top_ip && snap.top_ip.items) || []
     traceRows.value = tr.traces || []
-    const meta = snap.meta
-    if (meta && meta.sample_may_be_truncated) {
-      trafficSampleHint.value = `为降低超时与 503，当前统计仅使用最近约 ${meta.dashboard_line_cap} 条日志；可调环境变量 TRAFFIC_DASHBOARD_MAX_LINES（或缩短时间范围）。`
-    }
+    applyRowFlashAfterLoad(silent)
     updateKpiText()
     await nextTick()
-    disposeAllMain()
-    updateKpiCharts()
-    await renderMainCharts()
+    updateKpiCharts(silent)
+    await renderMainCharts({ soft: silent })
   } catch {
     /* request interceptor */
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+    else softRefreshing.value = false
   }
 }
 
@@ -893,7 +1206,7 @@ function setupPoll() {
   if (pollId) clearInterval(pollId)
   if (pollSec.value > 0) {
     pollId = setInterval(() => {
-      if (mainTab.value === 'trend') loadAll()
+      if (mainTab.value === 'trend') loadAll(true)
     }, pollSec.value * 1000)
   }
 }
@@ -914,6 +1227,10 @@ function onResize() {
 
 onUnmounted(() => {
   if (pollId) clearInterval(pollId)
+  if (tableFlashClearTimer != null) {
+    clearTimeout(tableFlashClearTimer)
+    tableFlashClearTimer = null
+  }
   disposeAllMain()
   window.removeEventListener('resize', onResize)
 })
@@ -946,14 +1263,6 @@ onUnmounted(() => {
   border-color: #e2e8f0;
 }
 
-.hint-truncate {
-  background: #fffbeb;
-  border-color: #fde68a;
-  color: #92400e;
-}
-.hint-truncate .el-icon {
-  color: #d97706;
-}
 
 .page-header {
   display: flex;
@@ -1001,6 +1310,10 @@ onUnmounted(() => {
 .refresh-dot.active {
   background: #3b82f6;
   animation: dashboardPulse 1.6s ease-in-out infinite;
+}
+.refresh-status.syncing {
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 .toolbar-btn {
   border-radius: 8px;
@@ -1220,6 +1533,17 @@ onUnmounted(() => {
 .dark-table :deep(td.el-table__cell) {
   background: transparent;
 }
+
+.traffic-data-table :deep(tr.traffic-trow td.el-table__cell) {
+  transition:
+    background-color 0.42s ease,
+    box-shadow 0.42s ease;
+}
+.traffic-data-table :deep(tr.traffic-trow--updated td.el-table__cell) {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+  box-shadow: inset 3px 0 0 0 #3b82f6;
+}
+
 @keyframes dashboardPulse {
   0%, 100% {
     opacity: 0.45;

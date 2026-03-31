@@ -47,6 +47,10 @@ class TrafficDashboardConfig(models.Model):
         default=200_000,
         help_text="Max lines kept in Redis list (RPUSH + LTRIM keeps the most recent N lines).",
     )
+    dashboard_fetch_max_lines = models.PositiveIntegerField(
+        default=35_000,
+        help_text="Traffic dashboard: max lines read from Redis list tail per snapshot (lower = faster; ingest cap unchanged).",
+    )
     log_sources = models.JSONField(
         default=list,
         blank=True,

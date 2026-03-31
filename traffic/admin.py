@@ -23,6 +23,7 @@ class TrafficDashboardConfigAdmin(admin.ModelAdmin):
         "max_tail_bytes",
         "redis_log_key",
         "redis_max_lines",
+        "dashboard_fetch_max_lines",
         "geoip_db_path",
         "use_inspection_prometheus",
         "prometheus_url_override",

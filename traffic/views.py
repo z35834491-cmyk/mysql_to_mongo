@@ -38,12 +38,12 @@ def _redis_cap(cfg: TrafficDashboardConfig) -> int:
     return max(1_000, min(n, 2_000_000))
 
 
-def _dashboard_fetch_limits() -> Tuple[int, int]:
-    """UI 拉取上限：减轻多接口重复读 Redis / 大文件与 GeoIP 压力（ingest 不受影响）。"""
+def _dashboard_fetch_limits(cfg: TrafficDashboardConfig) -> Tuple[int, int]:
+    """UI 拉取上限：行数来自后台配置；文件尾部字节可选环境变量覆盖。"""
     try:
-        rl = int(os.environ.get("TRAFFIC_DASHBOARD_MAX_LINES", "35000"))
-    except ValueError:
-        rl = 35000
+        rl = int(cfg.dashboard_fetch_max_lines)
+    except (TypeError, ValueError):
+        rl = 35_000
     rl = max(5000, min(rl, 500_000))
     try:
         tb = int(os.environ.get("TRAFFIC_DASHBOARD_MAX_TAIL_BYTES", str(4 * 1024 * 1024)))
@@ -57,7 +57,7 @@ def _load_enriched(source_id: str = ""):
     cfg = TrafficDashboardConfig.load()
     if not cfg.enabled:
         return cfg, []
-    rl, tb = _dashboard_fetch_limits()
+    rl, tb = _dashboard_fetch_limits(cfg)
     recs = load_raw_records(
         cfg, source_id, redis_line_cap=rl, max_tail_bytes_override=tb
     )
@@ -123,7 +123,6 @@ def traffic_snapshot(request):
     source = _query_source(request)
     cfg, recs = _load_enriched(source)
     inspection = InspectionConfig.load()
-    rl, _tb = _dashboard_fetch_limits()
     ov = overview_kpis(recs, range_key)
     bb = fetch_blackbox_summary(cfg, inspection)
     ov["blackbox"] = bb
@@ -131,7 +130,6 @@ def traffic_snapshot(request):
         ov["availability_pct"] = bb["availability_pct"]
     ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
     ov["access_log_mode"] = _access_log_mode(cfg)
-    capped = _access_log_mode(cfg) == "redis" and len(recs) >= rl
     return Response(
         {
             "overview": ov,
@@ -141,11 +139,6 @@ def traffic_snapshot(request):
             "top_slow": top_lists(recs, range_key, "slow", 10),
             "top_status": top_lists(recs, range_key, "status", 20),
             "top_ip": top_lists(recs, range_key, "ip", 10),
-            "meta": {
-                "records_used": len(recs),
-                "dashboard_line_cap": rl,
-                "sample_may_be_truncated": capped,
-            },
         }
     )
 
@@ -217,6 +210,7 @@ def traffic_dashboard_config(request):
                 "max_tail_bytes": cfg.max_tail_bytes,
                 "redis_log_key": cfg.redis_log_key or "traffic:access:lines",
                 "redis_max_lines": cfg.redis_max_lines,
+                "dashboard_fetch_max_lines": cfg.dashboard_fetch_max_lines,
                 "log_sources": cfg.log_sources if isinstance(cfg.log_sources, list) else [],
                 "geoip_db_path": cfg.geoip_db_path,
                 "use_inspection_prometheus": cfg.use_inspection_prometheus,
@@ -239,6 +233,11 @@ def traffic_dashboard_config(request):
     ]
     try:
         cfg.redis_max_lines = int(data.get("redis_max_lines", cfg.redis_max_lines))
+    except (TypeError, ValueError):
+        pass
+    try:
+        dml = int(data.get("dashboard_fetch_max_lines", cfg.dashboard_fetch_max_lines))
+        cfg.dashboard_fetch_max_lines = max(5000, min(dml, 500_000))
     except (TypeError, ValueError):
         pass
     raw_ls = data.get("log_sources", cfg.log_sources)

@@ -57,8 +57,7 @@ npm run build
 | `TRAFFIC_REDIS_URL` | Redis 连接串，如 `redis://redis.traffic.svc.cluster.local:6379/1`。建议**独立 logical DB**，避免与 Celery 等混用。未设置时 Redis 模式不可用。 |
 | `TRAFFIC_INGEST_TOKEN` | `POST /api/traffic/ingest` 的 Bearer 密钥；**未设置则接入接口返回 503**。 |
 | `TRAFFIC_INGEST_MAX_BODY_LINES` | 可选，单次请求最大行数（默认 `20000`，上限 `100000`）。 |
-| `TRAFFIC_DASHBOARD_MAX_LINES` | **Redis 模式**：Traffic 大盘单次从 List 尾部最多读取行数（默认 `35000`），减轻并行请求导致的超时/503；ingest 仍受 `redis_max_lines` 限制。 |
-| `TRAFFIC_DASHBOARD_MAX_TAIL_BYTES` | **文件模式**：单次尾部读取字节上限（默认 `4MB`），与后台 `max_tail_bytes` 取较小值。 |
+| `TRAFFIC_DASHBOARD_MAX_TAIL_BYTES` | （可选）**文件模式**：大盘单次尾部读取字节上限（默认 `4MB`），与后台「尾部读取字节」取较小值。 |
 | `REDIS_URL` | 若未设 `TRAFFIC_REDIS_URL`，会回退读取（兼容其他组件）。 |
 
 示例（文件模式 + GeoIP）：
@@ -87,6 +86,7 @@ export TRAFFIC_GEOIP_DB=/data/geoip/GeoLite2-City.mmdb
    - **Access log mode**：`file` = 读本地路径；`redis` = 从 Redis List 读入站日志（需 `TRAFFIC_REDIS_URL`）。
    - **Access log path**：仅 file 模式；与 `TRAFFIC_NGINX_ACCESS_LOG` 相同含义。
    - **Redis log key** / **Redis max lines**：仅 redis 模式；List 的 key 与最大保留行数（超出则丢弃最旧）。
+   - **Dashboard fetch max lines**：仅 redis 模式意义最大；大盘每次从 List 尾部读取的最大行数（与 ingest 保留量 **Redis max lines** 独立）。
    - **Log format**：`json`（推荐）或 `combined`。
    - **Max tail bytes**：仅 file 模式；每次 API 从文件**末尾**读取的最大字节数（默认 5MB）。
    - **GeoIP db path**：MaxMind **.mmdb** 城市库路径（Pod 内可读路径）。
@@ -220,9 +220,9 @@ access_log /var/log/nginx/access.json.log access_json;
 ## 10. 性能与限制（当前实现）
 
 - **大盘接口**：前端默认走 **`/api/traffic/snapshot`**；单请求超时可在前端设为 120s。旧版多路 `overview`+`timeseries`+… 并行时，易重复拉 Redis、重复 GeoIP，易触发 **网关 503/超时**。
-- **抽样上限**：环境变量 **`TRAFFIC_DASHBOARD_MAX_LINES`**（默认 35000）、**`TRAFFIC_DASHBOARD_MAX_TAIL_BYTES`**（默认 4MB）限制**展示用**读取量；**ingest** 仍写入完整 `redis_max_lines`。
+- **大盘抽样**：**Redis 模式**下，每次加载大盘从 List 尾部读取的行数在 **Traffic 设置**（或 Admin）中配置 **`dashboard_fetch_max_lines`**（默认 35000，上限 500000）；ingest 保留量仍由 **`redis_max_lines`** 决定。可选环境变量 **`TRAFFIC_DASHBOARD_MAX_TAIL_BYTES`** 限制文件模式尾部字节。
 - **文件模式**：每次请求读日志尾部，适合中小流量；超高 QPS 建议 Vector/ClickHouse 等。
-- **Redis 模式**：ingest 为 **RPUSH + LTRIM**；大盘读取受 `TRAFFIC_DASHBOARD_MAX_LINES` 与 `redis_max_lines` 共同约束。
+- **Redis 模式**：ingest 为 **RPUSH + LTRIM**。
 - 世界地图依赖外网 CDN；内网请自建 `world.json` URL（见 `frontend/src/views/Dashboard/Index.vue`）。
 - 3D 地球贴图来自 `echarts.apache.org`；离线可换本地 URL。
 
