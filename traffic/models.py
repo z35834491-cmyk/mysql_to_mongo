@@ -47,6 +47,12 @@ class TrafficDashboardConfig(models.Model):
         default=200_000,
         help_text="Max lines kept in Redis list (RPUSH + LTRIM keeps the most recent N lines).",
     )
+    log_sources = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Multi-site: [{"id":"api","label":"API","file_path":"/var/log/nginx/access_api.json.log","redis_key":""}, ...]. '
+        "Redis mode: set redis_key per id; push with POST .../ingest?source=<id>. Empty = single legacy path / redis_log_key.",
+    )
     geoip_db_path = models.CharField(
         max_length=1024,
         blank=True,

@@ -15,22 +15,18 @@ from .services.aggregator import (
 )
 from .services.blackbox import fetch_blackbox_summary
 from .services.geoip_lookup import enrich_records
-from .services.nginx_log import load_records, records_from_lines
-from .services.redis_log_buffer import fetch_tail_lines, is_configured as redis_buffer_configured, push_raw_lines
-
-
-def _access_path(cfg: TrafficDashboardConfig) -> str:
-    return (cfg.access_log_path or os.environ.get("TRAFFIC_NGINX_ACCESS_LOG", "") or "").strip()
+from .services.log_sources import (
+    load_raw_records,
+    log_source_configured,
+    redis_key_for_ingest,
+    sources_for_api,
+)
+from .services.redis_log_buffer import is_configured as redis_buffer_configured, push_raw_lines
 
 
 def _access_log_mode(cfg: TrafficDashboardConfig) -> str:
     m = (cfg.access_log_mode or os.environ.get("TRAFFIC_ACCESS_LOG_MODE", "file") or "file").strip()
     return m if m in ("file", "redis") else "file"
-
-
-def _redis_key(cfg: TrafficDashboardConfig) -> str:
-    k = (cfg.redis_log_key or "traffic:access:lines").strip()
-    return k or "traffic:access:lines"
 
 
 def _redis_cap(cfg: TrafficDashboardConfig) -> int:
@@ -41,45 +37,31 @@ def _redis_cap(cfg: TrafficDashboardConfig) -> int:
     return max(1_000, min(n, 2_000_000))
 
 
-def _log_source_configured(cfg: TrafficDashboardConfig) -> bool:
-    if _access_log_mode(cfg) == "redis":
-        return redis_buffer_configured()
-    return bool(_access_path(cfg))
-
-
-def _load_raw_records(cfg: TrafficDashboardConfig):
-    if _access_log_mode(cfg) == "redis":
-        if not redis_buffer_configured():
-            return []
-        lines = fetch_tail_lines(_redis_key(cfg), _redis_cap(cfg))
-        return records_from_lines(lines, cfg.log_format)
-    path = _access_path(cfg)
-    if not path:
-        return []
-    return load_records(path, cfg.log_format, cfg.max_tail_bytes)
-
-
-def _load_enriched():
+def _load_enriched(source_id: str = ""):
     cfg = TrafficDashboardConfig.load()
     if not cfg.enabled:
         return cfg, []
-    recs = _load_raw_records(cfg)
+    recs = load_raw_records(cfg, source_id)
     enrich_records(recs, cfg.geoip_db_path)
     return cfg, recs
+
+
+def _query_source(request) -> str:
+    return (request.GET.get("source") or "").strip()
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def traffic_overview(request):
     range_key = request.GET.get("range", "24h")
-    cfg, recs = _load_enriched()
+    cfg, recs = _load_enriched(_query_source(request))
     inspection = InspectionConfig.load()
     data = overview_kpis(recs, range_key)
     bb = fetch_blackbox_summary(cfg, inspection)
     data["blackbox"] = bb
     if bb.get("availability_pct") is not None:
         data["availability_pct"] = bb["availability_pct"]
-    data["log_configured"] = _log_source_configured(cfg)
+    data["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
     data["access_log_mode"] = _access_log_mode(cfg)
     return Response(data)
 
@@ -88,7 +70,7 @@ def traffic_overview(request):
 @permission_classes([IsAuthenticated])
 def traffic_timeseries(request):
     range_key = request.GET.get("range", "24h")
-    _, recs = _load_enriched()
+    _, recs = _load_enriched(_query_source(request))
     return Response(aggregate_timeseries(recs, range_key))
 
 
@@ -98,7 +80,7 @@ def traffic_geo(request):
     range_key = request.GET.get("range", "24h")
     granularity = request.GET.get("granularity", "country")
     country = request.GET.get("country", "")
-    _, recs = _load_enriched()
+    _, recs = _load_enriched(_query_source(request))
     return Response(geo_aggregate(recs, range_key, granularity, country))
 
 
@@ -108,8 +90,15 @@ def traffic_top(request):
     range_key = request.GET.get("range", "24h")
     top_type = request.GET.get("type", "paths")
     limit = int(request.GET.get("limit", "10"))
-    _, recs = _load_enriched()
+    _, recs = _load_enriched(_query_source(request))
     return Response(top_lists(recs, range_key, top_type, limit))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def traffic_sources(request):
+    cfg = TrafficDashboardConfig.load()
+    return Response({"items": sources_for_api(cfg)})
 
 
 @api_view(["GET"])
@@ -172,6 +161,7 @@ def traffic_dashboard_config(request):
                 "max_tail_bytes": cfg.max_tail_bytes,
                 "redis_log_key": cfg.redis_log_key or "traffic:access:lines",
                 "redis_max_lines": cfg.redis_max_lines,
+                "log_sources": cfg.log_sources if isinstance(cfg.log_sources, list) else [],
                 "geoip_db_path": cfg.geoip_db_path,
                 "use_inspection_prometheus": cfg.use_inspection_prometheus,
                 "prometheus_url_override": cfg.prometheus_url_override,
@@ -195,6 +185,13 @@ def traffic_dashboard_config(request):
         cfg.redis_max_lines = int(data.get("redis_max_lines", cfg.redis_max_lines))
     except (TypeError, ValueError):
         pass
+    raw_ls = data.get("log_sources", cfg.log_sources)
+    if raw_ls is None:
+        cfg.log_sources = []
+    elif isinstance(raw_ls, list):
+        cfg.log_sources = raw_ls
+    else:
+        cfg.log_sources = []
     cfg.geoip_db_path = data.get("geoip_db_path", cfg.geoip_db_path) or ""
     cfg.use_inspection_prometheus = bool(
         data.get("use_inspection_prometheus", cfg.use_inspection_prometheus)
@@ -253,5 +250,10 @@ def traffic_ingest(request):
         return Response({"error": "TRAFFIC_REDIS_URL not configured"}, status=503)
 
     cfg = TrafficDashboardConfig.load()
-    n = push_raw_lines(lines, _redis_key(cfg), _redis_cap(cfg))
+    ingest_source = (
+        (request.GET.get("source") or "").strip()
+        or (request.headers.get("X-Traffic-Source") or "").strip()
+    )
+    key = redis_key_for_ingest(cfg, ingest_source)
+    n = push_raw_lines(lines, key, _redis_cap(cfg))
     return Response({"accepted": n, "truncated": truncated})

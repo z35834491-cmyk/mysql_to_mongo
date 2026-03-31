@@ -13,6 +13,17 @@
           <el-radio-button label="7d">7D</el-radio-button>
           <el-radio-button label="30d">30D</el-radio-button>
         </el-radio-group>
+        <el-select
+          v-model="trafficSource"
+          size="small"
+          class="source-select"
+          style="width: 168px"
+          placeholder="日志源"
+          :disabled="sourceOptions.length <= 1"
+          @change="loadAll"
+        >
+          <el-option v-for="s in sourceOptions" :key="s.id" :label="s.label" :value="s.id" />
+        </el-select>
         <el-select v-model="pollSec" size="small" class="poll-select" style="width: 110px">
           <el-option :value="0" label="手动刷新" />
           <el-option :value="5" label="5s" />
@@ -200,6 +211,46 @@
         <el-form-item v-if="cfgForm.access_log_mode === 'file'" label="尾部读取字节">
           <el-input-number v-model="cfgForm.max_tail_bytes" :min="65536" :max="52428800" />
         </el-form-item>
+        <el-form-item label="多站点 / 域名">
+          <div class="form-hint">
+            留空表示只用上方「单路径」或「单 Redis Key」。按域名拆日志时添加多行：唯一
+            <code>id</code>、显示名、以及文件模式填 <code>file_path</code>，Redis 模式填 <code>redis_key</code>。
+            远程推送使用 <code>POST /api/traffic/ingest?source=&lt;id&gt;</code> 或请求头
+            <code>X-Traffic-Source: &lt;id&gt;</code>。
+          </div>
+          <el-table :data="cfgForm.log_sources" border size="small" class="log-src-table">
+            <el-table-column label="ID" width="120">
+              <template #default="{ row }">
+                <el-input v-model="row.id" size="small" placeholder="api" />
+              </template>
+            </el-table-column>
+            <el-table-column label="显示名" min-width="120">
+              <template #default="{ row }">
+                <el-input v-model="row.label" size="small" placeholder="API" />
+              </template>
+            </el-table-column>
+            <el-table-column v-if="cfgForm.access_log_mode === 'file'" label="文件路径" min-width="220">
+              <template #default="{ row }">
+                <el-input
+                  v-model="row.file_path"
+                  size="small"
+                  placeholder="/var/log/nginx/access_api.json.log"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column v-if="cfgForm.access_log_mode === 'redis'" label="Redis List Key" min-width="220">
+              <template #default="{ row }">
+                <el-input v-model="row.redis_key" size="small" placeholder="traffic:access:lines:api" />
+              </template>
+            </el-table-column>
+            <el-table-column label="" width="72" fixed="right">
+              <template #default="{ $index }">
+                <el-button type="danger" link size="small" @click="removeLogSource($index)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-button class="mt-8" size="small" @click="addLogSource">添加一行</el-button>
+        </el-form-item>
         <el-form-item label="MaxMind mmdb">
           <el-input
             v-model="cfgForm.geoip_db_path"
@@ -230,7 +281,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from
 import * as echarts from 'echarts'
 import { Refresh, Setting, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { trafficApi } from '@/api/traffic'
+import { trafficApi, type TrafficLogSourceRow } from '@/api/traffic'
 
 echarts.registerTheme('shark-traffic', {
   backgroundColor: 'transparent',
@@ -263,6 +314,8 @@ const pollSec = ref(5)
 const loading = ref(false)
 const mainTab = ref('trend')
 const configOpen = ref(false)
+const trafficSource = ref('all')
+const sourceOptions = ref<{ id: string; label: string }[]>([])
 
 const overview = ref<any>({ series: { qps: [], error_rate: [] }, log_configured: true })
 const timeseries = ref<any>({})
@@ -283,6 +336,7 @@ const cfgForm = reactive({
   redis_log_key: 'traffic:access:lines',
   redis_max_lines: 200000,
   redis_env_configured: false,
+  log_sources: [] as TrafficLogSourceRow[],
   geoip_db_path: '',
   use_inspection_prometheus: true,
   prometheus_url_override: '',
@@ -384,6 +438,30 @@ const itemTooltip = {
   borderWidth: 1,
   textStyle: { color: '#f8fafc', fontSize: 12 },
   extraCssText: 'box-shadow:none;border-radius:10px;padding:10px 12px;',
+}
+
+/** 地图 / 地球贴图走同源 public，避免内网无法访问 jsDelivr、echarts.apache.org */
+function trafficMapAsset(relPath: string): string {
+  const base = import.meta.env.BASE_URL || '/'
+  const p = relPath.replace(/^\//, '')
+  return base.endsWith('/') ? `${base}${p}` : `${base}/${p}`
+}
+
+async function loadWorldGeoJson(): Promise<unknown> {
+  const localUrl = trafficMapAsset('traffic-maps/world.json')
+  const tryFetch = async (url: string) => {
+    const res = await fetch(url, { credentials: 'same-origin' })
+    if (!res.ok) throw new Error(String(res.status))
+    return res.json()
+  }
+  try {
+    return await tryFetch(localUrl)
+  } catch {
+    /* 构建遗漏或旧部署：再试公网镜像（部分环境仍不可达） */
+    const mirror =
+      'https://raw.githubusercontent.com/apache/echarts/master/test/data/map/json/world.json'
+    return tryFetch(mirror)
+  }
 }
 
 function lineSeries(name: string, data: number[][], color: string, extra: Record<string, any> = {}) {
@@ -568,8 +646,7 @@ async function initGlobeAndMap() {
       c.setOption({
         animationDuration: 320,
         globe: {
-          baseTexture:
-            'https://echarts.apache.org/examples/data-gl/asset/world.topo.bathy.200401.jpg',
+          baseTexture: trafficMapAsset('traffic-maps/globe-texture.jpg'),
           shading: 'lambert',
           environment: '#f8fafc',
           light: { ambient: { intensity: 0.95 }, main: { intensity: 0.2 } },
@@ -601,14 +678,15 @@ async function initGlobeAndMap() {
     const c = echarts.init(chartMap.value, 'shark-traffic')
     charts.map = c
     try {
-      const res = await fetch('https://cdn.jsdelivr.net/npm/echarts@5.4.3/map/json/world.json')
-      const worldJson = await res.json()
+      const worldJson = await loadWorldGeoJson()
       try {
         echarts.registerMap('world', worldJson as any)
       } catch {
         /* already registered */
       }
       const data = geoItems.value.map((g) => [g.lng, g.lat, g.requests, g.name || g.code])
+      const reqVals = geoItems.value.map((g) => Number(g.requests) || 0)
+      const vmax = reqVals.length ? Math.max(1, ...reqVals) : 1
       c.setOption({
         animationDuration: 320,
         tooltip: {
@@ -628,7 +706,7 @@ async function initGlobeAndMap() {
         },
         visualMap: {
           min: 0,
-          max: Math.max(...geoItems.value.map((g) => g.requests), 1),
+          max: vmax,
           calculable: false,
           inRange: { color: ['#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6'] },
           textStyle: { color: '#64748b' },
@@ -647,7 +725,12 @@ async function initGlobeAndMap() {
       })
     } catch {
       c.setOption({
-        title: { text: '地图数据加载失败', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
+        title: {
+          text: '地图数据加载失败（请确认已部署 frontend/public/traffic-maps/world.json）',
+          left: 'center',
+          top: 'center',
+          textStyle: { color: '#64748b', fontSize: 11 },
+        },
       })
     }
   }
@@ -674,18 +757,47 @@ function fmtNum(n: unknown) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
+function currentSourceParam(): string | undefined {
+  const s = trafficSource.value
+  if (!s || s === 'all') return 'all'
+  return s
+}
+
+async function refreshSourceOptions() {
+  try {
+    const data = await trafficApi.sources()
+    const items = data.items || []
+    sourceOptions.value = items
+    const ids = new Set(items.map((i) => i.id))
+    if (!trafficSource.value || !ids.has(trafficSource.value)) {
+      trafficSource.value = items[0]?.id || 'all'
+    }
+  } catch {
+    sourceOptions.value = []
+  }
+}
+
+function addLogSource() {
+  cfgForm.log_sources.push({ id: '', label: '', file_path: '', redis_key: '' })
+}
+
+function removeLogSource(index: number) {
+  cfgForm.log_sources.splice(index, 1)
+}
+
 async function loadAll() {
   loading.value = true
   try {
     const r = range.value
+    const src = currentSourceParam()
     const [ov, ts, geo, paths, slow, status, ip, tr] = await Promise.all([
-      trafficApi.overview(r) as Promise<any>,
-      trafficApi.timeseries(r) as Promise<any>,
-      trafficApi.geo(r) as Promise<any>,
-      trafficApi.top(r, 'paths', 10) as Promise<any>,
-      trafficApi.top(r, 'slow', 10) as Promise<any>,
-      trafficApi.top(r, 'status', 20) as Promise<any>,
-      trafficApi.top(r, 'ip', 10) as Promise<any>,
+      trafficApi.overview(r, src) as Promise<any>,
+      trafficApi.timeseries(r, src) as Promise<any>,
+      trafficApi.geo(r, 'country', '', src) as Promise<any>,
+      trafficApi.top(r, 'paths', 10, src) as Promise<any>,
+      trafficApi.top(r, 'slow', 10, src) as Promise<any>,
+      trafficApi.top(r, 'status', 20, src) as Promise<any>,
+      trafficApi.top(r, 'ip', 10, src) as Promise<any>,
       trafficApi.jaegerTraces() as Promise<any>,
     ])
     overview.value = ov
@@ -711,7 +823,18 @@ async function loadAll() {
 async function onOpenTrafficConfig() {
   try {
     const c = (await trafficApi.getConfig()) as any
-    Object.assign(cfgForm, c)
+    const ls = Array.isArray(c.log_sources) ? c.log_sources : []
+    cfgForm.log_sources.splice(
+      0,
+      cfgForm.log_sources.length,
+      ...ls.map((row: Record<string, string>) => ({
+        id: String(row.id || ''),
+        label: String(row.label || ''),
+        file_path: String(row.file_path || ''),
+        redis_key: String(row.redis_key || ''),
+      }))
+    )
+    Object.assign(cfgForm, { ...c, log_sources: cfgForm.log_sources })
     configOpen.value = true
   } catch {
     ElMessage.error('读取配置失败')
@@ -720,9 +843,16 @@ async function onOpenTrafficConfig() {
 
 async function saveCfg() {
   try {
-    await trafficApi.saveConfig({ ...cfgForm })
+    const rows = cfgForm.log_sources.filter((x) => String(x.id || '').trim())
+    const ids = rows.map((x) => String(x.id).trim())
+    if (new Set(ids).size !== ids.length) {
+      ElMessage.error('日志源 ID 不能重复')
+      return
+    }
+    await trafficApi.saveConfig({ ...cfgForm, log_sources: rows })
     ElMessage.success('已保存')
     configOpen.value = false
+    await refreshSourceOptions()
     loadAll()
   } catch {
     /* */
@@ -740,7 +870,8 @@ function setupPoll() {
 
 watch(pollSec, setupPoll)
 
-onMounted(() => {
+onMounted(async () => {
+  await refreshSourceOptions()
   loadAll()
   setupPoll()
   window.addEventListener('resize', onResize)
@@ -837,6 +968,19 @@ onUnmounted(() => {
 }
 .shadow-btn {
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+.source-select :deep(.el-input__wrapper) {
+  background: #ffffff;
+  box-shadow: none;
+  border: 1px solid #dbe2ea;
+  color: #334155;
+}
+.log-src-table {
+  width: 100%;
+  margin-top: 8px;
+}
+.mt-8 {
+  margin-top: 8px;
 }
 .poll-select :deep(.el-input__wrapper) {
   background: #ffffff;
