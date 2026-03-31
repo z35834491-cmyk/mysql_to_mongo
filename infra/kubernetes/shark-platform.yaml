@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: shark-platform
-        image: shark-platform:latest # Replace with your registry image (e.g., myregistry/shark-platform:v1)
+        image: shark-platform:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -28,9 +28,9 @@ spec:
             name: shark-platform-secrets
         env:
         - name: MYSQL_HOST
-          value: "mysql-service" # Adjust to your MySQL service name
+          value: "mysql-service"
         - name: MONGO_HOST
-          value: "mongo-service" # Adjust to your Mongo service name
+          value: "mongo-service"
         volumeMounts:
         - name: app-state
           mountPath: /app/state
@@ -51,7 +51,7 @@ spec:
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /
+            path: /api/system/health
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 5
@@ -74,4 +74,4 @@ spec:
   - protocol: TCP
     port: 80
     targetPort: 8000
-  type: NodePort # Or LoadBalancer / ClusterIP based on your ingress setup
+  type: NodePort

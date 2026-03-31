@@ -27,7 +27,7 @@ const routes: Array<RouteRecordRaw> = [
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('@/views/Dashboard/Index.vue'),
-        meta: { title: 'Dashboard', icon: 'Odometer', viewPerm: 'view_dashboard' }
+        meta: { title: 'Traffic Dashboard', icon: 'DataLine', viewPerm: 'view_dashboard' }
       },
       {
         path: 'tasks',
@@ -58,6 +58,18 @@ const routes: Array<RouteRecordRaw> = [
         name: 'DatabaseManager',
         component: () => import('@/views/DatabaseManagerPro/Index.vue'),
         meta: { title: 'Database Manager', icon: 'Coin', viewPerm: 'view_db_manager' }
+      },
+      {
+        path: 'database-manager/permissions',
+        name: 'DatabaseManagerPermissions',
+        component: () => import('@/views/DatabaseManagerPro/Permissions.vue'),
+        meta: { title: 'Database Permissions', icon: 'Lock', viewPerm: 'manage_db_permissions' }
+      },
+      {
+        path: 'database-manager/approvals/:id',
+        name: 'DatabaseManagerApprovalDetail',
+        component: () => import('@/views/DatabaseManagerPro/ApprovalDetail.vue'),
+        meta: { title: 'Approval Detail', icon: 'Lock', viewPerm: 'approve_sql_execution', hidden: true }
       },
       {
         path: 'database-manager-legacy',

@@ -360,5 +360,5 @@ kubectl get svc -A | grep shark-platform
 
 - `CSRF_TRUSTED_ORIGINS` 不要带反引号/多余空格；务必用逗号分隔的 URL 列表。
 - 生产建议使用 PVC（EBS CSI / gp3）做数据盘（本文已默认使用 `storageClassName: gp3` 的 PVC）。`gp3` 通常是 `WaitForFirstConsumer`，PVC 可能会在 Pod 调度后才 Bound。
-- README 的 K8s 步骤里提到 `k8s/secrets.yaml`，仓库实际是把 Secret 合并在 `k8s/configmap.yaml`（生产建议用本文档的一体 YAML）。
-- docker-compose 文件里有 `./mysql_conf/my.cnf`、`./mysql_init` 挂载路径，若你走 compose，需要自行创建这些目录/文件或移除挂载后再启动。
+- README 的 K8s 步骤里若提到独立 `secrets.yaml`，仓库示例是把 Secret 合并在 `infra/kubernetes/configmap.yaml`（生产建议用本文档的一体 YAML）。
+- 本地 Docker Compose 见 `infra/docker/docker-compose.yml`，MySQL 配置在 `infra/docker/mysql/` 下，无需在仓库根目录再建 `mysql_conf`。

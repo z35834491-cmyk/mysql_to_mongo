@@ -50,8 +50,11 @@ export const dbManagerProApi = {
   reviewSql(instance_id: number, database: string, sql: string) {
     return request.post('db/sql/ai-review/', { instance_id, database, sql, review_mode: 'full' })
   },
-  createJob(instance_id: number, database: string, sql: string, execute_mode = 'auto_commit') {
-    return request.post('db/sql/jobs/create/', { instance_id, database, sql, execute_mode })
+  listApprovalApplicants() {
+    return request.get('db/sql/approval-applicants/')
+  },
+  createJob(data: Record<string, any>) {
+    return request.post('db/sql/jobs/create/', data)
   },
   listJobs(params?: Record<string, any>) {
     return request.get('db/sql/jobs/', { params })
@@ -77,6 +80,9 @@ export const dbManagerProApi = {
   listApprovals() {
     return request.get('db/approvals/')
   },
+  getApprovalDetail(id: number) {
+    return request.get(`db/approvals/${id}/`)
+  },
   listApprovalPolicies() {
     return request.get('db/approval-policies/')
   },
@@ -88,6 +94,30 @@ export const dbManagerProApi = {
   },
   createAccessRule(data: Record<string, any>) {
     return request.post('db/access-rules/', data)
+  },
+  updateAccessRule(id: number, data: Record<string, any>) {
+    return request.put(`db/access-rules/${id}/`, data)
+  },
+  deleteAccessRule(id: number) {
+    return request.delete(`db/access-rules/${id}/`)
+  },
+  previewAccessRule(data: Record<string, any>) {
+    return request.post('db/access-rules/preview/', data)
+  },
+  listExecutionPolicies() {
+    return request.get('db/execution-policies/')
+  },
+  createExecutionPolicy(data: Record<string, any>) {
+    return request.post('db/execution-policies/', data)
+  },
+  updateExecutionPolicy(id: number, data: Record<string, any>) {
+    return request.put(`db/execution-policies/${id}/`, data)
+  },
+  deleteExecutionPolicy(id: number) {
+    return request.delete(`db/execution-policies/${id}/`)
+  },
+  listPermissionSubjects() {
+    return request.get('db/permission-subjects/')
   },
   listUsers() {
     return request.get('/users')
@@ -115,6 +145,9 @@ export const dbManagerProApi = {
   },
   createBackupPlan(data: Record<string, any>) {
     return request.post('db/backup/plans/', data)
+  },
+  updateBackupPlan(id: number, data: Record<string, any>) {
+    return request.put(`db/backup/plans/${id}/`, data)
   },
   runBackupPlan(id: number) {
     return request.post(`db/backup/plans/${id}/run/`)

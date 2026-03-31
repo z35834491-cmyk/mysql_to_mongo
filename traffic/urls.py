@@ -1,0 +1,17 @@
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("traffic/overview", views.traffic_overview, name="traffic_overview"),
+    path("traffic/timeseries", views.traffic_timeseries, name="traffic_timeseries"),
+    path("traffic/geo", views.traffic_geo, name="traffic_geo"),
+    path("traffic/top", views.traffic_top, name="traffic_top"),
+    path("traffic/blackbox", views.traffic_blackbox, name="traffic_blackbox"),
+    path(
+        "traffic/jaeger/traces",
+        views.traffic_jaeger_traces_mock,
+        name="traffic_jaeger_traces_mock",
+    ),
+    path("traffic/config", views.traffic_dashboard_config, name="traffic_dashboard_config"),
+]

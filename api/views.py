@@ -11,7 +11,17 @@ from monitor.models import MonitorTask
 import requests
 import datetime
 
+# --- Health (K8s / LB probes; no auth) ---
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health_check(request):
+    return Response({"status": "ok"})
+
+
 # --- Auth ---
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -81,6 +91,12 @@ class HasRolePermission(BasePermission):
             if '/inspection/reports' in path:
                 return has('view_inspection')
         if '/api/db/' in path:
+            if '/permission-subjects/' in path or '/access-rules/' in path or '/execution-policies/' in path:
+                if method == 'GET':
+                    return has('manage_db_permissions') or has('manage_db_instances')
+                return has('manage_db_permissions')
+            if '/sql/approval-applicants/' in path:
+                return has('view_db_manager')
             if method == 'GET':
                 return has('view_db_manager')
             if '/sql/jobs/' in path and ('/cancel/' in path or '/pause/' in path or '/resume/' in path):
@@ -117,6 +133,7 @@ def _ensure_custom_permissions():
         {"codename": "manage_users", "name": "Manage Users & Roles"},
         {"codename": "view_db_manager", "name": "View Database Manager"},
         {"codename": "manage_db_instances", "name": "Manage Database Instances"},
+        {"codename": "manage_db_permissions", "name": "Manage Database Permissions"},
         {"codename": "test_db_connection", "name": "Test Database Connection"},
         {"codename": "view_db_schema", "name": "View Database Schema"},
         {"codename": "run_sql_query", "name": "Run SQL Query"},

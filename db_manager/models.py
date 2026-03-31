@@ -217,9 +217,37 @@ class SQLApprovalOrder(models.Model):
     current_node = models.IntegerField(default=1)
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="pending")
     reason = models.TextField(blank=True, default="")
+    cc_users_json = models.JSONField(default=list, blank=True)
+    requested_flow_json = models.JSONField(default=list, blank=True)
+    request_payload_json = models.JSONField(default=dict, blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
     approved_at = models.DateTimeField(null=True, blank=True)
     rejected_at = models.DateTimeField(null=True, blank=True)
+
+
+class SQLExecutionPolicy(models.Model):
+    EXECUTE_MODES = [
+        ("auto_commit", "Auto Commit"),
+        ("transaction", "Transaction"),
+        ("dry_run", "Dry Run"),
+    ]
+
+    name = models.CharField(max_length=128, unique=True)
+    priority = models.IntegerField(default=100)
+    environment_scope = models.JSONField(default=list, blank=True)
+    db_type_scope = models.JSONField(default=list, blank=True)
+    sql_type_scope = models.JSONField(default=list, blank=True)
+    risk_scope = models.JSONField(default=list, blank=True)
+    database_pattern = models.CharField(max_length=128, blank=True, default="*")
+    auto_execute_mode = models.CharField(max_length=32, choices=EXECUTE_MODES, default="auto_commit")
+    require_approval = models.BooleanField(default=False)
+    allow_direct_execute = models.BooleanField(default=True)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "-updated_at", "-created_at"]
 
 
 class SQLApprovalPolicy(models.Model):

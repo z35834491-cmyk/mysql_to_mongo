@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import BackupPlan, BackupRecord, DBInstance, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLExecutionJob
+from .models import BackupPlan, BackupRecord, DBInstance, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLExecutionJob, SQLExecutionPolicy
 
 
 class DBInstanceSerializer(serializers.ModelSerializer):
@@ -57,9 +57,10 @@ class SQLExecuteRequestSerializer(serializers.Serializer):
     instance_id = serializers.IntegerField()
     database = serializers.CharField(required=False, allow_blank=True)
     sql = serializers.CharField()
-    execute_mode = serializers.ChoiceField(choices=["auto_commit", "transaction", "explain", "dry_run"], default="auto_commit")
+    execute_mode = serializers.ChoiceField(choices=["auto_commit", "transaction", "explain", "dry_run"], default="auto_commit", required=False)
     ai_review_id = serializers.IntegerField(required=False)
     force_execute = serializers.BooleanField(default=False)
+    applicant_user_id = serializers.IntegerField(required=False)
 
 
 class SQLExecutionJobSerializer(serializers.ModelSerializer):
@@ -79,6 +80,7 @@ class SQLExecutionJobSerializer(serializers.ModelSerializer):
             "sql_hash",
             "sql_type",
             "execute_mode",
+            "trace_id",
             "status",
             "risk_level",
             "progress_percent",
@@ -123,6 +125,12 @@ class SQLApprovalOrderSerializer(serializers.ModelSerializer):
 class SQLApprovalPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = SQLApprovalPolicy
+        fields = "__all__"
+
+
+class SQLExecutionPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SQLExecutionPolicy
         fields = "__all__"
 
 

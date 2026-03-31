@@ -2,7 +2,7 @@
 set -e
 
 # Ensure state directory exists
-mkdir -p state
+mkdir -p state logs
 
 # Run migrations
 python manage.py migrate

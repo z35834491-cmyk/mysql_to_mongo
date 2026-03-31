@@ -44,9 +44,10 @@
 | **部署** | 服务器批量执行/计划 | `/api/deploy/*` |
 | **数据库管理** | 多数据源查询/结构（独立子应用） | `/api/db/*` |
 | **平台账号** | 登录、用户/角色/权限 | `/api/auth/*`、`/api/users`、`/api/roles`、`/api/me` |
+| **Traffic** | Nginx 日志聚合、GeoIP、Blackbox、流量大盘 | Web：`/dashboard`；API：`/api/traffic/*`；手册：[docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) |
 | **Django Admin** | 后台管理（需超级用户） | `/admin/` |
 
-生产部署与 RBAC、PVC、Ingress、初始化等请以 **[K8S_RBAC_GUIDE.md](./K8S_RBAC_GUIDE.md)** 为准。本文侧重**功能总览、API 索引、同步任务配置与常见运维**。
+生产部署与 RBAC、PVC、Ingress、初始化等请以 **[docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md)** 为准；**Compose / K8s 示例**见 **[infra/README.md](./infra/README.md)**（与 Django 应用 `deploy/` 无关）。本文侧重**功能总览、API 索引、同步任务配置与常见运维**。
 
 ---
 
@@ -62,7 +63,7 @@
 - [常用运维](#常用运维)
 - [常见问题](#常见问题)
 - [项目结构](#项目结构)
-- [相关文档](#相关文档)
+- [相关文档与目录](#相关文档与目录)
 - [许可证](#许可证)
 
 ---
@@ -177,25 +178,19 @@ flowchart TB
 
 ### 方式一：Docker Compose（本地/测试）
 
-1. 准备挂载目录（MySQL 配置/初始化）：
+在**仓库根目录**执行（MySQL 配置在 `infra/docker/mysql/`，无需再建 `mysql_conf`）：
 
 ```bash
-mkdir -p mysql_conf mysql_init
+docker compose -f infra/docker/docker-compose.yml up -d --build
 ```
 
-2. 启动：
-
-```bash
-docker-compose up -d --build
-```
-
-3. 访问 Web（视 compose 端口映射而定，常见为 `8000`）  
-   - 默认超级用户：`admin` / `admin`（由 [entrypoint.sh](./entrypoint.sh) 首次创建，**务必修改密码**）。
+访问 Web：`http://localhost:8000`（默认超级用户 `admin` / `admin`，由 [entrypoint.sh](./entrypoint.sh) 首次创建，**务必修改密码**）。
 
 ### 方式二：Kubernetes（生产）
 
-- 按 [K8S_RBAC_GUIDE.md](./K8S_RBAC_GUIDE.md) 执行。
-- 示例清单：`k8s/`（需自行改 namespace、镜像、域名等）。
+- 按 [docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md) 执行。
+- 示例清单：`infra/kubernetes/`（需自行改 namespace、镜像、密钥等）。
+- 健康检查：`GET /api/system/health`（无鉴权）。
 
 ### 方式三：本地开发
 
@@ -333,6 +328,7 @@ cd frontend && npm run build
 | PUT/DELETE | `/api/users/<id>` | 更新/删除用户 |
 | GET/POST | `/api/roles` | 角色与权限 |
 | GET | `/api/permissions` | 权限列表 |
+| GET | `/api/system/health` | 存活/就绪探针（无鉴权） |
 | GET | `/api/system/stats` | 系统概览 |
 
 ### 连接与同步任务
@@ -378,6 +374,7 @@ cd frontend && npm run build
 | `/api/ai_ops/` | AIOps |
 | `/api/deploy/` | 部署计划与执行 |
 | `/api/db/` | 数据库管理（连接、结构、查询） |
+| `/api/traffic/` | Traffic Dashboard 数据源（overview、timeseries、geo、top、blackbox） |
 
 完整路由见各应用 `urls.py` 与 [shark_platform/urls.py](./shark_platform/urls.py)。
 
@@ -424,38 +421,48 @@ kubectl exec -n <namespace> deploy/shark-platform -- \
 ```text
 mysql_to_mongo/
 ├── ai_ops/                  # AIOps
-├── api/                     # 登录、用户、角色、系统统计
-├── deploy/                  # 服务器部署
+├── api/                     # 登录、用户、角色、系统统计、health
+├── core/                    # 通用工具
+├── traffic/                 # Traffic Dashboard 后端（日志解析、聚合 API）
+├── deploy/                  # Django：服务器批量部署引擎（API / 任务执行）
+├── infra/                   # Docker Compose + K8s 示例清单（非 Python 包）
+│   ├── docker/              # 本地编排、MySQL 配置
+│   └── kubernetes/          # Deployment / Service / PVC / ConfigMap
+├── docs/                    # K8s 手册、Traffic 手册、排班 API 等
 ├── inspection/              # 巡检
 ├── monitor/                 # K8s 日志监控
 ├── schedules/               # 排班 + 电话告警
-├── tasks/                   # MySQL → Mongo 同步引擎 + API 视图
-│   └── sync/                # Worker、FlushBuffer、MongoWriter 等
+├── tasks/                   # MySQL → Mongo 同步引擎 + API
+│   └── sync/
 ├── db_manager/              # 数据库管理 API
-├── frontend/                # Vue 3 前端（Vite）
-├── frontend/dist/           # 生产构建产物（npm run build）
-├── nginx.conf               # 容器内 Nginx 示例（API + Admin + SPA）
-├── k8s/                     # 示例 K8s 清单
-├── state/                   # SQLite 默认路径（db.sqlite3）等
-├── entrypoint.sh            # migrate + 默认 admin + gunicorn + nginx
+├── frontend/                # Vue 3（Vite）
+├── logs/                    # 运行日志目录（compose 可挂载，仅 .gitkeep 入库）
+├── nginx.conf               # 容器内 Nginx
+├── state/                   # SQLite 等（db.sqlite3 默认忽略，保留 .gitkeep）
+├── Dockerfile
+├── entrypoint.sh
 ├── manage.py
 └── shark_platform/          # Django 项目配置
 ```
 
 ---
 
-## 相关文档
+## 相关文档与目录
 
-| 文档 / 文件 | 内容 |
+| 文档 / 路径 | 内容 |
 |-------------|------|
-| [VERSION](./VERSION) | **发布版本号**（与 README 顶部徽章建议同步） |
-| [K8S_RBAC_GUIDE.md](./K8S_RBAC_GUIDE.md) | 生产 K8s：RBAC、PVC、Ingress、初始化 |
-| [docker-compose.yml](./docker-compose.yml) | 本地多服务编排（MySQL/Mongo 等示例） |
-| [Dockerfile](./Dockerfile) | 多阶段构建：前端 `npm run build` + Python 镜像 |
-| [entrypoint.sh](./entrypoint.sh) | 迁移、默认 admin、Gunicorn + Nginx 启动顺序 |
-| [nginx.conf](./nginx.conf) | 容器内 Nginx：`/api`、`/admin` 反代、SPA 回退 |
-| [requirements.txt](./requirements.txt) | Python 依赖与精确版本 |
-| [frontend/package.json](./frontend/package.json) | 前端依赖与脚本（`dev` / `build`） |
+| [VERSION](./VERSION) | 发布版本号（与 README 徽章、`frontend/package.json` 建议一致） |
+| [docs/README.md](./docs/README.md) | 文档索引 |
+| [docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md) | 生产 K8s：RBAC、PVC、Ingress、初始化 |
+| [docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) | Traffic Dashboard 配置手册 |
+| [infra/README.md](./infra/README.md) | Docker Compose / Kubernetes 示例说明 |
+| [infra/docker/docker-compose.yml](./infra/docker/docker-compose.yml) | 本地多服务编排 |
+| [Dockerfile](./Dockerfile) | 多阶段构建镜像 |
+| [entrypoint.sh](./entrypoint.sh) | 迁移、默认 admin、Gunicorn + Nginx |
+| [nginx.conf](./nginx.conf) | `/api`、`/admin`、SPA |
+| [requirements.txt](./requirements.txt) | Python 依赖 |
+| [frontend/package.json](./frontend/package.json) | 前端依赖与脚本 |
+| [.dockerignore](./.dockerignore) | 镜像构建上下文排除项 |
 
 ---
 

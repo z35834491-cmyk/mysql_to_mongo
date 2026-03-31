@@ -10,19 +10,22 @@ import uuid
 from pathlib import Path
 import gzip
 import base64
+import tarfile
 from datetime import timedelta
 
 import requests
 import sqlparse
 from cryptography.fernet import Fernet
+from django.contrib.auth.models import User
 from django.conf import settings
+from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 
 from ai_ops.models import AIConfig
 from shark_platform.celery import app as celery_app
 
 from .engines import DBEngineFactory
-from .models import BackupPlan, BackupRecord, DBAccessRule, DBInstance, DBInstanceSecret, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLApprovalStep, SQLAuditLog, SQLExecutionJob, SQLExecutionLog, SQLExecutionResult
+from .models import BackupPlan, BackupRecord, DBAccessRule, DBInstance, DBInstanceSecret, RestoreJob, RollbackJob, SQLAIReview, SQLApprovalOrder, SQLApprovalPolicy, SQLApprovalStep, SQLAuditLog, SQLExecutionJob, SQLExecutionLog, SQLExecutionPolicy, SQLExecutionResult
 
 
 JOB_THREADS = {}
@@ -62,6 +65,113 @@ def _sql_type(sql: str) -> str:
 
 def _extract_tables(sql: str):
     return sorted(set(re.findall(r'(?:from|join|update|into|table)\s+[`"]?([a-zA-Z0-9_.-]+)', sql or "", re.IGNORECASE)))
+
+
+def _sql_action(sql: str):
+    sql_type = _sql_type(sql)
+    if sql_type in {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH"}:
+        return "query"
+    if sql_type in {"INSERT", "UPDATE", "DELETE", "MERGE"}:
+        return "dml"
+    if sql_type in {"ALTER", "DROP", "TRUNCATE", "CREATE", "RENAME"}:
+        return "ddl"
+    return "query"
+
+
+def recommend_execute_mode(sql: str):
+    return "transaction" if _sql_action(sql) in {"dml", "ddl"} else "auto_commit"
+
+
+def recommend_permission_codename(sql: str, report=None):
+    action = _sql_action(sql)
+    risk_level = (report or {}).get("risk_level", "low")
+    if risk_level in {"high", "critical"}:
+        return "run_sql_high_risk"
+    if action == "ddl":
+        return "run_sql_ddl"
+    if action == "dml":
+        return "run_sql_dml"
+    return "run_sql_query"
+
+
+def serialize_execution_policy(policy: SQLExecutionPolicy):
+    return {
+        "id": policy.id,
+        "name": policy.name,
+        "priority": policy.priority,
+        "environment_scope": policy.environment_scope,
+        "db_type_scope": policy.db_type_scope,
+        "sql_type_scope": policy.sql_type_scope,
+        "risk_scope": policy.risk_scope,
+        "database_pattern": policy.database_pattern,
+        "auto_execute_mode": policy.auto_execute_mode,
+        "require_approval": policy.require_approval,
+        "allow_direct_execute": policy.allow_direct_execute,
+        "enabled": policy.enabled,
+        "created_at": policy.created_at,
+        "updated_at": policy.updated_at,
+    }
+
+
+def upsert_execution_policy(data):
+    policy_id = data.get("id")
+    policy = SQLExecutionPolicy.objects.filter(id=policy_id).first() if policy_id else None
+    if policy is None:
+        policy = SQLExecutionPolicy()
+    for field in [
+        "name", "priority", "environment_scope", "db_type_scope", "sql_type_scope",
+        "risk_scope", "database_pattern", "auto_execute_mode", "require_approval",
+        "allow_direct_execute", "enabled"
+    ]:
+        if field in data:
+            setattr(policy, field, data.get(field))
+    policy.save()
+    return policy
+
+
+def _permission_codenames(user):
+    permissions = set()
+    for item in user.get_all_permissions():
+        permissions.add(item.split(".")[-1])
+    return permissions
+
+
+def is_db_admin_or_dba(user):
+    if not user:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if user.groups.filter(name__in=["Admin", "DBA"]).exists():
+        return True
+    return "approve_sql_execution" in _permission_codenames(user)
+
+
+def list_approval_applicants():
+    users = User.objects.all().prefetch_related("groups")
+    result = []
+    for user in users:
+        if not is_db_admin_or_dba(user):
+            continue
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "is_staff": user.is_staff,
+            "groups": [group.name for group in user.groups.all()],
+        })
+    return result
+
+
+def resolve_applicant(applicant_user_id, fallback_user):
+    if applicant_user_id:
+        applicant = User.objects.filter(id=applicant_user_id).first()
+        if not applicant:
+            raise ValueError("申请人不存在")
+        if not is_db_admin_or_dba(applicant):
+            raise ValueError("申请人必须具备管理员或 DBA 权限")
+        return applicant
+    if not is_db_admin_or_dba(fallback_user):
+        raise ValueError("当前用户不具备管理员或 DBA 权限，无法作为申请人")
+    return fallback_user
 
 
 def _backup_root():
@@ -109,6 +219,20 @@ def _encrypt_file(path: Path):
     return encrypted
 
 
+def _download_from_object_storage(record: BackupRecord):
+    metadata = record.metadata_json or {}
+    object_key = metadata.get("object_key")
+    storage_config = getattr(getattr(record, "plan", None), "storage_config", None) or {}
+    client = _storage_client(storage_config)
+    if not client or not object_key or not storage_config.get("bucket"):
+        return None
+    local_dir = _backup_root() / "downloaded" / record.instance.name
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = local_dir / Path(object_key).name
+    client.download_file(storage_config["bucket"], object_key, str(local_path))
+    return local_path
+
+
 def _sha256_file(path: Path):
     digest = hashlib.sha256()
     with open(path, "rb") as fp:
@@ -118,6 +242,26 @@ def _sha256_file(path: Path):
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _prepare_restore_file(record: BackupRecord):
+    file_path = Path(record.file_uri or "")
+    if (not record.file_uri or not file_path.exists()) and record.plan_id:
+        downloaded = _download_from_object_storage(record)
+        if downloaded:
+            file_path = downloaded
+    if not file_path.exists():
+        raise RuntimeError("缺少可用备份文件")
+    if file_path.suffix == ".enc":
+        decrypted = file_path.with_suffix("")
+        decrypted.write_bytes(_cipher().decrypt(file_path.read_bytes()))
+        file_path = decrypted
+    if file_path.suffix == ".gz":
+        extracted = file_path.with_suffix("")
+        with gzip.open(file_path, "rb") as src, open(extracted, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        file_path = extracted
+    return file_path
 
 
 def _cleanup_local_backups(plan: BackupPlan):
@@ -218,6 +362,36 @@ def ensure_instance_access(user, instance: DBInstance, action: str = "view", dat
         if _rule_allows(rule, action=action, instance=instance, database_name=database_name, table_names=table_names, sql_type=sql_type):
             return
     raise PermissionError("当前用户没有该实例或对象范围的操作权限")
+
+
+def explain_access_preview(user_id=None, group_name="", instance=None, database_name="", sql=""):
+    sql_type = _sql_type(sql)
+    action = _sql_action(sql)
+    matched = []
+    conflicts = []
+    table_names = _extract_tables(sql)
+    rules = DBAccessRule.objects.filter(enabled=True).select_related("instance", "user")
+    for rule in rules:
+        subject_ok = False
+        if user_id and rule.user_id == user_id:
+            subject_ok = True
+        if group_name and rule.group_name == group_name:
+            subject_ok = True
+        if not user_id and not group_name:
+            subject_ok = True
+        if not subject_ok:
+            continue
+        if _rule_allows(rule, action=action, instance=instance, database_name=database_name, table_names=table_names, sql_type=sql_type):
+            matched.append(serialize_access_rule(rule))
+        elif set(rule.actions or []).intersection([action]):
+            conflicts.append(rule.name)
+    return {
+        "action": action,
+        "sql_type": sql_type,
+        "matched_rules": matched,
+        "conflicts": conflicts[:10],
+        "allowed": bool(matched),
+    }
 
 
 def serialize_instance(instance: DBInstance):
@@ -467,11 +641,36 @@ def matching_approval_policy(instance: DBInstance, sql: str, report=None):
     return None
 
 
+def matching_execution_policy(instance: DBInstance, database_name: str, sql: str, report=None):
+    sql_type = _sql_type(sql)
+    risk_level = (report or {}).get("risk_level", "low")
+    policies = SQLExecutionPolicy.objects.filter(enabled=True).order_by("priority", "-updated_at")
+    for policy in policies:
+        if policy.environment_scope and instance.environment not in policy.environment_scope:
+            continue
+        if policy.db_type_scope and instance.db_type not in policy.db_type_scope:
+            continue
+        if policy.sql_type_scope and sql_type not in policy.sql_type_scope:
+            continue
+        if policy.risk_scope and risk_level not in policy.risk_scope:
+            continue
+        if database_name and not _match_pattern(database_name, policy.database_pattern or "*"):
+            continue
+        return policy
+    return None
+
+
 def need_approval(instance: DBInstance, sql: str, report=None):
+    sql_type = _sql_type(sql)
+    execution_policy = matching_execution_policy(instance, instance.default_database, sql, report=report)
+    if execution_policy and execution_policy.require_approval:
+        return True
     policy = matching_approval_policy(instance, sql, report=report)
     if policy:
         return True
     if instance.environment == "prod" and sql_type in {"ALTER", "DROP", "TRUNCATE", "UPDATE", "DELETE", "INSERT"}:
+        return True
+    if report and report.get("risk_level") in {"high", "critical"}:
         return True
     if report and report.get("decision") == "warn":
         return True
@@ -563,23 +762,21 @@ def _run_sql_job(job_id: int, request_meta=None):
             JOB_THREADS.pop(job.id, None)
 
 
-def create_execution_job(instance: DBInstance, user, database_name: str, sql: str, execute_mode: str, request_meta=None):
-    action = "query"
+def create_execution_job(instance: DBInstance, user, database_name: str, sql: str, execute_mode: str = "", request_meta=None, applicant_user_id=None, approval_reason="", cc_user_ids=None, approval_flow=None):
+    action = _sql_action(sql)
     sql_type = _sql_type(sql)
-    if sql_type in {"INSERT", "UPDATE", "DELETE", "MERGE"}:
-        action = "dml"
-    if sql_type in {"ALTER", "DROP", "TRUNCATE", "CREATE", "RENAME"}:
-        action = "ddl"
     ensure_instance_access(user, instance, action=action, database_name=database_name or instance.default_database, sql=sql)
     report = review_sql(instance, database_name, sql)
+    execution_policy = matching_execution_policy(instance, database_name or instance.default_database, sql, report=report)
+    actual_execute_mode = "dry_run" if execute_mode == "dry_run" else (execution_policy.auto_execute_mode if execution_policy else recommend_execute_mode(sql))
     job = SQLExecutionJob.objects.create(
         instance=instance,
         user=user,
         database_name=database_name or instance.default_database,
         sql_text=sql,
         sql_hash=_hash_sql(sql),
-        sql_type=_sql_type(sql),
-        execute_mode=execute_mode,
+        sql_type=sql_type,
+        execute_mode=actual_execute_mode,
         status="queued",
         risk_level=report.get("risk_level", "low"),
         trace_id=_trace_id(request_meta),
@@ -610,9 +807,30 @@ def create_execution_job(instance: DBInstance, user, database_name: str, sql: st
         _write_audit(job, request_meta=request_meta)
         return job, report, None
     matched_policy = matching_approval_policy(instance, sql, report=report)
-    if matched_policy or need_approval(instance, sql, report=report):
-        order = SQLApprovalOrder.objects.create(job=job, applicant=user, reason="命中审批策略")
-        flow = (matched_policy.approval_flow if matched_policy else []) or [{"group_name": "DBA", "sla_minutes": 60}]
+    must_apply = bool((execution_policy and not execution_policy.allow_direct_execute) or report.get("risk_level") in {"high", "critical"})
+    need_apply = must_apply or need_approval(instance, sql, report=report) or bool(matched_policy)
+    if need_apply:
+        applicant = resolve_applicant(applicant_user_id, user)
+        cc_users = []
+        for cc_user_id in cc_user_ids or []:
+            cc_user = User.objects.filter(id=cc_user_id).first()
+            if cc_user:
+                cc_users.append({"id": cc_user.id, "username": cc_user.username})
+        default_reason = "命中高危 SQL 强制申请策略" if report.get("risk_level") in {"high", "critical"} else ("命中 SQL 执行策略" if execution_policy else "命中审批策略")
+        order = SQLApprovalOrder.objects.create(
+            job=job,
+            applicant=applicant,
+            reason=approval_reason or default_reason,
+            cc_users_json=cc_users,
+            requested_flow_json=approval_flow or [],
+            request_payload_json={
+                "policy_id": execution_policy.id if execution_policy else None,
+                "policy_name": execution_policy.name if execution_policy else "",
+                "matched_approval_policy": matched_policy.name if matched_policy else "",
+                "allow_direct_execute": False if must_apply else True,
+            },
+        )
+        flow = approval_flow or (matched_policy.approval_flow if matched_policy else []) or [{"group_name": "DBA", "sla_minutes": 60}]
         for idx, step in enumerate(flow, start=1):
             SQLApprovalStep.objects.create(
                 order=order,
@@ -622,7 +840,7 @@ def create_execution_job(instance: DBInstance, user, database_name: str, sql: st
             )
         job.status = "waiting_approval"
         job.save(update_fields=["status", "updated_at"])
-        append_job_log(job, f"[trace:{job.trace_id}] SQL 作业进入审批流程")
+        append_job_log(job, f"[trace:{job.trace_id}] SQL 作业进入审批流程，申请人: {applicant.username}")
         return job, report, order
     start_job_async(job, request_meta=request_meta)
     return job, report, None
@@ -878,15 +1096,17 @@ def _sql_literal(value):
 
 def _backup_file_path(plan: BackupPlan):
     ext_map = {
-        "mysql": "sql",
-        "postgresql": "sql",
-        "redis": "rdb",
-        "mongo": "archive",
-        "rabbitmq": "json",
+        ("mysql", "logical"): "sql",
+        ("mysql", "physical"): "xbstream",
+        ("postgresql", "logical"): "sql",
+        ("postgresql", "physical"): "tar",
+        ("redis", "logical"): "rdb",
+        ("mongo", "logical"): "archive",
+        ("rabbitmq", "logical"): "json",
     }
     base_dir = _backup_root() / plan.instance.name
     base_dir.mkdir(parents=True, exist_ok=True)
-    ext = ext_map.get(plan.instance.db_type, "bak")
+    ext = ext_map.get((plan.instance.db_type, plan.backup_type), ext_map.get((plan.instance.db_type, "logical"), "bak"))
     return base_dir / f"{plan.name}_{timezone.now().strftime('%Y%m%d%H%M%S')}.{ext}"
 
 
@@ -905,6 +1125,9 @@ def _execute_backup(record_id: int):
     file_path.parent.mkdir(parents=True, exist_ok=True)
     env = _build_db_cli_env(instance)
     metadata = dict(record.metadata_json or {})
+    metadata["txn_snapshot"] = {
+        "before": _capture_txn_snapshot(instance, instance.default_database),
+    }
     try:
         if instance.db_type == "mysql":
             cmd = [
@@ -920,15 +1143,30 @@ def _execute_backup(record_id: int):
                 raise RuntimeError(result.stderr.decode("utf-8", errors="ignore") or "mysqldump failed")
             file_path.write_bytes(result.stdout)
         elif instance.db_type == "postgresql":
-            cmd = [
-                shutil.which("pg_dump") or "pg_dump",
-                "-h", instance.host,
-                "-p", str(instance.port),
-                "-U", getattr(instance.secret, "username", ""),
-                "-d", instance.default_database or "postgres",
-                "-f", str(file_path),
-            ]
-            _run_command(cmd, env=env)
+            if plan.backup_type == "physical":
+                cmd = [
+                    shutil.which("pg_basebackup") or "pg_basebackup",
+                    "-h", instance.host,
+                    "-p", str(instance.port),
+                    "-U", getattr(instance.secret, "username", ""),
+                    "-D", "-",
+                    "-F", "t",
+                    "-X", "stream",
+                ]
+                result = subprocess.run(cmd, env=env, capture_output=True)
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.decode("utf-8", errors="ignore") or "pg_basebackup failed")
+                file_path.write_bytes(result.stdout)
+            else:
+                cmd = [
+                    shutil.which("pg_dump") or "pg_dump",
+                    "-h", instance.host,
+                    "-p", str(instance.port),
+                    "-U", getattr(instance.secret, "username", ""),
+                    "-d", instance.default_database or "postgres",
+                    "-f", str(file_path),
+                ]
+                _run_command(cmd, env=env)
         elif instance.db_type == "mongo":
             cmd = [
                 shutil.which("mongodump") or "mongodump",
@@ -973,6 +1211,7 @@ def _execute_backup(record_id: int):
         record.status = "success"
         record.finished_at = timezone.now()
         metadata["executor"] = "real"
+        metadata["txn_snapshot"]["after"] = _capture_txn_snapshot(instance, instance.default_database)
         record.metadata_json = metadata
         record.save(update_fields=["file_uri", "file_size", "checksum_sha256", "status", "finished_at", "metadata_json"])
         _cleanup_local_backups(plan)
@@ -1039,8 +1278,140 @@ def run_backup_plan(plan: BackupPlan):
     return record
 
 
+def _restore_mysql_dump(instance: DBInstance, env, file_path: Path):
+    cmd = [
+        shutil.which("mysql") or "mysql",
+        "-h", instance.host,
+        "-P", str(instance.port),
+        "-u", getattr(instance.secret, "username", ""),
+        instance.default_database or "mysql",
+    ]
+    with open(file_path, "rb") as fp:
+        process = subprocess.run(cmd, env=env, stdin=fp, capture_output=True)
+    if process.returncode != 0:
+        raise RuntimeError(process.stderr.decode("utf-8", errors="ignore") or "mysql restore failed")
+
+
+def _apply_mysql_pitr(job: RestoreJob, env, logs, file_path: Path):
+    _restore_mysql_dump(job.instance, env, file_path)
+    snapshot = ((job.backup_record.metadata_json or {}).get("txn_snapshot") or {}).get("after") or {}
+    start_pos = snapshot.get("binlog_position")
+    binlog_file = snapshot.get("binlog_file")
+    binlog_dir = (job.instance.extra_config or {}).get("mysql_binlog_dir")
+    if not binlog_dir or not binlog_file or not start_pos:
+        raise RuntimeError("PITR 缺少 mysql_binlog_dir 或备份事务快照")
+    mysqlbinlog = shutil.which("mysqlbinlog") or "mysqlbinlog"
+    binlog_files = sorted(str(p) for p in Path(binlog_dir).glob("*") if p.is_file() and p.name >= str(binlog_file))
+    if not binlog_files:
+        raise RuntimeError("未找到可用于 PITR 的 binlog 文件")
+    cmd = [mysqlbinlog, f"--start-position={start_pos}"]
+    if job.restore_mode == "point_in_time":
+        if not job.target_time:
+            raise RuntimeError("PITR 需要目标时间点")
+        target_time = job.target_time.isoformat(sep=" ", timespec="seconds")
+        cmd.append(f"--stop-datetime={target_time}")
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 应用 MySQL binlog 到时间点 {target_time}"})
+    else:
+        if not job.target_txn_id:
+            raise RuntimeError("事务级恢复需要 GTID 或 stop-position")
+        if ":" in job.target_txn_id or "," in job.target_txn_id:
+            cmd.append(f"--include-gtids={job.target_txn_id}")
+        else:
+            cmd.append(f"--stop-position={job.target_txn_id}")
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 应用 MySQL binlog 到事务目标 {job.target_txn_id}"})
+    cmd.extend(binlog_files)
+    mysql_cmd = [
+        shutil.which("mysql") or "mysql",
+        "-h", job.instance.host,
+        "-P", str(job.instance.port),
+        "-u", getattr(job.instance.secret, "username", ""),
+        job.instance.default_database or "mysql",
+    ]
+    binlog_process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    mysql_process = subprocess.Popen(mysql_cmd, env=env, stdin=binlog_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if binlog_process.stdout:
+        binlog_process.stdout.close()
+    _, mysql_stderr = mysql_process.communicate()
+    _, binlog_stderr = binlog_process.communicate()
+    if binlog_process.returncode != 0:
+        raise RuntimeError(binlog_stderr.decode("utf-8", errors="ignore") or "mysqlbinlog failed")
+    if mysql_process.returncode != 0:
+        raise RuntimeError(mysql_stderr.decode("utf-8", errors="ignore") or "mysql apply binlog failed")
+
+
+def _apply_postgresql_pitr(job: RestoreJob, logs, file_path: Path):
+    extra = job.instance.extra_config or {}
+    restore_dir = Path(extra.get("pg_restore_data_dir") or _backup_root() / "pg_pitr" / job.instance.name)
+    wal_archive_dir = extra.get("pg_wal_archive_dir")
+    if not wal_archive_dir:
+        raise RuntimeError("PITR 缺少 pg_wal_archive_dir 配置")
+    if restore_dir.exists():
+        shutil.rmtree(restore_dir)
+    restore_dir.mkdir(parents=True, exist_ok=True)
+    if tarfile.is_tarfile(file_path):
+        with tarfile.open(file_path) as tar:
+            tar.extractall(restore_dir)
+    elif file_path.is_dir():
+        for child in file_path.iterdir():
+            target = restore_dir / child.name
+            if child.is_dir():
+                shutil.copytree(child, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(child, target)
+    else:
+        raise RuntimeError("PostgreSQL PITR 需要 physical base backup tar 包或目录")
+    recovery_conf = restore_dir / "postgresql.auto.conf"
+    with open(recovery_conf, "a", encoding="utf-8") as fp:
+        fp.write(f"\nrestore_command = 'cp {wal_archive_dir}/%f %p'\n")
+        fp.write("recovery_target_action = 'promote'\n")
+        if job.restore_mode == "point_in_time":
+            if not job.target_time:
+                raise RuntimeError("PITR 需要目标时间点")
+            fp.write(f"recovery_target_time = '{job.target_time.isoformat(sep=' ', timespec='seconds')}'\n")
+        else:
+            if not job.target_txn_id:
+                raise RuntimeError("事务级恢复需要 target_txn_id")
+            fp.write(f"recovery_target_xid = '{job.target_txn_id}'\n")
+    (restore_dir / "recovery.signal").touch()
+    logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] 已生成 PostgreSQL PITR 恢复目录 {restore_dir}"})
+    pg_ctl = extra.get("pg_ctl_path") or shutil.which("pg_ctl")
+    if extra.get("pg_auto_start_recovery"):
+        if not pg_ctl:
+            raise RuntimeError("未找到 pg_ctl，无法自动启动 PITR")
+        cmd = [pg_ctl, "-D", str(restore_dir), "-w", "start"]
+        if extra.get("pg_pitr_port"):
+            cmd.extend(["-o", f"-p {extra.get('pg_pitr_port')}"])
+        _run_command(cmd)
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] PostgreSQL PITR 已自动启动"})
+
+
+def _restore_postgresql_backup(job: RestoreJob, env, logs, file_path: Path):
+    if (job.backup_record.backup_type or "") == "physical":
+        extra = job.instance.extra_config or {}
+        restore_dir = Path(extra.get("pg_restore_data_dir") or _backup_root() / "pg_restore" / job.instance.name)
+        if restore_dir.exists():
+            shutil.rmtree(restore_dir)
+        restore_dir.mkdir(parents=True, exist_ok=True)
+        if tarfile.is_tarfile(file_path):
+            with tarfile.open(file_path) as tar:
+                tar.extractall(restore_dir)
+        else:
+            raise RuntimeError("物理备份恢复需要 tar 文件")
+        logs.append({"time": timezone.now().isoformat(), "message": f"[trace:{job.trace_id}] PostgreSQL 物理备份已恢复到 {restore_dir}"})
+        return
+    cmd = [
+        shutil.which("psql") or "psql",
+        "-h", job.instance.host,
+        "-p", str(job.instance.port),
+        "-U", getattr(job.instance.secret, "username", ""),
+        "-d", job.instance.default_database or "postgres",
+        "-f", str(file_path),
+    ]
+    _run_command(cmd, env=env)
+
+
 def _execute_restore(job_id: int):
-    job = RestoreJob.objects.select_related("instance", "instance__secret", "backup_record").get(id=job_id)
+    job = RestoreJob.objects.select_related("instance", "instance__secret", "backup_record", "backup_record__plan").get(id=job_id)
     job.status = "running"
     job.started_at = timezone.now()
     logs = list(job.log_json or [])
@@ -1050,40 +1421,19 @@ def _execute_restore(job_id: int):
     instance = job.instance
     env = _build_db_cli_env(instance)
     try:
-        if not job.backup_record or not job.backup_record.file_uri:
-            raise RuntimeError("缺少备份文件")
-        file_path = Path(job.backup_record.file_uri)
-        if file_path.suffix == ".enc":
-            decrypted = file_path.with_suffix("")
-            decrypted.write_bytes(_cipher().decrypt(file_path.read_bytes()))
-            file_path = decrypted
-        if file_path.suffix == ".gz":
-            extracted = file_path.with_suffix("")
-            with gzip.open(file_path, "rb") as src, open(extracted, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            file_path = extracted
+        if not job.backup_record:
+            raise RuntimeError("缺少备份记录")
+        file_path = _prepare_restore_file(job.backup_record)
         if instance.db_type == "mysql":
-            cmd = [
-                shutil.which("mysql") or "mysql",
-                "-h", instance.host,
-                "-P", str(instance.port),
-                "-u", getattr(instance.secret, "username", ""),
-                instance.default_database or "mysql",
-            ]
-            with open(file_path, "rb") as fp:
-                process = subprocess.run(cmd, env=env, stdin=fp, capture_output=True)
-            if process.returncode != 0:
-                raise RuntimeError(process.stderr.decode("utf-8", errors="ignore") or "mysql restore failed")
+            if job.restore_mode == "backup":
+                _restore_mysql_dump(instance, env, file_path)
+            else:
+                _apply_mysql_pitr(job, env, logs, file_path)
         elif instance.db_type == "postgresql":
-            cmd = [
-                shutil.which("psql") or "psql",
-                "-h", instance.host,
-                "-p", str(instance.port),
-                "-U", getattr(instance.secret, "username", ""),
-                "-d", instance.default_database or "postgres",
-                "-f", str(file_path),
-            ]
-            _run_command(cmd, env=env)
+            if job.restore_mode == "backup":
+                _restore_postgresql_backup(job, env, logs, file_path)
+            else:
+                _apply_postgresql_pitr(job, logs, file_path)
         elif instance.db_type == "mongo":
             cmd = [
                 shutil.which("mongorestore") or "mongorestore",
@@ -1116,11 +1466,14 @@ def _execute_restore(job_id: int):
 
 
 def create_restore_job(instance_id, backup_record_id=None, restore_mode="backup", target_time=None, target_txn_id="", user=None):
+    parsed_target_time = parse_datetime(target_time) if isinstance(target_time, str) and target_time else target_time
+    if parsed_target_time and timezone.is_naive(parsed_target_time):
+        parsed_target_time = timezone.make_aware(parsed_target_time, timezone.get_current_timezone())
     job = RestoreJob.objects.create(
         instance_id=instance_id,
         backup_record_id=backup_record_id or None,
         restore_mode=restore_mode,
-        target_time=target_time,
+        target_time=parsed_target_time,
         target_txn_id=target_txn_id or "",
         trace_id=uuid.uuid4().hex,
         status="pending",

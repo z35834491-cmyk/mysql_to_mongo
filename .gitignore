@@ -57,7 +57,8 @@ yarn-error.log*
 Thumbs.db
 
 # --- Project Specific ---
-logs/
+logs/*
+!logs/.gitkeep
 state/db.sqlite3
 state/*.json
 !state/.gitkeep
@@ -69,7 +70,4 @@ deploy_artifacts/
 .env.local
 .env.*.local
 
-# --- Docker ---
-.dockerignore
-Dockerfile
-docker-compose.yml
+# --- Docker (keep Dockerfile / compose in repo; use .dockerignore for build context) ---

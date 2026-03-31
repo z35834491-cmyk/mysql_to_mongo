@@ -1,7 +1,8 @@
-version: '3.8'
+# 本地/测试：MySQL + Mongo RS + Redis + RabbitMQ + Shark Platform
+# 在仓库根目录执行: docker compose -f infra/docker/docker-compose.yml up -d --build
+version: "3.8"
 
 services:
-  # Add healthcheck to MySQL for better dependency management
   mysql_source:
     image: mysql:8.0
     container_name: mysql_source
@@ -11,17 +12,16 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: testdb
     volumes:
-      - ./mysql_conf/my.cnf:/etc/mysql/conf.d/my.cnf
-      - ./mysql_init:/docker-entrypoint-initdb.d:ro
+      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-proot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       timeout: 20s
       retries: 10
     restart: unless-stopped
 
-  # 2. MongoDB Replica Set
   mongo1:
     image: mongo:latest
     container_name: mongo1
@@ -34,9 +34,7 @@ services:
       - mongo1_data:/data/db
       - mongo_keyfile:/etc/mongo_key:ro
     command: >
-      bash -c "
-        exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile
-      "
+      bash -c "exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile"
     restart: unless-stopped
 
   mongo2:
@@ -51,9 +49,7 @@ services:
       - mongo2_data:/data/db
       - mongo_keyfile:/etc/mongo_key:ro
     command: >
-      bash -c "
-        exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile
-      "
+      bash -c "exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile"
     restart: unless-stopped
 
   mongo3:
@@ -68,12 +64,9 @@ services:
       - mongo3_data:/data/db
       - mongo_keyfile:/etc/mongo_key:ro
     command: >
-      bash -c "
-        exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile
-      "
+      bash -c "exec mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongo_key/mongo-keyfile"
     restart: unless-stopped
 
-  # 3. RS Init
   mongo_rs_init:
     image: mongo:latest
     depends_on:
@@ -106,8 +99,7 @@ services:
         echo 'Replica set init done.'
       "
     restart: "no"
-  
-  # 3.1 Key Init
+
   mongo_key_init:
     image: alpine:3.19
     entrypoint: >
@@ -121,7 +113,6 @@ services:
       - mongo_keyfile:/key
     restart: "no"
 
-  # 4. Redis
   redis:
     image: redis:latest
     container_name: redis_test
@@ -132,7 +123,6 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
-  # 5. RabbitMQ
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq_test
@@ -146,17 +136,16 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     restart: unless-stopped
 
-  # 6. Main App (Django + Vue 3)
   syncer_app:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile
     container_name: syncer_app
     ports:
       - "8000:8000"
     volumes:
-      - ./state:/app/state
-      - ./logs:/app/logs
+      - ../../state:/app/state
+      - ../../logs:/app/logs
     depends_on:
       mysql_source:
         condition: service_healthy

@@ -49,18 +49,22 @@
                 <el-button @click="formatSqlAction">格式化</el-button>
                 <el-button @click="explainSqlAction" :disabled="!canRun">执行计划</el-button>
                 <el-button type="warning" @click="reviewSqlAction" :disabled="!canRun">AI 分析</el-button>
+                <el-button @click="approvalSettingDrawerVisible = true" :disabled="!selectedInstance">审批设置</el-button>
                 <el-button type="primary" @click="executeSqlAction" :disabled="!canRun">执行 SQL</el-button>
               </div>
             </div>
           </template>
           <div class="editor-topbar">
-            <el-tag v-if="selectedInstance" type="info">{{ selectedInstance.db_type }}</el-tag>
-            <el-input v-model="workbench.database" placeholder="Database / Schema" class="database-input" />
-            <el-select v-model="workbench.executeMode" class="mode-select">
-              <el-option label="自动提交" value="auto_commit" />
-              <el-option label="事务模式" value="transaction" />
-              <el-option label="Dry Run" value="dry_run" />
+            <el-select v-model="selectedInstanceId" placeholder="选择实例" class="instance-input" @change="handleInstanceChange">
+              <el-option v-for="item in instances" :key="item.id" :label="`${item.name} · ${item.environment}`" :value="item.id" />
             </el-select>
+            <el-select v-model="workbench.database" placeholder="选择库 / Schema" class="database-input" filterable clearable>
+              <el-option v-for="item in databaseOptions" :key="item" :label="item" :value="item" />
+            </el-select>
+            <el-select v-model="workbench.applicantUserId" placeholder="工单申请人" class="applicant-input" clearable filterable>
+              <el-option v-for="item in approvalApplicants" :key="item.id" :label="`${item.username}${item.groups?.length ? ` (${item.groups.join(',')})` : ''}`" :value="item.id" />
+            </el-select>
+            <el-tag type="warning">自动模式: {{ autoExecuteModeText }}</el-tag>
           </div>
           <monaco-sql-editor
             v-model="workbench.sql"
@@ -147,6 +151,7 @@
                   <el-table-column prop="reason" label="原因" min-width="180" />
                   <el-table-column label="操作" width="150">
                     <template #default="{ row }">
+                      <el-button link @click="viewApproval(row)">详情</el-button>
                       <el-button link type="primary" @click="approve(row)" :disabled="row.status !== 'pending'">通过</el-button>
                       <el-button link type="warning" @click="remind(row)" :disabled="row.status !== 'pending'">催办</el-button>
                       <el-button link type="danger" @click="reject(row)" :disabled="row.status !== 'pending'">拒绝</el-button>
@@ -181,7 +186,7 @@
                   <el-table-column prop="enabled" label="启用" width="90" />
                 </el-table>
               </el-tab-pane>
-              <el-tab-pane label="访问控制" name="access">
+              <el-tab-pane v-if="canManageDbPermissions" label="访问控制" name="access">
                 <div class="toolbar-group mb-12">
                   <el-button type="primary" size="small" @click="openAccessRuleDrawer">新增访问规则</el-button>
                 </div>
@@ -199,8 +204,8 @@
               </el-tab-pane>
               <el-tab-pane label="备份恢复" name="backup">
                 <div class="toolbar-group mb-12">
-                  <el-button type="primary" size="small" @click="createBackupPlanAction" :disabled="!selectedInstance">新增备份计划</el-button>
-                  <el-button size="small" @click="createRestoreJobAction" :disabled="!selectedInstance">创建恢复任务</el-button>
+                  <el-button type="primary" size="small" @click="openBackupPlanDrawer()" :disabled="!selectedInstance">新增备份计划</el-button>
+                  <el-button size="small" @click="openRestoreDrawer()" :disabled="!selectedInstance">创建恢复任务</el-button>
                   <el-button size="small" type="warning" @click="createRollbackFromSelectedAudit" :disabled="!auditLogs.length">创建回滚任务</el-button>
                 </div>
                 <el-table :data="backupPlans" max-height="120">
@@ -208,8 +213,10 @@
                   <el-table-column prop="instance_name" label="实例" min-width="120" />
                   <el-table-column prop="backup_type" label="类型" width="100" />
                   <el-table-column prop="retention_days" label="保留天数" width="100" />
-                  <el-table-column label="操作" width="100">
+                  <el-table-column prop="storage_uri" label="存储目标" min-width="180" />
+                  <el-table-column label="操作" width="150">
                     <template #default="{ row }">
+                      <el-button link @click="openBackupPlanDrawer(row)">编辑</el-button>
                       <el-button link type="primary" @click="runBackup(row)">立即执行</el-button>
                     </template>
                   </el-table-column>
@@ -218,6 +225,7 @@
                 <el-table :data="backupRecords" max-height="120">
                   <el-table-column prop="instance_name" label="实例" min-width="120" />
                   <el-table-column prop="file_uri" label="文件" min-width="220" />
+                  <el-table-column prop="checksum_sha256" label="校验和" min-width="180" />
                   <el-table-column prop="status" label="状态" width="100" />
                 </el-table>
                 <el-divider content-position="left">恢复任务</el-divider>
@@ -291,6 +299,13 @@
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item>
         <el-form-item label="所属团队"><el-input v-model="form.owner_team" /></el-form-item>
         <el-form-item label="只读实例"><el-switch v-model="form.read_only" /></el-form-item>
+        <el-divider content-position="left">PITR 配置</el-divider>
+        <el-form-item label="MySQL Binlog 目录"><el-input v-model="form.extra_config.mysql_binlog_dir" placeholder="/data/mysql/binlog" /></el-form-item>
+        <el-form-item label="PostgreSQL WAL 目录"><el-input v-model="form.extra_config.pg_wal_archive_dir" placeholder="/data/postgres/wal_archive" /></el-form-item>
+        <el-form-item label="PostgreSQL 恢复目录"><el-input v-model="form.extra_config.pg_restore_data_dir" placeholder="/data/postgres/pitr_restore" /></el-form-item>
+        <el-form-item label="pg_ctl 路径"><el-input v-model="form.extra_config.pg_ctl_path" placeholder="/usr/local/bin/pg_ctl" /></el-form-item>
+        <el-form-item label="PITR 恢复端口"><el-input-number v-model="form.extra_config.pg_pitr_port" :min="1024" :max="65535" /></el-form-item>
+        <el-form-item label="自动启动恢复"><el-switch v-model="form.extra_config.pg_auto_start_recovery" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
@@ -408,6 +423,105 @@
         <el-button type="primary" @click="submitAccessRule">保存</el-button>
       </template>
     </el-drawer>
+
+    <el-drawer v-model="backupPlanDrawerVisible" :title="backupPlanForm.id ? '编辑备份计划' : '新增备份计划'" size="620px">
+      <el-form :model="backupPlanForm" label-width="140px">
+        <el-form-item label="实例">
+          <el-select v-model="backupPlanForm.instance">
+            <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="计划名称"><el-input v-model="backupPlanForm.name" /></el-form-item>
+        <el-form-item label="备份类型">
+          <el-select v-model="backupPlanForm.backup_type">
+            <el-option label="逻辑备份" value="logical" />
+            <el-option label="物理备份" value="physical" />
+            <el-option label="快照" value="snapshot" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Cron 表达式"><el-input v-model="backupPlanForm.schedule_expr" placeholder="0 2 * * *" /></el-form-item>
+        <el-form-item label="保留天数"><el-input-number v-model="backupPlanForm.retention_days" :min="1" :max="3650" /></el-form-item>
+        <el-form-item label="存储 URI"><el-input v-model="backupPlanForm.storage_uri" placeholder="s3://bucket/prefix 或 local://..." /></el-form-item>
+        <el-form-item label="启用压缩"><el-switch v-model="backupPlanForm.compression_enabled" /></el-form-item>
+        <el-form-item label="启用加密"><el-switch v-model="backupPlanForm.encryption_enabled" /></el-form-item>
+        <el-divider content-position="left">对象存储配置</el-divider>
+        <el-form-item label="Bucket"><el-input v-model="backupPlanForm.storage_config.bucket" /></el-form-item>
+        <el-form-item label="Region"><el-input v-model="backupPlanForm.storage_config.region" /></el-form-item>
+        <el-form-item label="Endpoint"><el-input v-model="backupPlanForm.storage_config.endpoint" placeholder="https://s3.amazonaws.com 或 MinIO 地址" /></el-form-item>
+        <el-form-item label="Access Key"><el-input v-model="backupPlanForm.storage_config.access_key" /></el-form-item>
+        <el-form-item label="Secret Key"><el-input v-model="backupPlanForm.storage_config.secret_key" type="password" show-password /></el-form-item>
+        <el-form-item label="启用"><el-switch v-model="backupPlanForm.enabled" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="backupPlanDrawerVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitBackupPlan">保存</el-button>
+      </template>
+    </el-drawer>
+
+    <el-drawer v-model="restoreDrawerVisible" title="创建恢复任务 / PITR" size="620px">
+      <el-form :model="restoreForm" label-width="140px">
+        <el-form-item label="实例">
+          <el-select v-model="restoreForm.instance">
+            <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备份记录">
+          <el-select v-model="restoreForm.backup_record" clearable filterable>
+            <el-option v-for="item in backupRecords.filter(record => record.instance === restoreForm.instance || record.instance_id === restoreForm.instance)" :key="item.id" :label="`${item.id} - ${item.file_uri}`" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="恢复模式">
+          <el-radio-group v-model="restoreForm.restore_mode">
+            <el-radio-button label="backup">备份恢复</el-radio-button>
+            <el-radio-button label="point_in_time">时间点恢复</el-radio-button>
+            <el-radio-button label="transaction">事务恢复</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="restoreForm.restore_mode === 'point_in_time'" label="目标时间">
+          <el-date-picker v-model="restoreForm.target_time" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" />
+        </el-form-item>
+        <el-form-item v-if="restoreForm.restore_mode === 'transaction'" label="目标事务">
+          <el-input v-model="restoreForm.target_txn_id" placeholder="MySQL GTID / stop-position 或 PostgreSQL XID" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="restoreDrawerVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitRestoreJob">创建</el-button>
+      </template>
+    </el-drawer>
+
+    <el-drawer v-model="approvalSettingDrawerVisible" title="审批工单设置" size="560px">
+      <el-form :model="workbench" label-width="120px">
+        <el-form-item label="申请人">
+          <el-select v-model="workbench.applicantUserId" clearable filterable>
+            <el-option v-for="item in approvalApplicants" :key="item.id" :label="`${item.username}${item.groups?.length ? ` (${item.groups.join(',')})` : ''}`" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="抄送人">
+          <el-select v-model="workbench.ccUserIds" multiple clearable filterable>
+            <el-option v-for="item in userOptions" :key="item.id" :label="item.username" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="申请原因">
+          <el-input v-model="workbench.approvalReason" type="textarea" :rows="3" placeholder="说明执行目的、影响范围和回滚方案" />
+        </el-form-item>
+        <el-form-item label="指定审批链">
+          <div class="flow-config">
+            <div v-for="(step, index) in workbench.approvalFlow" :key="index" class="flow-row">
+              <el-select v-model="step.group_name" placeholder="审批角色组">
+                <el-option v-for="item in roleOptions" :key="item.name" :label="item.name" :value="item.name" />
+              </el-select>
+              <el-input-number v-model="step.sla_minutes" :min="5" :max="1440" />
+              <el-button link type="danger" @click="workbench.approvalFlow.splice(index, 1)">删除</el-button>
+            </div>
+            <el-button size="small" @click="workbench.approvalFlow.push({ group_name: '', sla_minutes: 60 })">新增审批节点</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="approvalSettingDrawerVisible = false">关闭</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -415,8 +529,13 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { dbManagerProApi, type DBInstancePayload } from '@/api/db_manager_pro'
+import { useSystemStore } from '@/stores/system'
+import { useRouter } from 'vue-router'
 import MonacoSqlEditor from './components/MonacoSqlEditor.vue'
 import ExplainVisualizer from './components/ExplainVisualizer.vue'
+
+const systemStore = useSystemStore()
+const router = useRouter()
 
 const filters = reactive({ keyword: '', environment: '' })
 const instances = ref<any[]>([])
@@ -431,7 +550,10 @@ const rollbackJobs = ref<any[]>([])
 const jobs = ref<any[]>([])
 const userOptions = ref<any[]>([])
 const roleOptions = ref<any[]>([])
+const approvalApplicants = ref<any[]>([])
+const databaseOptions = ref<string[]>([])
 const selectedInstance = ref<any>(null)
+const selectedInstanceId = ref<number | undefined>(undefined)
 const drawerVisible = ref(false)
 const drawerTitle = ref('新增实例')
 const activePane = ref('result')
@@ -444,6 +566,9 @@ const completionItems = ref<any[]>([])
 const diagnosticsReport = ref<any>(null)
 const policyDrawerVisible = ref(false)
 const accessDrawerVisible = ref(false)
+const backupPlanDrawerVisible = ref(false)
+const restoreDrawerVisible = ref(false)
+const approvalSettingDrawerVisible = ref(false)
 const form = reactive<DBInstancePayload>({
   name: '',
   db_type: 'mysql',
@@ -456,12 +581,22 @@ const form = reactive<DBInstancePayload>({
   read_only: false,
   owner_team: '',
   tags: [],
-  extra_config: {}
+  extra_config: {
+    mysql_binlog_dir: '',
+    pg_wal_archive_dir: '',
+    pg_restore_data_dir: '',
+    pg_ctl_path: '',
+    pg_pitr_port: 55432,
+    pg_auto_start_recovery: false
+  }
 })
 const workbench = reactive({
   database: '',
   sql: '',
-  executeMode: 'auto_commit'
+  applicantUserId: undefined as number | undefined,
+  ccUserIds: [] as number[],
+  approvalReason: '',
+  approvalFlow: [] as Array<{ group_name: string; sla_minutes: number }>
 })
 const policyForm = reactive({
   name: '',
@@ -484,6 +619,32 @@ const accessRuleForm = reactive({
   actions: ['view', 'query'] as string[],
   enabled: true
 })
+const backupPlanForm = reactive({
+  id: undefined as number | undefined,
+  instance: undefined as number | undefined,
+  name: '',
+  backup_type: 'logical',
+  schedule_expr: '0 2 * * *',
+  retention_days: 7,
+  storage_uri: 'local://db_backups',
+  storage_config: {
+    bucket: '',
+    region: '',
+    endpoint: '',
+    access_key: '',
+    secret_key: ''
+  },
+  compression_enabled: true,
+  encryption_enabled: false,
+  enabled: true
+})
+const restoreForm = reactive({
+  instance: undefined as number | undefined,
+  backup_record: undefined as number | undefined,
+  restore_mode: 'backup',
+  target_time: '',
+  target_txn_id: ''
+})
 
 let pollTimer: number | undefined
 
@@ -500,12 +661,22 @@ const summaryCards = computed(() => {
   ]
 })
 
+const canManageDbPermissions = computed(() => {
+  return systemStore.isAdmin || systemStore.hasPermission('manage_db_permissions') || systemStore.hasPermission('manage_db_instances')
+})
+
 const activeInstanceTitle = computed(() => {
   if (!selectedInstance.value) return '请选择实例并输入 SQL'
   return `${selectedInstance.value.name} · ${selectedInstance.value.environment} · ${selectedInstance.value.db_type}`
 })
 
 const canRun = computed(() => Boolean(selectedInstance.value?.id && workbench.sql.trim()))
+const autoExecuteModeText = computed(() => {
+  const sql = workbench.sql.trim().toUpperCase()
+  if (!sql) return '待识别'
+  if (/^(INSERT|UPDATE|DELETE|MERGE|ALTER|DROP|TRUNCATE|CREATE|RENAME)\b/.test(sql)) return '事务执行'
+  return '自动提交'
+})
 
 const resetForm = () => {
   Object.assign(form, {
@@ -521,7 +692,14 @@ const resetForm = () => {
     read_only: false,
     owner_team: '',
     tags: [],
-    extra_config: {}
+    extra_config: {
+      mysql_binlog_dir: '',
+      pg_wal_archive_dir: '',
+      pg_restore_data_dir: '',
+      pg_ctl_path: '',
+      pg_pitr_port: 55432,
+      pg_auto_start_recovery: false
+    }
   })
 }
 
@@ -534,7 +712,17 @@ const openCreateDrawer = () => {
 const editInstance = (row: any) => {
   drawerTitle.value = '编辑实例'
   resetForm()
-  Object.assign(form, row, { password: '' })
+  Object.assign(form, row, {
+    password: '',
+    extra_config: {
+      mysql_binlog_dir: row.extra_config?.mysql_binlog_dir || '',
+      pg_wal_archive_dir: row.extra_config?.pg_wal_archive_dir || '',
+      pg_restore_data_dir: row.extra_config?.pg_restore_data_dir || '',
+      pg_ctl_path: row.extra_config?.pg_ctl_path || '',
+      pg_pitr_port: row.extra_config?.pg_pitr_port || 55432,
+      pg_auto_start_recovery: !!row.extra_config?.pg_auto_start_recovery
+    }
+  })
   drawerVisible.value = true
 }
 
@@ -580,14 +768,36 @@ const loadPolicies = async () => {
 }
 
 const loadAccessRules = async () => {
+  if (!canManageDbPermissions.value) {
+    accessRules.value = []
+    return
+  }
   const data = await dbManagerProApi.listAccessRules()
   accessRules.value = Array.isArray(data) ? data : []
 }
 
 const loadUserRoleOptions = async () => {
-  const [users, roles] = await Promise.all([dbManagerProApi.listUsers(), dbManagerProApi.listRoles()])
-  userOptions.value = Array.isArray(users) ? users : []
-  roleOptions.value = Array.isArray(roles) ? roles : []
+  if (!canManageDbPermissions.value) {
+    userOptions.value = []
+    roleOptions.value = []
+    return
+  }
+  const data = await dbManagerProApi.listPermissionSubjects()
+  userOptions.value = Array.isArray(data.users) ? data.users : []
+  roleOptions.value = Array.isArray(data.roles) ? data.roles : []
+}
+
+const loadApprovalApplicants = async () => {
+  const data = await dbManagerProApi.listApprovalApplicants()
+  approvalApplicants.value = Array.isArray(data.users) ? data.users : []
+  if (!workbench.applicantUserId && approvalApplicants.value.length) {
+    workbench.applicantUserId = approvalApplicants.value[0].id
+  }
+}
+
+const loadDatabaseOptions = async (instanceId: number) => {
+  const data = await dbManagerProApi.getSchema(instanceId)
+  databaseOptions.value = Object.keys(data || {})
 }
 
 const loadBackupData = async () => {
@@ -605,9 +815,18 @@ const loadBackupData = async () => {
 
 const selectInstance = async (row: any) => {
   selectedInstance.value = row
-  workbench.database = row.default_database || ''
+  selectedInstanceId.value = row.id
+  await loadDatabaseOptions(row.id)
+  workbench.database = row.default_database || databaseOptions.value[0] || ''
   await loadCompletion()
   await runDiagnosticsAction()
+}
+
+const handleInstanceChange = async (instanceId: number) => {
+  const row = instances.value.find(item => item.id === instanceId)
+  if (row) {
+    await selectInstance(row)
+  }
 }
 
 const testInstance = async (row: any) => {
@@ -645,7 +864,15 @@ const reviewSqlAction = async () => {
 
 const executeSqlAction = async () => {
   if (!selectedInstance.value) return
-  const res = await dbManagerProApi.createJob(selectedInstance.value.id, workbench.database, workbench.sql, workbench.executeMode)
+  const res = await dbManagerProApi.createJob({
+    instance_id: selectedInstance.value.id,
+    database: workbench.database,
+    sql: workbench.sql,
+    applicant_user_id: workbench.applicantUserId,
+    approval_reason: workbench.approvalReason,
+    cc_user_ids: workbench.ccUserIds,
+    approval_flow: workbench.approvalFlow.filter(item => item.group_name)
+  })
   activeJob.value = res.job
   aiReview.value = res.report
   activePane.value = 'logs'
@@ -653,6 +880,10 @@ const executeSqlAction = async () => {
   if (activeJob.value?.id) {
     await loadJobDetail(activeJob.value)
   }
+}
+
+const viewApproval = (row: any) => {
+  router.push(`/database-manager/approvals/${row.id}`)
 }
 
 const loadJobDetail = async (row: any) => {
@@ -747,19 +978,39 @@ const submitAccessRule = async () => {
   await loadAccessRules()
 }
 
-const createBackupPlanAction = async () => {
-  if (!selectedInstance.value) return
-  const { value } = await ElMessageBox.prompt('请输入备份计划名称', '新增备份计划', { confirmButtonText: '创建', cancelButtonText: '取消' })
-  await dbManagerProApi.createBackupPlan({
-    instance: selectedInstance.value.id,
-    name: value,
-    backup_type: 'logical',
-    schedule_expr: '0 2 * * *',
-    retention_days: 7,
-    storage_uri: 's3://shark-platform-backup',
-    enabled: true
+const openBackupPlanDrawer = (row?: any) => {
+  Object.assign(backupPlanForm, {
+    id: row?.id,
+    instance: row?.instance || selectedInstance.value?.id,
+    name: row?.name || '',
+    backup_type: row?.backup_type || 'logical',
+    schedule_expr: row?.schedule_expr || '0 2 * * *',
+    retention_days: row?.retention_days || 7,
+    storage_uri: row?.storage_uri || 'local://db_backups',
+    storage_config: {
+      bucket: row?.storage_config?.bucket || '',
+      region: row?.storage_config?.region || '',
+      endpoint: row?.storage_config?.endpoint || '',
+      access_key: row?.storage_config?.access_key || '',
+      secret_key: row?.storage_config?.secret_key || ''
+    },
+    compression_enabled: row?.compression_enabled ?? true,
+    encryption_enabled: row?.encryption_enabled ?? false,
+    enabled: row?.enabled ?? true
   })
-  ElMessage.success('备份计划已创建')
+  backupPlanDrawerVisible.value = true
+}
+
+const submitBackupPlan = async () => {
+  const payload = { ...backupPlanForm, storage_config: { ...backupPlanForm.storage_config } }
+  if (payload.id) {
+    await dbManagerProApi.updateBackupPlan(payload.id, payload)
+    ElMessage.success('备份计划已更新')
+  } else {
+    await dbManagerProApi.createBackupPlan(payload)
+    ElMessage.success('备份计划已创建')
+  }
+  backupPlanDrawerVisible.value = false
   await loadBackupData()
 }
 
@@ -769,13 +1020,26 @@ const runBackup = async (row: any) => {
   await loadBackupData()
 }
 
-const createRestoreJobAction = async () => {
-  if (!selectedInstance.value) return
-  await dbManagerProApi.createRestoreJob({
-    instance: selectedInstance.value.id,
-    restore_mode: 'point_in_time',
-    target_txn_id: `manual-${Date.now()}`
+const openRestoreDrawer = () => {
+  Object.assign(restoreForm, {
+    instance: selectedInstance.value?.id,
+    backup_record: backupRecords.value.find(item => item.instance === selectedInstance.value?.id || item.instance_id === selectedInstance.value?.id)?.id,
+    restore_mode: 'backup',
+    target_time: '',
+    target_txn_id: ''
   })
+  restoreDrawerVisible.value = true
+}
+
+const submitRestoreJob = async () => {
+  await dbManagerProApi.createRestoreJob({
+    instance: restoreForm.instance,
+    backup_record: restoreForm.backup_record,
+    restore_mode: restoreForm.restore_mode,
+    target_time: restoreForm.target_time || undefined,
+    target_txn_id: restoreForm.target_txn_id || undefined
+  })
+  restoreDrawerVisible.value = false
   ElMessage.success('恢复任务已创建')
   await loadBackupData()
 }
@@ -824,7 +1088,7 @@ const alertType = (decision: string) => {
 }
 
 const refreshAll = async () => {
-  await Promise.all([loadInstances(), loadJobs(), loadApprovals(), loadAudit(), loadPolicies(), loadAccessRules(), loadBackupData(), loadUserRoleOptions()])
+  await Promise.all([loadInstances(), loadJobs(), loadApprovals(), loadAudit(), loadPolicies(), loadAccessRules(), loadBackupData(), loadUserRoleOptions(), loadApprovalApplicants()])
   if (activeJob.value?.id) {
     await loadJobDetail(activeJob.value)
   }
@@ -917,11 +1181,14 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-bottom: 12px;
 }
-.database-input {
-  max-width: 260px;
+.instance-input {
+  width: 240px;
 }
-.mode-select {
-  width: 160px;
+.database-input {
+  width: 220px;
+}
+.applicant-input {
+  width: 240px;
 }
 .sql-editor :deep(textarea) {
   font-family: Menlo, Monaco, Consolas, monospace;
