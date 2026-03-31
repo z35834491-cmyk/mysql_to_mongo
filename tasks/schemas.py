@@ -5,6 +5,7 @@ class ConnectionConfig(BaseModel):
     id: str
     name: str
     type: str  # "mysql" or "mongo"
+    deployment_mode: str = "single"
     host: str
     port: int
     user: str
@@ -18,6 +19,13 @@ class ConnectionConfig(BaseModel):
     
     # MySQL specific
     use_ssl: bool = False
+
+    @field_validator("deployment_mode")
+    @classmethod
+    def _deployment_mode(cls, v: str) -> str:
+        if v not in ("single", "cluster"):
+            return "single"
+        return v
 
 class DBConfig(BaseModel):
     host: Optional[str] = None

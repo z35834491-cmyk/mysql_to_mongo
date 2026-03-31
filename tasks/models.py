@@ -4,6 +4,11 @@ class Connection(models.Model):
     id = models.CharField(max_length=100, primary_key=True)
     name = models.CharField(max_length=255)
     type = models.CharField(max_length=50) # mysql, mongo
+    deployment_mode = models.CharField(
+        max_length=16,
+        choices=[("single", "Single"), ("cluster", "Cluster")],
+        default="single",
+    )
     host = models.CharField(max_length=255, blank=True, null=True)
     port = models.IntegerField(null=True, blank=True)
     user = models.CharField(max_length=255, blank=True, null=True)

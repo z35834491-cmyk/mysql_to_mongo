@@ -1,6 +1,7 @@
 export interface Connection {
   id: string
   type: 'mysql' | 'mongo'
+  deployment_mode?: 'single' | 'cluster'
   host: string
   port: number | string
   user: string

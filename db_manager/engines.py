@@ -479,9 +479,17 @@ class PostgreSQLEngine(BaseEngine):
         return items
 
 class RedisEngine(BaseEngine):
+    def _redis_mode(self):
+        dm = getattr(self.conn, 'deployment_mode', None)
+        if dm == 'cluster':
+            return 'cluster'
+        if dm == 'single':
+            return 'standalone'
+        return 'cluster' if self._extra().get('mode') == 'cluster' else 'standalone'
+
     def _connect(self, db=0):
-        mode = self._extra().get('mode', 'standalone')
-        
+        mode = self._redis_mode()
+
         if mode == 'cluster':
             nodes = []
             if ',' in self.conn.host:
@@ -523,7 +531,7 @@ class RedisEngine(BaseEngine):
     def get_structure(self):
         tree = {}
         r = self._connect()
-        mode = self._extra().get('mode', 'standalone')
+        mode = self._redis_mode()
         try:
             # 1. Determine DBs to show
             dbs = []
@@ -632,7 +640,7 @@ class RedisEngine(BaseEngine):
         command = params.get('command')
         db_idx = int(db_name.replace('db', ''))
         
-        mode = self._extra().get('mode', 'standalone')
+        mode = self._redis_mode()
         if mode == 'cluster': db_idx = 0
             
         r = self._connect(db_idx)

@@ -4,6 +4,7 @@ export interface DBInstancePayload {
   id?: number
   name: string
   db_type: 'mysql' | 'postgresql' | 'redis' | 'mongo' | 'rabbitmq'
+  deployment_mode?: 'single' | 'cluster'
   environment: 'dev' | 'test' | 'staging' | 'prod'
   host: string
   port: number

@@ -14,6 +14,7 @@ class DBInstanceSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "db_type",
+            "deployment_mode",
             "environment",
             "host",
             "port",

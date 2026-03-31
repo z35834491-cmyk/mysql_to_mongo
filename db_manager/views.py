@@ -15,6 +15,13 @@ from .serializers import BackupPlanSerializer, BackupRecordSerializer, DBInstanc
 from .services import approval_is_overdue, approve_order, cancel_job, create_ai_review_job, create_execution_job, create_restore_job, create_rollback_job, ensure_instance_access, execute_rollback_job, export_audit_rows, explain_access_preview, explain_sql, filter_accessible_instances, get_schema, get_table_detail, list_approval_applicants, matching_execution_policy, pause_job, recommend_execute_mode, recommend_permission_codename, reject_order, remind_approval, resume_job, run_backup_plan, run_instance_diagnostics, serialize_access_rule, serialize_backup_plan, serialize_execution_policy, serialize_instance, serialize_rollback_job, test_instance, upsert_access_rule, upsert_backup_plan, upsert_execution_policy, upsert_instance
 
 
+def _normalize_db_connection_extra(conn_type, deployment_mode, extra_config):
+    extra = dict(extra_config or {})
+    if conn_type == "redis":
+        extra["mode"] = "cluster" if deployment_mode == "cluster" else "standalone"
+    return extra
+
+
 def is_readonly(user):
     if user.is_superuser or user.is_staff:
         return False
@@ -42,6 +49,7 @@ def connection_list(request):
                 "id": c.id,
                 "name": c.name,
                 "type": c.type,
+                "deployment_mode": c.deployment_mode,
                 "host": c.host,
                 "port": c.port,
                 "user": c.user,
@@ -51,15 +59,24 @@ def connection_list(request):
     if is_readonly(request.user):
         return Response({"error": "Permission Denied: Read-only account"}, status=403)
     data = request.data
+    deployment_mode = data.get('deployment_mode') or 'single'
+    if deployment_mode not in ('single', 'cluster'):
+        deployment_mode = 'single'
+    extra = _normalize_db_connection_extra(
+        data.get('type') or '',
+        deployment_mode,
+        data.get('extra_config', {}),
+    )
     conn = DatabaseConnection.objects.create(
         name=data.get('name'),
         type=data.get('type'),
+        deployment_mode=deployment_mode,
         host=data.get('host'),
         port=data.get('port', 3306),
         user=data.get('user'),
         password=data.get('password'),
         database=data.get('database'),
-        extra_config=data.get('extra_config', {})
+        extra_config=extra,
     )
     return Response({"id": conn.id, "msg": "Created"})
 
@@ -73,6 +90,7 @@ def connection_detail(request, pk):
             "id": conn.id,
             "name": conn.name,
             "type": conn.type,
+            "deployment_mode": conn.deployment_mode,
             "host": conn.host,
             "port": conn.port,
             "user": conn.user,
@@ -88,13 +106,17 @@ def connection_detail(request, pk):
         return Response({"error": "Permission Denied: Read-only account"}, status=403)
     data = request.data
     conn.name = data.get('name', conn.name)
+    if 'deployment_mode' in data:
+        dm = data.get('deployment_mode') or 'single'
+        conn.deployment_mode = dm if dm in ('single', 'cluster') else 'single'
     conn.host = data.get('host', conn.host)
     conn.port = data.get('port', conn.port)
     conn.user = data.get('user', conn.user)
     if 'password' in data:
         conn.password = data['password']
     conn.database = data.get('database', conn.database)
-    conn.extra_config = data.get('extra_config', conn.extra_config)
+    base_extra = data.get('extra_config', conn.extra_config)
+    conn.extra_config = _normalize_db_connection_extra(conn.type, conn.deployment_mode, base_extra)
     conn.save()
     return Response({"msg": "Updated"})
 
@@ -103,14 +125,23 @@ def connection_detail(request, pk):
 @permission_classes([IsAuthenticated])
 def test_connection(request):
     data = request.data
+    dm = data.get('deployment_mode') or 'single'
+    if dm not in ('single', 'cluster'):
+        dm = 'single'
+    extra = _normalize_db_connection_extra(
+        data.get('type') or '',
+        dm,
+        data.get('extra_config', {}),
+    )
     conn = DatabaseConnection(
         type=data.get('type'),
+        deployment_mode=dm,
         host=data.get('host'),
         port=data.get('port'),
         user=data.get('user'),
         password=data.get('password'),
         database=data.get('database'),
-        extra_config=data.get('extra_config', {})
+        extra_config=extra,
     )
     try:
         engine = DBEngineFactory.get_engine(conn)

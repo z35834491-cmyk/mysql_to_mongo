@@ -399,6 +399,7 @@ def serialize_instance(instance: DBInstance):
         "id": instance.id,
         "name": instance.name,
         "db_type": instance.db_type,
+        "deployment_mode": instance.deployment_mode,
         "environment": instance.environment,
         "host": instance.host,
         "port": instance.port,
@@ -422,9 +423,13 @@ def upsert_instance(data, user):
     if instance is None:
         instance = DBInstance(created_by=user)
 
-    for field in ["name", "db_type", "environment", "host", "port", "default_database", "read_only", "owner_team", "tags", "extra_config"]:
+    for field in ["name", "db_type", "deployment_mode", "environment", "host", "port", "default_database", "read_only", "owner_team", "tags", "extra_config"]:
         if field in data:
             setattr(instance, field, data.get(field))
+    if instance.db_type == "redis":
+        extra = dict(instance.extra_config or {})
+        extra["mode"] = "cluster" if instance.deployment_mode == "cluster" else "standalone"
+        instance.extra_config = extra
     instance.save()
 
     secret = getattr(instance, "secret", None)

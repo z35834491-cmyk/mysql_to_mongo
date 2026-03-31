@@ -7,6 +7,11 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models
 
+DEPLOYMENT_MODES = [
+    ("single", "Single"),
+    ("cluster", "Cluster"),
+]
+
 
 def _build_cipher():
     digest = hashlib.sha256((settings.SECRET_KEY or "shark-platform").encode("utf-8")).digest()
@@ -17,6 +22,7 @@ class DatabaseConnection(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
     type = models.CharField(max_length=20)
+    deployment_mode = models.CharField(max_length=16, choices=DEPLOYMENT_MODES, default="single")
     host = models.CharField(max_length=255)
     port = models.IntegerField(default=3306)
     user = models.CharField(max_length=100, blank=True, null=True)
@@ -47,6 +53,7 @@ class DBInstance(models.Model):
 
     name = models.CharField(max_length=128, unique=True)
     db_type = models.CharField(max_length=32, choices=DB_TYPES)
+    deployment_mode = models.CharField(max_length=16, choices=DEPLOYMENT_MODES, default="single")
     environment = models.CharField(max_length=32, choices=ENV_TYPES, default="dev")
     host = models.CharField(max_length=255)
     port = models.IntegerField()

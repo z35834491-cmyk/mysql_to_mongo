@@ -26,6 +26,13 @@
         <el-table :data="instances" height="560" @row-click="selectInstance">
           <el-table-column prop="name" label="实例" min-width="140" />
           <el-table-column prop="db_type" label="类型" width="110" />
+          <el-table-column label="部署" width="88">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.deployment_mode === 'cluster' ? 'warning' : 'info'" effect="plain">
+                {{ row.deployment_mode === 'cluster' ? '集群' : '单点' }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="environment" label="环境" width="100" />
           <el-table-column prop="status" label="状态" width="100" />
           <el-table-column label="操作" width="120">
@@ -285,6 +292,12 @@
             <el-option label="MongoDB" value="mongo" />
             <el-option label="RabbitMQ" value="rabbitmq" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="部署模式">
+          <el-radio-group v-model="form.deployment_mode">
+            <el-radio-button label="single">单点</el-radio-button>
+            <el-radio-button label="cluster">集群</el-radio-button>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="环境">
           <el-select v-model="form.environment">
@@ -601,6 +614,7 @@ const approvalSettingDrawerVisible = ref(false)
 const form = reactive<DBInstancePayload>({
   name: '',
   db_type: 'mysql',
+  deployment_mode: 'single',
   environment: 'dev',
   host: '',
   port: 3306,
@@ -740,6 +754,7 @@ const resetForm = () => {
     id: undefined,
     name: '',
     db_type: 'mysql',
+    deployment_mode: 'single',
     environment: 'dev',
     host: '',
     port: 3306,
@@ -790,6 +805,7 @@ const editInstance = (row: any) => {
   resetForm()
   Object.assign(form, row, {
     password: '',
+    deployment_mode: row.deployment_mode === 'cluster' ? 'cluster' : 'single',
     extra_config: {
       mysql_binlog_dir: row.extra_config?.mysql_binlog_dir || '',
       pg_wal_archive_dir: row.extra_config?.pg_wal_archive_dir || '',

@@ -4,6 +4,7 @@ export interface DBConnection {
   id?: string
   name: string
   type: 'mysql' | 'redis' | 'mongo' | 'rabbitmq'
+  deployment_mode?: 'single' | 'cluster'
   host: string
   port: number
   user?: string

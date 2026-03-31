@@ -60,6 +60,7 @@ def connection_list(request):
                 "id": c.id,
                 "name": c.name,
                 "type": c.type,
+                "deployment_mode": getattr(c, "deployment_mode", "single") or "single",
                 "host": c.host,
                 "port": c.port,
                 "user": c.user,
@@ -80,6 +81,7 @@ def connection_list(request):
                 defaults={
                     "name": cfg.name,
                     "type": cfg.type,
+                    "deployment_mode": cfg.deployment_mode,
                     "host": cfg.host,
                     "port": cfg.port,
                     "user": cfg.user,
@@ -105,6 +107,7 @@ def connection_detail(request, conn_id):
                 "id": c.id,
                 "name": c.name,
                 "type": c.type,
+                "deployment_mode": getattr(c, "deployment_mode", "single") or "single",
                 "host": c.host,
                 "port": c.port,
                 "user": c.user,
