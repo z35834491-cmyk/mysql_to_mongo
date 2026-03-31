@@ -365,7 +365,12 @@ const refreshLabel = computed(() => (pollSec.value > 0 ? `${pollSec.value}s 自�
 
 const kpiCards = ref([
   { key: 'total', label: '窗口内请求', value: '—', source: '' },
-  { key: 'qps', label: 'QPS (近60s)', value: '—', source: '' },
+  {
+    key: 'qps',
+    label: 'QPS (请求时间·近60s)',
+    value: '—',
+    source: '按日志内请求时刻，非推送时刻',
+  },
   { key: 'lat', label: '平均响应', value: '—', source: '' },
   { key: 'err', label: '错误率', value: '—', source: '' },
   { key: 'up', label: '可用性', value: '—', source: '' },
@@ -740,7 +745,12 @@ function updateKpiText() {
   const o = overview.value || {}
   kpiCards.value = [
     { key: 'total', label: '窗口内请求', value: fmtNum(o.total_requests), source: '' },
-    { key: 'qps', label: 'QPS (近60s)', value: fmtNum(o.qps), source: '' },
+    {
+      key: 'qps',
+      label: 'QPS (请求时间·近60s)',
+      value: fmtNum(o.qps),
+      source: '按日志内请求时刻，非推送时刻',
+    },
     { key: 'lat', label: '平均响应', value: `${o.latency_avg_ms ?? 0} ms`, source: '' },
     { key: 'err', label: '错误率', value: `${o.error_rate_pct ?? 0}%`, source: '' },
     {
