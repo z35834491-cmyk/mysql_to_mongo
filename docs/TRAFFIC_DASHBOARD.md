@@ -165,6 +165,8 @@ access_log /var/log/nginx/access.json.log access_json;
 
 **说明**：ingest 接口**不校验登录 Cookie**，仅校验 `Bearer`；务必 TLS + 强随机 token。单次请求行数受 `TRAFFIC_INGEST_MAX_BODY_LINES` 限制，超高 QPS 请提高推送频率或增大该值。
 
+**K8s 一键清单（GeoIP PVC、Redis Job、ClickHouse 等）**：见 **[deployment/traffic-middleware.md](./deployment/traffic-middleware.md)**；Filebeat 推送见 [FILEBEAT_NGINX_TRAFFIC.md](./FILEBEAT_NGINX_TRAFFIC.md)。
+
 ---
 
 ## 6. Prometheus Blackbox Exporter

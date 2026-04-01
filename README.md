@@ -18,6 +18,7 @@
   <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white" alt="Vue"/>
   <img src="https://img.shields.io/badge/Vite-3-646CFF?logo=vite&logoColor=white" alt="Vite"/>
   <img src="https://img.shields.io/badge/Element_Plus-2.x-409EFF?logo=element&logoColor=white" alt="Element Plus"/>
+  <img src="https://img.shields.io/badge/ECharts-5.5-ED5050?logo=apacheecharts&logoColor=white" alt="ECharts"/>
   <img src="https://img.shields.io/badge/MySQL-5.7%20%7C%208.0-4479A1?logo=mysql&logoColor=white" alt="MySQL"/>
   <img src="https://img.shields.io/badge/MongoDB-4.4+-47A248?logo=mongodb&logoColor=white" alt="MongoDB"/>
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker"/>
@@ -47,7 +48,7 @@
 | **Traffic** | Nginx 日志聚合、GeoIP、Blackbox、流量大盘 | Web：`/dashboard`；API：`/api/traffic/*`；手册：[docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) |
 | **Django Admin** | 后台管理（需超级用户） | `/admin/` |
 
-生产部署与 RBAC、PVC、Ingress、初始化等请以 **[docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md)** 为准；**Compose / K8s 示例**见 **[infra/README.md](./infra/README.md)**（与 Django 应用 `deploy/` 无关）。本文侧重**功能总览、API 索引、同步任务配置与常见运维**。
+**部署与配置**已收敛到 **[docs/deployment/README.md](./docs/deployment/README.md)**（含 Docker Compose、Kubernetes、Traffic 中间件）；生产 K8s 细则见 **[docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md)**。**清单目录**见 [infra/README.md](./infra/README.md)（与 Django 应用内 **`deploy/`** 批量部署引擎无关）。根目录 **[scripts/deploy-local.sh](./scripts/deploy-local.sh)** 为本地一键 `docker compose up`。本文侧重**功能总览、API 索引、同步任务与常见运维**。
 
 ---
 
@@ -56,6 +57,7 @@
 - [版本与依赖矩阵](#版本与依赖矩阵)
 - [系统架构](#系统架构)
 - [架构与访问方式](#架构与访问方式)
+- [部署文档与一键脚本](#部署文档与一键脚本)
 - [快速开始](#快速开始)
 - [配置清单](#配置清单)
 - [数据同步（MySQL → MongoDB）](#数据同步mysql--mongodb)
@@ -100,7 +102,7 @@
 | Pinia | ^3.0 | 状态管理 |
 | Vue Router | ^4.6 | 路由 |
 | Axios | ^1.13 | HTTP 客户端 |
-| ECharts | ^6.0 | 图表 |
+| ECharts | ~5.5.x（Traffic 等图表；与 `echarts-gl` 解耦） | 图表 |
 
 ### 外部系统（建议版本）
 
@@ -164,6 +166,25 @@ flowchart TB
 
 ---
 
+## 部署文档与一键脚本
+
+| 资源 | 说明 |
+|------|------|
+| [docs/deployment/README.md](./docs/deployment/README.md) | 部署总索引 |
+| [docs/deployment/docker-compose.md](./docs/deployment/docker-compose.md) | 本地 Compose |
+| [docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md) | 生产 K8s、RBAC、PVC |
+| [docs/deployment/traffic-middleware.md](./docs/deployment/traffic-middleware.md) | Traffic：Redis、GeoIP、ClickHouse |
+| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | `docker compose` 构建启动 + 健康检查 |
+
+```bash
+chmod +x scripts/deploy-local.sh   # 首次克隆后
+./scripts/deploy-local.sh            # 仅应用 + SQLite
+./scripts/deploy-local.sh --sync     # 含 MySQL / Mongo RS / Redis / RabbitMQ
+./scripts/deploy-local.sh --migrate  # 对已运行容器执行 migrate
+```
+
+---
+
 ## 架构与访问方式
 
 - **容器内**：Gunicorn 监听 `127.0.0.1:8001`，Nginx 对外 `8000`（见 [entrypoint.sh](./entrypoint.sh)）。
@@ -176,32 +197,35 @@ flowchart TB
 
 ## 快速开始
 
-### 方式一：Docker Compose（本地/测试）
-
-在**仓库根目录**执行：
+### 方式一：一键脚本（推荐本地试跑）
 
 ```bash
-# 仅启动 Shark Platform（不测 MySQL→Mongo 同步时推荐，省资源）
+./scripts/deploy-local.sh
+```
+
+等价于 `docker compose -f infra/docker/docker-compose.yml up -d --build`，并在就绪后探测 `GET /api/system/health`。详见 [部署文档与一键脚本](#部署文档与一键脚本)。
+
+### 方式二：Docker Compose（手动）
+
+在**仓库根目录**执行（与脚本相同，便于自定义）：
+
+```bash
 docker compose -f infra/docker/docker-compose.yml up -d --build
-
-# 同时启动 MySQL / Mongo 副本集 / Redis / RabbitMQ（数据同步或中间件联调）
 docker compose -f infra/docker/docker-compose.yml --profile sync up -d --build
-
-# 可选：应用等待 MySQL 健康与 Mongo RS 初始化后再起（需与 --profile sync 同用）
 docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.sync-depends.yml --profile sync up -d --build
 ```
 
-也可在 `.env` 中设置 `COMPOSE_PROFILES=sync` 后省略 `--profile sync`。MySQL 配置在 `infra/docker/mysql/`。
+说明见 [docs/deployment/docker-compose.md](./docs/deployment/docker-compose.md)。也可在 `.env` 中设置 `COMPOSE_PROFILES=sync`。
 
-访问 Web：`http://localhost:8000`（默认超级用户 `admin` / `admin`，由 [entrypoint.sh](./entrypoint.sh) 首次创建，**务必修改密码**）。
+访问 Web：`http://localhost:8000`（默认 `admin` / `admin`，由 [entrypoint.sh](./entrypoint.sh) 创建，**务必修改密码**）。
 
-### 方式二：Kubernetes（生产）
+### 方式三：Kubernetes（生产）
 
-- 按 [docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md) 执行。
-- 示例清单：`infra/kubernetes/`（需自行改 namespace、镜像、密钥等）。
+- 按 [docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md) 执行；示例清单在 `infra/kubernetes/`。
+- Traffic 中间件：`infra/kubernetes/middleware-system/` + [docs/deployment/traffic-middleware.md](./docs/deployment/traffic-middleware.md)。
 - 健康检查：`GET /api/system/health`（无鉴权）。
 
-### 方式三：本地开发
+### 方式四：本地开发
 
 **后端**
 
@@ -432,26 +456,34 @@ mysql_to_mongo/
 ├── ai_ops/                  # AIOps
 ├── api/                     # 登录、用户、角色、系统统计、health
 ├── core/                    # 通用工具
-├── traffic/                 # Traffic Dashboard 后端（日志解析、聚合 API）
-├── deploy/                  # Django：服务器批量部署引擎（API / 任务执行）
-├── infra/                   # Docker Compose + K8s 示例清单（非 Python 包）
-│   ├── docker/              # 本地编排、MySQL 配置
-│   └── kubernetes/          # Deployment / Service / PVC / ConfigMap
-├── docs/                    # K8s 手册、Traffic 手册、排班 API 等
+├── traffic/                 # Traffic Dashboard 后端
+├── deploy/                  # Django：服务器批量部署引擎（非 infra/）
+├── infra/                   # Docker Compose + K8s 示例 YAML
+│   ├── docker/
+│   ├── kubernetes/
+│   ├── clickhouse/          # DDL 参考
+│   └── README.md            # 指向 docs/deployment/
+├── docs/
+│   ├── deployment/          # 部署与运维（Compose / K8s / Traffic 中间件）
+│   ├── TRAFFIC_DASHBOARD.md
+│   ├── FILEBEAT_NGINX_TRAFFIC.md
+│   └── ...
+├── scripts/                 # deploy-local.sh、traffic_ingest_*.sh 等
 ├── inspection/              # 巡检
 ├── monitor/                 # K8s 日志监控
 ├── schedules/               # 排班 + 电话告警
-├── tasks/                   # MySQL → Mongo 同步引擎 + API
+├── tasks/                   # MySQL → Mongo 同步
 │   └── sync/
 ├── db_manager/              # 数据库管理 API
-├── frontend/                # Vue 3（Vite）
-├── logs/                    # 运行日志目录（compose 可挂载，仅 .gitkeep 入库）
-├── nginx.conf               # 容器内 Nginx
-├── state/                   # SQLite 等（db.sqlite3 默认忽略，保留 .gitkeep）
+├── frontend/                # Vue 3（Vite），构建产物为 frontend/dist（gitignore）
+├── logs/                    # 运行日志（.gitkeep）
+├── static/                  # 品牌图等
+├── nginx.conf
+├── state/                   # SQLite 状态（db.sqlite3 默认忽略）
 ├── Dockerfile
 ├── entrypoint.sh
 ├── manage.py
-└── shark_platform/          # Django 项目配置
+└── shark_platform/          # Django 配置
 ```
 
 ---
@@ -460,12 +492,14 @@ mysql_to_mongo/
 
 | 文档 / 路径 | 内容 |
 |-------------|------|
-| [VERSION](./VERSION) | 发布版本号（与 README 徽章、`frontend/package.json` 建议一致） |
-| [docs/README.md](./docs/README.md) | 文档索引 |
-| [docs/K8S_RBAC_GUIDE.md](./docs/K8S_RBAC_GUIDE.md) | 生产 K8s：RBAC、PVC、Ingress、初始化 |
-| [docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) | Traffic Dashboard 配置手册 |
-| [infra/README.md](./infra/README.md) | Docker Compose / Kubernetes 示例说明 |
-| [infra/docker/docker-compose.yml](./infra/docker/docker-compose.yml) | 本地多服务编排 |
+| [VERSION](./VERSION) | 发布版本号 |
+| [docs/README.md](./docs/README.md) | 文档总索引 |
+| [docs/deployment/README.md](./docs/deployment/README.md) | **部署总索引**（Compose / K8s / Traffic 中间件） |
+| [docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) | Traffic Dashboard |
+| [docs/FILEBEAT_NGINX_TRAFFIC.md](./docs/FILEBEAT_NGINX_TRAFFIC.md) | Filebeat 推送 Nginx 日志 |
+| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | 本地一键 Compose 启动 |
+| [infra/README.md](./infra/README.md) | 基础设施清单目录说明 |
+| [infra/docker/docker-compose.yml](./infra/docker/docker-compose.yml) | Compose 主文件 |
 | [Dockerfile](./Dockerfile) | 多阶段构建镜像 |
 | [entrypoint.sh](./entrypoint.sh) | 迁移、默认 admin、Gunicorn + Nginx |
 | [nginx.conf](./nginx.conf) | `/api`、`/admin`、SPA |

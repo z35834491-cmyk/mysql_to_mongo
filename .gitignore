@@ -65,6 +65,10 @@ state/*.json
 .trae/
 deploy_artifacts/
 
+# GeoIP / 大二进制（勿提交仓库；在 K8s 或本机挂载）
+*.mmdb
+*.mmdb.gz
+
 # --- Environment Secrets ---
 .env
 .env.local

@@ -1,17 +1,16 @@
-# 基础设施与本地编排
+# 基础设施清单（Compose / K8s）
 
-与 Django 应用 **`deploy/`**（批量部署引擎）区分：本目录仅放 **Docker Compose** 与 **Kubernetes 示例清单**。
+本目录存放 **Docker Compose** 与 **Kubernetes 示例 YAML**，与 Django 应用内的 **`deploy/`**（服务器批量部署引擎）无关。
+
+**完整说明与索引**见 **[docs/deployment/README.md](../docs/deployment/README.md)**。
 
 | 路径 | 说明 |
 |------|------|
-| [docker/docker-compose.yml](./docker/docker-compose.yml) | 本地编排。**默认只起应用**（SQLite 状态库）。加 `--profile sync` 再起 MySQL / Mongo 副本集 / Redis / RabbitMQ |
-| [docker/docker-compose.sync-depends.yml](./docker/docker-compose.sync-depends.yml) | 可选：与 `sync` profile 联用，让应用等待 MySQL 与 Mongo 初始化完成 |
-| [docker/.env.example](./docker/.env.example) | `COMPOSE_PROFILES=sync` 示例 |
-| [docker/mysql/](./docker/mysql/) | MySQL `my.cnf` 与可选 `init/` SQL |
-| [kubernetes/](./kubernetes/) | 示例 Deployment / Service / ConfigMap+Secret / PVC |
+| [docker/docker-compose.yml](./docker/docker-compose.yml) | 本地编排主文件 |
+| [docker/docker-compose.sync-depends.yml](./docker/docker-compose.sync-depends.yml) | 可选依赖顺序 |
+| [docker/.env.example](./docker/.env.example) | Compose 环境变量示例 |
+| [kubernetes/](./kubernetes/) | Deployment / Service / ConfigMap / PVC 等 |
+| [kubernetes/middleware-system/](./kubernetes/middleware-system/) | Traffic：Redis、GeoIP、ClickHouse 等 |
+| [clickhouse/](./clickhouse/) | ClickHouse DDL 参考 |
 
-根目录 [Dockerfile](../Dockerfile)、[entrypoint.sh](../entrypoint.sh)、[nginx.conf](../nginx.conf) 为镜像与进程入口。
-
-详细生产步骤见 [docs/K8S_RBAC_GUIDE.md](../docs/K8S_RBAC_GUIDE.md)。
-
-**探针**：`GET /api/system/health`（无鉴权）。
+一键本地部署：`./scripts/deploy-local.sh`（仓库根目录执行）。
