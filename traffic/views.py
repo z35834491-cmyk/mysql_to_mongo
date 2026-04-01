@@ -26,7 +26,6 @@ from .services.log_sources import (
     sources_for_api,
 )
 from .services.nginx_log import records_from_lines
-from .services.geoip_lookup import enrich_records
 from .services.redis_log_buffer import is_configured as redis_buffer_configured, push_raw_lines
 from .services.rollup_buffer import rollup_enabled, rollup_ingest_append
 from .services.rollup_query import build_rollups_snapshot
@@ -60,16 +59,34 @@ def _dashboard_fetch_limits(cfg: TrafficDashboardConfig) -> Tuple[int, int]:
     return rl, tb
 
 
-def _load_enriched(source_id: str = ""):
+def _full_data_fetch_limits(cfg: TrafficDashboardConfig) -> Tuple[int, int]:
+    """大盘 full_data=1：Redis 读满列表保留上限（不受 dashboard_fetch_max_lines）；文件 tail 字节用独立上限。"""
+    rl = _redis_cap(cfg)
+    try:
+        tb = int(os.environ.get("TRAFFIC_FULL_DATA_MAX_TAIL_BYTES", str(500 * 1024 * 1024)))
+    except ValueError:
+        tb = 500 * 1024 * 1024
+    tb = max(262_144, min(tb, 2_147_483_647))
+    return rl, tb
+
+
+def _load_enriched(source_id: str = "", *, full_data: bool = False):
     cfg = TrafficDashboardConfig.load()
     if not cfg.enabled:
         return cfg, []
-    rl, tb = _dashboard_fetch_limits(cfg)
+    if full_data:
+        rl, tb = _full_data_fetch_limits(cfg)
+    else:
+        rl, tb = _dashboard_fetch_limits(cfg)
     recs = load_raw_records(
         cfg, source_id, redis_line_cap=rl, max_tail_bytes_override=tb
     )
     enrich_records(recs, cfg.geoip_db_path)
     return cfg, recs
+
+
+def _parse_full_data(request) -> bool:
+    return request.GET.get("full_data", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _query_source(request) -> str:
@@ -109,7 +126,7 @@ def _parse_custom_time_bounds(request) -> Tuple[Optional[datetime], Optional[dat
 @permission_classes([IsAuthenticated])
 def traffic_overview(request):
     range_key = request.GET.get("range", "24h")
-    cfg, recs = _load_enriched(_query_source(request))
+    cfg, recs = _load_enriched(_query_source(request), full_data=_parse_full_data(request))
     inspection = InspectionConfig.load()
     data = overview_kpis(recs, range_key)
     bb = fetch_blackbox_summary(cfg, inspection)
@@ -125,7 +142,7 @@ def traffic_overview(request):
 @permission_classes([IsAuthenticated])
 def traffic_timeseries(request):
     range_key = request.GET.get("range", "24h")
-    _, recs = _load_enriched(_query_source(request))
+    _, recs = _load_enriched(_query_source(request), full_data=_parse_full_data(request))
     return Response(aggregate_timeseries(recs, range_key))
 
 
@@ -135,7 +152,7 @@ def traffic_geo(request):
     range_key = request.GET.get("range", "24h")
     granularity = request.GET.get("granularity", "country")
     country = request.GET.get("country", "")
-    _, recs = _load_enriched(_query_source(request))
+    _, recs = _load_enriched(_query_source(request), full_data=_parse_full_data(request))
     return Response(geo_aggregate(recs, range_key, granularity, country))
 
 
@@ -145,7 +162,7 @@ def traffic_top(request):
     range_key = request.GET.get("range", "24h")
     top_type = request.GET.get("type", "paths")
     limit = int(request.GET.get("limit", "10"))
-    _, recs = _load_enriched(_query_source(request))
+    _, recs = _load_enriched(_query_source(request), full_data=_parse_full_data(request))
     return Response(top_lists(recs, range_key, top_type, limit))
 
 
@@ -164,7 +181,8 @@ def traffic_snapshot(request):
         return Response(build_rollups_snapshot(start, end, source, cfg, inspection))
 
     range_key = request.GET.get("range", "24h")
-    cfg, recs = _load_enriched(source)
+    full_data = _parse_full_data(request)
+    cfg, recs = _load_enriched(source, full_data=full_data)
     inspection = InspectionConfig.load()
     ov = overview_kpis(recs, range_key)
     bb = fetch_blackbox_summary(cfg, inspection)
@@ -173,6 +191,7 @@ def traffic_snapshot(request):
         ov["availability_pct"] = bb["availability_pct"]
     ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
     ov["access_log_mode"] = _access_log_mode(cfg)
+    ov["full_data"] = full_data
     return Response(
         {
             "overview": ov,

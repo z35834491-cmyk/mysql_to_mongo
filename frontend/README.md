@@ -6,8 +6,8 @@ Vue 3 + Vite + Element Plus + Pinia。开发与构建说明见**仓库根目录*
 
 ```bash
 npm install
-# echarts-gl 与 echarts 6 需：
-# npm install echarts-gl@2.0.9 --save --legacy-peer-deps
+# Traffic 3D 地球使用 echarts-gl@2.x，仅与 ECharts 5 官方兼容；本项目锁定 echarts@5.5.x。
+# 若升级 echarts 6，需等 echarts-gl 发支持版，否则控制台会报 glob "0" not found（globe 坐标系）。
 npm run dev
 npm run build
 ```

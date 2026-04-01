@@ -237,3 +237,7 @@ sudo tail -n 2000 /var/log/nginx/access.json.log | curl -sS -X POST "${SHARK_BAS
 也可在镜像内使用 MaxMind 的 [geoipupdate](https://github.com/maxmind/geoipupdate) 按 `GeoIP.conf` 更新，同样需网络可达上述域名。
 
 若 MaxMind 变更 URL，以 [MaxMind 文档](https://dev.maxmind.com/geoip/updating-databases) 为准。
+
+### 14. Traffic 分钟聚合长期存储（ClickHouse，可选）
+
+分钟桶在 **Redis** 缓冲、`traffic_rollup_flush` 写入 **Postgres** 并镜像 **ClickHouse** 时，见同目录 **[README-CLICKHOUSE-TRAFFIC.md](./README-CLICKHOUSE-TRAFFIC.md)**（部署 YAML、`shark-platform` 环境变量与 `kubectl` 命令）。

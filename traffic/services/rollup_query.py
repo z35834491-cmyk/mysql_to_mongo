@@ -22,6 +22,38 @@ def _utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _norm_bt_key(bt: Any) -> datetime:
+    if bt is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if getattr(bt, "tzinfo", None):
+        return bt.astimezone(timezone.utc)
+    return bt.replace(tzinfo=timezone.utc)
+
+
+def _rollup_row_key(r: Any) -> Tuple[datetime, str]:
+    bt = _norm_bt_key(getattr(r, "bucket_start", None))
+    sid = str(getattr(r, "source_id", "") or "")
+    return (bt, sid)
+
+
+def fetch_rollups_for_range(start: datetime, end: datetime, source_id: str) -> List[Any]:
+    """
+    Postgres：近期与回退；ClickHouse：长期。合并时同一 (bucket_start, source_id) 以 CH 为准。
+    """
+    from .clickhouse_rollups import query_minute_rollups_clickhouse
+
+    pg_rows = query_rollups(start, end, source_id)
+    ch_rows = query_minute_rollups_clickhouse(start, end, source_id)
+    if ch_rows is None:
+        return pg_rows
+    merged: Dict[Tuple[datetime, str], Any] = {}
+    for r in pg_rows:
+        merged[_rollup_row_key(r)] = r
+    for r in ch_rows:
+        merged[_rollup_row_key(r)] = r
+    return sorted(merged.values(), key=_rollup_row_key)
+
+
 def query_rollups(start: datetime, end: datetime, source_id: str) -> List[TrafficMinuteRollup]:
     start = _utc(start)
     end = _utc(end)
@@ -36,10 +68,12 @@ def query_rollups(start: datetime, end: datetime, source_id: str) -> List[Traffi
     return list(qs)
 
 
-def _merge_by_minute(rows: List[TrafficMinuteRollup]) -> List[Dict[str, Any]]:
+def _merge_by_minute(rows: List[Any]) -> List[Dict[str, Any]]:
     by: Dict[datetime, Dict[str, Any]] = {}
     for r in rows:
-        k = r.bucket_start
+        k = getattr(r, "bucket_start", None)
+        if k is None:
+            continue
         if k not in by:
             by[k] = {
                 "bucket_start": k,
@@ -56,23 +90,26 @@ def _merge_by_minute(rows: List[TrafficMinuteRollup]) -> List[Dict[str, Any]]:
                 "top_paths": defaultdict(int),
             }
         b = by[k]
-        b["requests"] += r.requests
-        b["sum_latency_ms"] += r.sum_latency_ms
-        b["count_latency"] += r.count_latency
-        b["status_2xx"] += r.status_2xx
-        b["status_4xx"] += r.status_4xx
-        b["status_5xx"] += r.status_5xx
-        n = r.requests
+        b["requests"] += int(getattr(r, "requests", 0) or 0)
+        b["sum_latency_ms"] += int(getattr(r, "sum_latency_ms", 0) or 0)
+        b["count_latency"] += int(getattr(r, "count_latency", 0) or 0)
+        b["status_2xx"] += int(getattr(r, "status_2xx", 0) or 0)
+        b["status_4xx"] += int(getattr(r, "status_4xx", 0) or 0)
+        b["status_5xx"] += int(getattr(r, "status_5xx", 0) or 0)
+        n = int(getattr(r, "requests", 0) or 0)
         if n > 0:
-            if r.p50_ms is not None:
-                b["p50_w"].append((r.p50_ms, n))
-            if r.p95_ms is not None:
-                b["p95_w"].append((r.p95_ms, n))
-            if r.p99_ms is not None:
-                b["p99_w"].append((r.p99_ms, n))
-        for cc, nv in (r.geo_counts or {}).items():
+            p50 = getattr(r, "p50_ms", None)
+            p95 = getattr(r, "p95_ms", None)
+            p99 = getattr(r, "p99_ms", None)
+            if p50 is not None:
+                b["p50_w"].append((float(p50), n))
+            if p95 is not None:
+                b["p95_w"].append((float(p95), n))
+            if p99 is not None:
+                b["p99_w"].append((float(p99), n))
+        for cc, nv in (getattr(r, "geo_counts", None) or {}).items():
             b["geo_counts"][cc] += int(nv)
-        for item in r.top_paths or []:
+        for item in getattr(r, "top_paths", None) or []:
             p = item.get("path") or ""
             b["top_paths"][p] += int(item.get("requests") or 0)
 
@@ -235,7 +272,7 @@ def build_rollups_snapshot(
 ) -> Dict[str, Any]:
     from .aggregator import _empty_ts
 
-    rows = query_rollups(start, end, source_id)
+    rows = fetch_rollups_for_range(start, end, source_id)
     merged = _merge_by_minute(rows)
     span = end - start if end > start else timedelta(0)
     range_label = f"custom:{int(span.total_seconds())}s"

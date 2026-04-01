@@ -216,6 +216,13 @@ def _flush_one_redis(r, epoch: int, src: str) -> bool:
         obj.top_paths = [{"path": a, "requests": b} for a, b in merged_paths]
         obj.save()
 
+    try:
+        from .clickhouse_rollups import insert_traffic_minute_rollup_from_model
+
+        insert_traffic_minute_rollup_from_model(obj)
+    except Exception as e:
+        logger.warning("ClickHouse mirror after rollup flush skipped: %s", e)
+
     pipe = r.pipeline(transaction=False)
     pipe.delete(hk, lk, uk, gk)
     pipe.srem(ROLLUP_DIRTY, _dirty_member(epoch, src))

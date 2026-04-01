@@ -343,6 +343,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import * as echarts from 'echarts'
+/** 必须在首屏注册 GL 组件；动态 import + ECharts6 会导致 globe 坐标系报 glob "0" not found */
+import 'echarts-gl'
 import { Refresh, Setting, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { trafficApi, type TrafficLogSourceRow } from '@/api/traffic'
@@ -455,7 +457,6 @@ const chartPie = ref<HTMLElement | null>(null)
 const kpiCharts: Record<string, echarts.ECharts | null> = {}
 const charts: Record<string, echarts.ECharts | null> = {}
 let pollId: number | null = null
-let glTried = false
 let globeScheduleTimer: number | null = null
 let worldGeoJsonCache: unknown | null = null
 
@@ -677,10 +678,6 @@ async function ensureGlobeChart(soft: boolean, anim: number) {
   }
   if (soft) return
   try {
-    if (!glTried) {
-      await import('echarts-gl')
-      glTried = true
-    }
     const c = echarts.init(chartGlobe.value, 'shark-traffic')
     charts.globe = c
     c.setOption({
@@ -1188,12 +1185,13 @@ async function loadAll(silent = false) {
         ? {
             start: customTimeRange.value[0].toISOString(),
             end: customTimeRange.value[1].toISOString(),
+            fullData: true,
           }
-        : undefined
+        : { fullData: true }
     const [snap, tr] = await Promise.all([
-      (snapParams
+      (snapParams.start && snapParams.end
         ? trafficApi.snapshot('24h', src, snapParams)
-        : trafficApi.snapshot(r, src)) as Promise<any>,
+        : trafficApi.snapshot(r, src, { fullData: true })) as Promise<any>,
       trafficApi.jaegerTraces() as Promise<any>,
     ])
     const ov = snap.overview || {}
