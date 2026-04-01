@@ -13,4 +13,4 @@
 | [kubernetes/middleware-system/](./kubernetes/middleware-system/) | Traffic：Redis、GeoIP、ClickHouse 等 |
 | [clickhouse/](./clickhouse/) | ClickHouse DDL 参考 |
 
-一键本地部署：`./scripts/deploy-local.sh`（仓库根目录执行）。
+一键部署：`./scripts/oneclick-deploy.sh`（交互向导）或 `./scripts/deploy-local.sh`（轻量）。若手写 `docker compose` 且尚无 `infra/docker/.env.deploy`，请先：`cp infra/docker/.env.deploy.sample infra/docker/.env.deploy` 并修改密钥。

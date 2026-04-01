@@ -11,6 +11,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+ENV_DEPLOY="$ROOT/infra/docker/.env.deploy"
+SAMPLE="$ROOT/infra/docker/.env.deploy.sample"
+ensure_env_deploy() {
+  if [[ ! -f "$ENV_DEPLOY" ]]; then
+    umask 077
+    if [[ -f "$SAMPLE" ]]; then
+      grep -v '^DJANGO_SECRET_KEY=' "$SAMPLE" >"$ENV_DEPLOY"
+      echo "DJANGO_SECRET_KEY=$(openssl rand -base64 48 | tr -d '\n')" >>"$ENV_DEPLOY"
+    else
+      echo "DJANGO_SECRET_KEY=$(openssl rand -base64 48 | tr -d '\n')" >"$ENV_DEPLOY"
+    fi
+    echo ">>> 已生成 $ENV_DEPLOY（勿提交 Git）"
+  fi
+}
+
 COMPOSE_BASE=(docker compose -f infra/docker/docker-compose.yml)
 SERVICE_NAME="syncer_app"
 SYNC=0
@@ -38,6 +53,7 @@ USAGE
 done
 
 if (( MIGRATE_ONLY )); then
+  ensure_env_deploy
   echo ">>> migrate ($SERVICE_NAME)"
   "${COMPOSE_BASE[@]}" exec -T "$SERVICE_NAME" python3 manage.py migrate
   echo ">>> 完成"
@@ -51,6 +67,8 @@ if (( SYNC )); then
 else
   echo ">>> 启动模式: 仅应用（SQLite state）"
 fi
+
+ensure_env_deploy
 
 CMD+=(up -d --build)
 

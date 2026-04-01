@@ -73,5 +73,6 @@ deploy_artifacts/
 .env
 .env.local
 .env.*.local
+infra/docker/.env.deploy
 
 # --- Docker (keep Dockerfile / compose in repo; use .dockerignore for build context) ---

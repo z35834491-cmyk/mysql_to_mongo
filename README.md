@@ -48,7 +48,7 @@
 | **Traffic** | Nginx 日志聚合、GeoIP、Blackbox、流量大盘 | Web：`/dashboard`；API：`/api/traffic/*`；手册：[docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) |
 | **Django Admin** | 后台管理（需超级用户） | `/admin/` |
 
-**部署与配置**已收敛到 **[docs/deployment/README.md](./docs/deployment/README.md)**（含 Docker Compose、Kubernetes、Traffic 中间件）；生产 K8s 细则见 **[docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md)**。**清单目录**见 [infra/README.md](./infra/README.md)（与 Django 应用内 **`deploy/`** 批量部署引擎无关）。根目录 **[scripts/deploy-local.sh](./scripts/deploy-local.sh)** 为本地一键 `docker compose up`。本文侧重**功能总览、API 索引、同步任务与常见运维**。
+**部署与配置**已收敛到 **[docs/deployment/README.md](./docs/deployment/README.md)**（含 Docker Compose、Kubernetes、Traffic 中间件）；生产 K8s 细则见 **[docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md)**。**清单目录**见 [infra/README.md](./infra/README.md)（与 Django 应用内 **`deploy/`** 批量部署引擎无关）。一键部署：**[scripts/oneclick-deploy.sh](./scripts/oneclick-deploy.sh)**（交互向导）、**[scripts/deploy-local.sh](./scripts/deploy-local.sh)**（轻量启动）。本文侧重**功能总览、API 索引、同步任务与常见运维**。
 
 ---
 
@@ -174,13 +174,16 @@ flowchart TB
 | [docs/deployment/docker-compose.md](./docs/deployment/docker-compose.md) | 本地 Compose |
 | [docs/deployment/kubernetes.md](./docs/deployment/kubernetes.md) | 生产 K8s、RBAC、PVC |
 | [docs/deployment/traffic-middleware.md](./docs/deployment/traffic-middleware.md) | Traffic：Redis、GeoIP、ClickHouse |
-| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | `docker compose` 构建启动 + 健康检查 |
+| [scripts/oneclick-deploy.sh](./scripts/oneclick-deploy.sh) | **交互式一键部署**（引导配置 + 生成 `.env.deploy` + 启动） |
+| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | 轻量 `compose up` + 健康检查（可自动生成 `.env.deploy`） |
 
 ```bash
-chmod +x scripts/deploy-local.sh   # 首次克隆后
-./scripts/deploy-local.sh            # 仅应用 + SQLite
-./scripts/deploy-local.sh --sync     # 含 MySQL / Mongo RS / Redis / RabbitMQ
-./scripts/deploy-local.sh --migrate  # 对已运行容器执行 migrate
+chmod +x scripts/oneclick-deploy.sh scripts/deploy-local.sh
+./scripts/oneclick-deploy.sh                    # 控制台向导（推荐首次）
+./scripts/oneclick-deploy.sh --yes --sync       # 非交互：完整依赖栈
+./scripts/deploy-local.sh                       # 快速起容器（无交互）
+./scripts/deploy-local.sh --sync
+./scripts/deploy-local.sh --migrate
 ```
 
 ---
@@ -197,13 +200,17 @@ chmod +x scripts/deploy-local.sh   # 首次克隆后
 
 ## 快速开始
 
-### 方式一：一键脚本（推荐本地试跑）
+### 方式一：一键部署（推荐）
+
+**交互向导**（会询问是否启用完整依赖栈、Traffic、并生成 `infra/docker/.env.deploy`）：
 
 ```bash
-./scripts/deploy-local.sh
+./scripts/oneclick-deploy.sh
 ```
 
-等价于 `docker compose -f infra/docker/docker-compose.yml up -d --build`，并在就绪后探测 `GET /api/system/health`。详见 [部署文档与一键脚本](#部署文档与一键脚本)。
+**非交互**（CI / 脚本）：`./scripts/oneclick-deploy.sh --yes`、`--yes --sync`、`--yes --sync --traffic` 等，见 `scripts/oneclick-deploy.sh --help`。
+
+轻量启动（交互更少，自动从 `.env.deploy.sample` 补全缺失的 `.env.deploy`）：`./scripts/deploy-local.sh`。详见 [部署文档与一键脚本](#部署文档与一键脚本)。
 
 ### 方式二：Docker Compose（手动）
 
@@ -468,7 +475,7 @@ mysql_to_mongo/
 │   ├── TRAFFIC_DASHBOARD.md
 │   ├── FILEBEAT_NGINX_TRAFFIC.md
 │   └── ...
-├── scripts/                 # deploy-local.sh、traffic_ingest_*.sh 等
+├── scripts/                 # oneclick-deploy.sh、deploy-local.sh、traffic_ingest_*.sh 等
 ├── inspection/              # 巡检
 ├── monitor/                 # K8s 日志监控
 ├── schedules/               # 排班 + 电话告警
@@ -497,7 +504,8 @@ mysql_to_mongo/
 | [docs/deployment/README.md](./docs/deployment/README.md) | **部署总索引**（Compose / K8s / Traffic 中间件） |
 | [docs/TRAFFIC_DASHBOARD.md](./docs/TRAFFIC_DASHBOARD.md) | Traffic Dashboard |
 | [docs/FILEBEAT_NGINX_TRAFFIC.md](./docs/FILEBEAT_NGINX_TRAFFIC.md) | Filebeat 推送 Nginx 日志 |
-| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | 本地一键 Compose 启动 |
+| [scripts/oneclick-deploy.sh](./scripts/oneclick-deploy.sh) | 交互式一键部署 |
+| [scripts/deploy-local.sh](./scripts/deploy-local.sh) | 轻量 Compose 启动 |
 | [infra/README.md](./infra/README.md) | 基础设施清单目录说明 |
 | [infra/docker/docker-compose.yml](./infra/docker/docker-compose.yml) | Compose 主文件 |
 | [Dockerfile](./Dockerfile) | 多阶段构建镜像 |

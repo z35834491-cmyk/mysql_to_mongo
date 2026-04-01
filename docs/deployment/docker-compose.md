@@ -33,6 +33,14 @@ docker compose -f infra/docker/docker-compose.yml \
 - 默认 Web：**http://localhost:8000**
 - 首次启动由 `entrypoint.sh` 创建超级用户（默认 **`admin` / `admin`**），**上线务必修改密码**。
 
-## 与「一键脚本」关系
+## 环境变量文件
 
-`./scripts/deploy-local.sh` 封装上述 `docker compose` 调用，可选 `--sync`、`--migrate`。
+- **`infra/docker/.env.deploy.sample`**：提交样例（含非敏感默认项）。
+- **`infra/docker/.env.deploy`**：本机实际配置（**已在 .gitignore**），由 **`scripts/oneclick-deploy.sh`** 写入，或由 `deploy-local.sh` 在缺失时从 sample 生成并替换 `DJANGO_SECRET_KEY`。
+
+Compose 服务 **`syncer_app`** 通过 `env_file: .env.deploy` 注入容器。
+
+## 与脚本关系
+
+- **`scripts/oneclick-deploy.sh`**：交互向导 + 非交互 `--yes` / `--sync` / `--traffic`。
+- **`scripts/deploy-local.sh`**：直接 `compose up`，必要时自动生成 `.env.deploy`。
