@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.utils import timezone as dj_timezone
 
@@ -269,13 +269,15 @@ def build_rollups_snapshot(
     source_id: str,
     cfg: TrafficDashboardConfig,
     inspection,
+    *,
+    preset_range: Optional[str] = None,
 ) -> Dict[str, Any]:
     from .aggregator import _empty_ts
 
     rows = fetch_rollups_for_range(start, end, source_id)
     merged = _merge_by_minute(rows)
     span = end - start if end > start else timedelta(0)
-    range_label = f"custom:{int(span.total_seconds())}s"
+    range_label = (preset_range or "").strip() or f"custom:{int(span.total_seconds())}s"
     if not merged:
         ts = _empty_ts(start.timestamp(), end.timestamp(), 60)
         ts["range"] = range_label

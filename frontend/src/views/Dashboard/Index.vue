@@ -4,9 +4,9 @@
       <div class="header-info">
         <h2 class="page-title">Traffic Dashboard</h2>
         <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
-        <p v-if="overview.rollup" class="rollup-hint">
-          自定义时间范围：数据来自已落库的分钟聚合；慢接口与 Top IP 依赖原始日志扫描，此模式下为空。需环境变量
-          <code>TRAFFIC_ROLLUP_ENABLED=1</code>，并定时执行 <code>python manage.py traffic_rollup_flush</code>。
+        <p v-if="overview.minute_rollup" class="rollup-hint">
+          默认<strong>分钟聚合</strong>（Postgres / ClickHouse），长区间不扫原始日志，避免网关超时。慢接口与 Top IP 仅在开启「原始日志明细」后有数据（该模式可能较慢）。
+          需 <code>TRAFFIC_ROLLUP_ENABLED=1</code> 与定时 <code>traffic_rollup_flush</code>。
         </p>
       </div>
       <div class="header-actions">
@@ -51,6 +51,12 @@
           <span class="refresh-dot" :class="{ active: pollSec > 0 || softRefreshing }" />
           <span>{{ refreshLabel }}</span>
         </div>
+        <el-tooltip content="开启后从 Redis/文件全量拉取原始日志，含慢接口与 Top IP，数据量大时易超时" placement="top">
+          <div class="raw-detail-switch">
+            <span class="raw-detail-label">原始明细</span>
+            <el-switch v-model="rawLogDetail" size="small" @change="() => loadAll(false)" />
+          </div>
+        </el-tooltip>
         <el-button :icon="Setting" size="small" class="toolbar-btn" @click="onOpenTrafficConfig">设置</el-button>
         <el-button
           :icon="Refresh"
@@ -375,7 +381,8 @@ echarts.registerTheme('shark-traffic', {
   },
 })
 
-const range = ref('24h')
+/** 默认 1H：分钟聚合响应快；长区间同样走聚合库而非全量扫日志 */
+const range = ref('1h')
 const customTimeRange = ref<[Date, Date] | null>(null)
 const customRangeShortcuts = [
   {
@@ -393,6 +400,8 @@ const customRangeShortcuts = [
     },
   },
 ]
+/** 关闭=分钟聚合（默认，快）；开启=全量原始日志（慢接口/IP，易超时） */
+const rawLogDetail = ref(false)
 const pollSec = ref(5)
 const loading = ref(false)
 const softRefreshing = ref(false)
@@ -1174,26 +1183,37 @@ function onCustomRangePicked() {
   if (range.value === 'custom') void loadAll(false)
 }
 
+async function refreshJaegerTraces() {
+  try {
+    const tr = (await trafficApi.jaegerTraces()) as any
+    traceRows.value = tr.traces || []
+  } catch {
+    /* */
+  }
+}
+
 async function loadAll(silent = false) {
   if (!silent) loading.value = true
   else softRefreshing.value = true
   try {
     const r = range.value
     const src = currentSourceParam()
-    const snapParams =
-      r === 'custom' && customTimeRange.value && customTimeRange.value.length === 2
-        ? {
-            start: customTimeRange.value[0].toISOString(),
-            end: customTimeRange.value[1].toISOString(),
-            fullData: true,
-          }
-        : { fullData: true }
-    const [snap, tr] = await Promise.all([
-      (snapParams.start && snapParams.end
-        ? trafficApi.snapshot('24h', src, snapParams)
-        : trafficApi.snapshot(r, src, { fullData: true })) as Promise<any>,
-      trafficApi.jaegerTraces() as Promise<any>,
-    ])
+    let snapOpts: { start?: string; end?: string; fullData?: boolean } | undefined
+    if (r === 'custom' && customTimeRange.value && customTimeRange.value.length === 2) {
+      snapOpts = {
+        start: customTimeRange.value[0].toISOString(),
+        end: customTimeRange.value[1].toISOString(),
+      }
+      if (rawLogDetail.value) snapOpts.fullData = true
+    } else if (rawLogDetail.value) {
+      snapOpts = { fullData: true }
+    }
+    const snap = (await trafficApi.snapshot(
+      r === 'custom' ? '24h' : r,
+      src,
+      snapOpts,
+    )) as any
+    if (mainTab.value === 'flow') await refreshJaegerTraces()
     const ov = snap.overview || {}
     overview.value = ov
     timeseries.value = snap.timeseries || {}
@@ -1202,7 +1222,6 @@ async function loadAll(silent = false) {
     slowRows.value = (snap.top_slow && snap.top_slow.items) || []
     statusPie.value = (snap.top_status && snap.top_status.items) || []
     ipRows.value = (snap.top_ip && snap.top_ip.items) || []
-    traceRows.value = tr.traces || []
     applyRowFlashAfterLoad(silent)
     updateKpiText()
     await nextTick()
@@ -1265,6 +1284,10 @@ function setupPoll() {
 }
 
 watch(pollSec, setupPoll)
+
+watch(mainTab, (t) => {
+  if (t === 'flow') void refreshJaegerTraces()
+})
 
 onMounted(async () => {
   await refreshSourceOptions()
@@ -1392,6 +1415,18 @@ onUnmounted(() => {
 }
 .toolbar-btn {
   border-radius: 8px;
+}
+.raw-detail-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 4px;
+}
+.raw-detail-label {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
 }
 .shadow-btn {
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);

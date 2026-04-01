@@ -16,6 +16,7 @@ from .services.aggregator import (
     geo_aggregate,
     overview_kpis,
     top_lists,
+    window_bounds,
 )
 from .services.blackbox import fetch_blackbox_summary
 from .services.geoip_lookup import enrich_records
@@ -87,6 +88,14 @@ def _load_enriched(source_id: str = "", *, full_data: bool = False):
 
 def _parse_full_data(request) -> bool:
     return request.GET.get("full_data", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _preset_window_datetimes(range_key: str) -> Tuple[datetime, datetime]:
+    ws, we = window_bounds(range_key)
+    return (
+        datetime.fromtimestamp(ws, tz=dt_timezone.utc),
+        datetime.fromtimestamp(we, tz=dt_timezone.utc),
+    )
 
 
 def _query_source(request) -> str:
@@ -178,12 +187,29 @@ def traffic_snapshot(request):
     if start is not None and end is not None:
         cfg = TrafficDashboardConfig.load()
         inspection = InspectionConfig.load()
-        return Response(build_rollups_snapshot(start, end, source, cfg, inspection))
+        data = build_rollups_snapshot(start, end, source, cfg, inspection)
+        data.setdefault("overview", {})
+        data["overview"]["full_data"] = False
+        data["overview"]["minute_rollup"] = True
+        return Response(data)
 
     range_key = request.GET.get("range", "24h")
     full_data = _parse_full_data(request)
-    cfg, recs = _load_enriched(source, full_data=full_data)
+    cfg = TrafficDashboardConfig.load()
     inspection = InspectionConfig.load()
+
+    # 默认：预设 1h/6h/24h/7d/30d 走分钟聚合（PG+ClickHouse），避免全量扫 Redis/文件导致 502/超时。
+    if not full_data:
+        start_dt, end_dt = _preset_window_datetimes(range_key)
+        data = build_rollups_snapshot(
+            start_dt, end_dt, source, cfg, inspection, preset_range=range_key
+        )
+        data.setdefault("overview", {})
+        data["overview"]["full_data"] = False
+        data["overview"]["minute_rollup"] = True
+        return Response(data)
+
+    cfg, recs = _load_enriched(source, full_data=True)
     ov = overview_kpis(recs, range_key)
     bb = fetch_blackbox_summary(cfg, inspection)
     ov["blackbox"] = bb
@@ -191,7 +217,8 @@ def traffic_snapshot(request):
         ov["availability_pct"] = bb["availability_pct"]
     ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
     ov["access_log_mode"] = _access_log_mode(cfg)
-    ov["full_data"] = full_data
+    ov["full_data"] = True
+    ov["minute_rollup"] = False
     return Response(
         {
             "overview": ov,
