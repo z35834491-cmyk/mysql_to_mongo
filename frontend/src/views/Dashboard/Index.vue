@@ -4,9 +4,16 @@
       <div class="header-info">
         <h2 class="page-title">Traffic Dashboard</h2>
         <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
-        <p v-if="overview.minute_rollup" class="rollup-hint">
+        <p v-if="overview.rollup_fallback" class="rollup-hint rollup-hint--warn">
+          分钟库暂无数据，已自动改为<strong>原始日志抽样</strong>（受后台「拉取行数」上限），图表为近窗可见流量。若要长区间稳定走聚合，请配置
+          <code>TRAFFIC_ROLLUP_ENABLED=1</code> 并定时 <code>traffic_rollup_flush</code>。
+        </p>
+        <p v-else-if="overview.minute_rollup" class="rollup-hint">
           默认<strong>分钟聚合</strong>（Postgres / ClickHouse），长区间不扫原始日志，避免网关超时。慢接口与 Top IP 仅在开启「原始日志明细」后有数据（该模式可能较慢）。
           需 <code>TRAFFIC_ROLLUP_ENABLED=1</code> 与定时 <code>traffic_rollup_flush</code>。
+        </p>
+        <p v-if="overview.rollup_empty_hint" class="rollup-hint rollup-hint--warn">
+          {{ overview.rollup_empty_hint }}
         </p>
       </div>
       <div class="header-actions">
@@ -1371,6 +1378,16 @@ onUnmounted(() => {
   padding: 1px 4px;
   background: rgba(148, 163, 184, 0.2);
   border-radius: 4px;
+}
+.rollup-hint--warn {
+  color: #92400e;
+  background: #fffbeb;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+}
+.rollup-hint--warn code {
+  background: rgba(251, 191, 36, 0.25);
 }
 .custom-range-picker {
   width: 320px;

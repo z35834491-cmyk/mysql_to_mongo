@@ -86,6 +86,46 @@ def _load_enriched(source_id: str = "", *, full_data: bool = False):
     return cfg, recs
 
 
+def _rollup_snapshot_has_rows(data: dict) -> bool:
+    ov = data.get("overview") or {}
+    try:
+        return int(ov.get("rollup_rows") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _snapshot_payload_from_raw_records(
+    cfg: TrafficDashboardConfig,
+    recs: list,
+    range_key: str,
+    inspection,
+    *,
+    full_data: bool,
+    rollup_fallback: bool = False,
+) -> dict:
+    """从已加载的原始记录构建与 traffic_snapshot 一致的结构。"""
+    ov = overview_kpis(recs, range_key)
+    bb = fetch_blackbox_summary(cfg, inspection)
+    ov["blackbox"] = bb
+    if bb.get("availability_pct") is not None:
+        ov["availability_pct"] = bb["availability_pct"]
+    ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
+    ov["access_log_mode"] = _access_log_mode(cfg)
+    ov["full_data"] = full_data
+    ov["minute_rollup"] = False
+    if rollup_fallback:
+        ov["rollup_fallback"] = True
+    return {
+        "overview": ov,
+        "timeseries": aggregate_timeseries(recs, range_key),
+        "geo": geo_aggregate(recs, range_key, "country", ""),
+        "top_paths": top_lists(recs, range_key, "paths", 10),
+        "top_slow": top_lists(recs, range_key, "slow", 10),
+        "top_status": top_lists(recs, range_key, "status", 20),
+        "top_ip": top_lists(recs, range_key, "ip", 10),
+    }
+
+
 def _parse_full_data(request) -> bool:
     return request.GET.get("full_data", "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -191,6 +231,12 @@ def traffic_snapshot(request):
         data.setdefault("overview", {})
         data["overview"]["full_data"] = False
         data["overview"]["minute_rollup"] = True
+        if not _rollup_snapshot_has_rows(data):
+            data["overview"]["rollup_empty"] = True
+            data["overview"]["rollup_empty_hint"] = (
+                "所选区间内分钟聚合无数据。请确认已执行 traffic_rollup_flush，"
+                "或改用上方预设时间并依赖自动抽样，或开启「原始明细」。"
+            )
         return Response(data)
 
     range_key = request.GET.get("range", "24h")
@@ -198,37 +244,29 @@ def traffic_snapshot(request):
     cfg = TrafficDashboardConfig.load()
     inspection = InspectionConfig.load()
 
-    # 默认：预设 1h/6h/24h/7d/30d 走分钟聚合（PG+ClickHouse），避免全量扫 Redis/文件导致 502/超时。
+    # 默认：预设走分钟聚合（PG+ClickHouse）；若库中尚无数据则回退到受控原始抽样，避免大盘全空。
     if not full_data:
         start_dt, end_dt = _preset_window_datetimes(range_key)
         data = build_rollups_snapshot(
             start_dt, end_dt, source, cfg, inspection, preset_range=range_key
         )
         data.setdefault("overview", {})
+        if not _rollup_snapshot_has_rows(data):
+            _, recs = _load_enriched(source, full_data=False)
+            return Response(
+                _snapshot_payload_from_raw_records(
+                    cfg, recs, range_key, inspection, full_data=False, rollup_fallback=True
+                )
+            )
         data["overview"]["full_data"] = False
         data["overview"]["minute_rollup"] = True
         return Response(data)
 
     cfg, recs = _load_enriched(source, full_data=True)
-    ov = overview_kpis(recs, range_key)
-    bb = fetch_blackbox_summary(cfg, inspection)
-    ov["blackbox"] = bb
-    if bb.get("availability_pct") is not None:
-        ov["availability_pct"] = bb["availability_pct"]
-    ov["log_configured"] = log_source_configured(cfg, redis_buffer_configured())
-    ov["access_log_mode"] = _access_log_mode(cfg)
-    ov["full_data"] = True
-    ov["minute_rollup"] = False
     return Response(
-        {
-            "overview": ov,
-            "timeseries": aggregate_timeseries(recs, range_key),
-            "geo": geo_aggregate(recs, range_key, "country", ""),
-            "top_paths": top_lists(recs, range_key, "paths", 10),
-            "top_slow": top_lists(recs, range_key, "slow", 10),
-            "top_status": top_lists(recs, range_key, "status", 20),
-            "top_ip": top_lists(recs, range_key, "ip", 10),
-        }
+        _snapshot_payload_from_raw_records(
+            cfg, recs, range_key, inspection, full_data=True, rollup_fallback=False
+        )
     )
 
 
