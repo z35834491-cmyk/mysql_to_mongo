@@ -94,6 +94,11 @@ def _rollup_snapshot_has_rows(data: dict) -> bool:
         return False
 
 
+def _attach_traffic_rollup_meta(overview: dict) -> None:
+    """当前 API 进程是否检测到 TRAFFIC_ROLLUP_ENABLED（与定时任务/ingest 所在进程可能不同）。"""
+    overview["rollup_ingest_enabled"] = rollup_enabled()
+
+
 def _snapshot_payload_from_raw_records(
     cfg: TrafficDashboardConfig,
     recs: list,
@@ -115,6 +120,7 @@ def _snapshot_payload_from_raw_records(
     ov["minute_rollup"] = False
     if rollup_fallback:
         ov["rollup_fallback"] = True
+    _attach_traffic_rollup_meta(ov)
     return {
         "overview": ov,
         "timeseries": aggregate_timeseries(recs, range_key),
@@ -233,10 +239,17 @@ def traffic_snapshot(request):
         data["overview"]["minute_rollup"] = True
         if not _rollup_snapshot_has_rows(data):
             data["overview"]["rollup_empty"] = True
-            data["overview"]["rollup_empty_hint"] = (
-                "所选区间内分钟聚合无数据。请确认已执行 traffic_rollup_flush，"
-                "或改用上方预设时间并依赖自动抽样，或开启「原始明细」。"
-            )
+            if rollup_enabled():
+                data["overview"]["rollup_empty_hint"] = (
+                    "所选区间内分钟聚合表无行。请核对：ingest 与大盘是否同一 Redis、"
+                    "traffic_rollup_flush 是否写入当前 Django 使用的数据库，以及数据源与 rollup 的 source_id 是否一致。"
+                )
+            else:
+                data["overview"]["rollup_empty_hint"] = (
+                    "所选区间内分钟聚合无数据。当前大盘 API 进程未检测到环境变量 TRAFFIC_ROLLUP_ENABLED；"
+                    "请在写入 rollup 缓冲的 ingest 进程同样开启，并执行 traffic_rollup_flush。"
+                )
+        _attach_traffic_rollup_meta(data["overview"])
         return Response(data)
 
     range_key = request.GET.get("range", "24h")
@@ -260,6 +273,7 @@ def traffic_snapshot(request):
             )
         data["overview"]["full_data"] = False
         data["overview"]["minute_rollup"] = True
+        _attach_traffic_rollup_meta(data["overview"])
         return Response(data)
 
     cfg, recs = _load_enriched(source, full_data=True)

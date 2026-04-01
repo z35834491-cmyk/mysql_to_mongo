@@ -4,9 +4,18 @@
       <div class="header-info">
         <h2 class="page-title">Traffic Dashboard</h2>
         <p class="page-subtitle">Monitor and analyze traffic trends, latency, error rate and geo distribution</p>
-        <p v-if="overview.rollup_fallback" class="rollup-hint rollup-hint--warn">
-          分钟库暂无数据，已自动改为<strong>原始日志抽样</strong>（受后台「拉取行数」上限），图表为近窗可见流量。若要长区间稳定走聚合，请配置
-          <code>TRAFFIC_ROLLUP_ENABLED=1</code> 并定时 <code>traffic_rollup_flush</code>。
+        <p
+          v-if="overview.rollup_fallback && !overview.rollup_ingest_enabled"
+          class="rollup-hint rollup-hint--warn"
+        >
+          分钟聚合表暂无行，已改为<strong>原始日志抽样</strong>。当前<strong>大盘 API 进程</strong>未检测到环境变量
+          <code>TRAFFIC_ROLLUP_ENABLED</code>（定时任务所在 Pod 单独配置无效）；请在<strong>运行 Django/Gunicorn 的 Deployment</strong>与<strong>写入日志/ingest 的进程</strong>均开启该变量，并定时
+          <code>traffic_rollup_flush</code>。
+        </p>
+        <p v-else-if="overview.rollup_fallback" class="rollup-hint rollup-hint--info">
+          本时间窗内<strong>分钟聚合表暂无数据</strong>，已自动使用原始日志抽样（受「拉取行数」上限）。若已配置
+          <code>TRAFFIC_ROLLUP_ENABLED</code> 与 <code>traffic_rollup_flush</code>，请核对：ingest 与大盘是否<strong>同一 Redis</strong>、flush 是否写入<strong>当前应用连接的数据库</strong>、所选数据源与 rollup 的
+          <code>source_id</code> 是否一致。
         </p>
         <p v-else-if="overview.minute_rollup" class="rollup-hint">
           默认<strong>分钟聚合</strong>（Postgres / ClickHouse），长区间不扫原始日志，避免网关超时。慢接口与 Top IP 仅在开启「原始日志明细」后有数据（该模式可能较慢）。
@@ -113,10 +122,6 @@
             </div>
           </el-col>
           <el-col :xs="24" :xl="8" :lg="9">
-            <div class="page-panel chart-wrap globe-wrap">
-              <div class="chart-title">全球流量分布</div>
-              <div ref="chartGlobe" class="echart globe" />
-            </div>
             <div class="page-panel chart-wrap">
               <div class="chart-title">国家 / 地区热力</div>
               <div ref="chartMap" class="echart map-h" />
@@ -356,8 +361,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import * as echarts from 'echarts'
-/** 必须在首屏注册 GL 组件；动态 import + ECharts6 会导致 globe 坐标系报 glob "0" not found */
-import 'echarts-gl'
 import { Refresh, Setting, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { trafficApi, type TrafficLogSourceRow } from '@/api/traffic'
@@ -465,7 +468,6 @@ function setKpiRef(key: string, el: unknown) {
 const chartQps = ref<HTMLElement | null>(null)
 const chartLat = ref<HTMLElement | null>(null)
 const chartErr = ref<HTMLElement | null>(null)
-const chartGlobe = ref<HTMLElement | null>(null)
 const chartMap = ref<HTMLElement | null>(null)
 const chartCountry = ref<HTMLElement | null>(null)
 const chartPie = ref<HTMLElement | null>(null)
@@ -473,20 +475,15 @@ const chartPie = ref<HTMLElement | null>(null)
 const kpiCharts: Record<string, echarts.ECharts | null> = {}
 const charts: Record<string, echarts.ECharts | null> = {}
 let pollId: number | null = null
-let globeScheduleTimer: number | null = null
 let worldGeoJsonCache: unknown | null = null
 
-type MainChartKey = 'qps' | 'lat' | 'err' | 'globe' | 'map' | 'country' | 'pie'
+type MainChartKey = 'qps' | 'lat' | 'err' | 'map' | 'country' | 'pie'
 
 function chartDisposed(c: echarts.ECharts | null | undefined): boolean {
   return !c || !!(c as { isDisposed?: () => boolean }).isDisposed?.()
 }
 
 function disposeMainChartsOnly() {
-  if (globeScheduleTimer != null) {
-    clearTimeout(globeScheduleTimer)
-    globeScheduleTimer = null
-  }
   Object.keys(charts).forEach((k) => {
     disposeChart(charts[k])
     charts[k] = null
@@ -531,10 +528,6 @@ function disposeChart(c?: echarts.ECharts | null) {
 }
 
 function disposeAllMain() {
-  if (globeScheduleTimer != null) {
-    clearTimeout(globeScheduleTimer)
-    globeScheduleTimer = null
-  }
   Object.keys(charts).forEach((k) => {
     disposeChart(charts[k])
     charts[k] = null
@@ -668,65 +661,6 @@ function updateKpiCharts(soft = false) {
   })
 }
 
-async function ensureGlobeChart(soft: boolean, anim: number) {
-  if (!chartGlobe.value) return
-  const scatter = geoItems.value
-    .filter((g) => g.lat && g.lng && g.requests > 0)
-    .map((g) => [g.lng, g.lat, g.requests])
-  const existing = charts.globe
-  if (!chartDisposed(existing)) {
-    existing!.setOption(
-      {
-        animationDuration: anim,
-        series: [
-          {
-            type: 'scatter3D',
-            coordinateSystem: 'globe',
-            symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
-            itemStyle: { color: '#3b82f6', opacity: 0.82 },
-            data: scatter,
-          },
-        ],
-      },
-      true,
-    )
-    return
-  }
-  if (soft) return
-  try {
-    const c = echarts.init(chartGlobe.value, 'shark-traffic')
-    charts.globe = c
-    c.setOption({
-      animationDuration: anim,
-      globe: {
-        baseTexture: trafficMapAsset('traffic-maps/globe-texture.jpg'),
-        shading: 'lambert',
-        environment: '#f8fafc',
-        light: { ambient: { intensity: 0.95 }, main: { intensity: 0.2 } },
-        viewControl: { autoRotate: false, distance: 160, alpha: 24, beta: 160 },
-        itemStyle: { color: '#dbeafe', borderColor: '#cbd5e1', borderWidth: 0.5 },
-      },
-      series: [
-        {
-          type: 'scatter3D',
-          coordinateSystem: 'globe',
-          symbolSize: (val: number[]) => Math.min(18, 5 + Math.log1p(val[2]) * 2),
-          itemStyle: { color: '#3b82f6', opacity: 0.82 },
-          data: scatter,
-        },
-      ],
-    })
-  } catch {
-    if (chartGlobe.value) {
-      const c = echarts.init(chartGlobe.value, 'shark-traffic')
-      charts.globe = c
-      c.setOption({
-        title: { text: 'echarts-gl 未加载', left: 'center', top: 'center', textStyle: { color: '#64748b', fontSize: 12 } },
-      })
-    }
-  }
-}
-
 async function ensureMapChart(soft: boolean, anim: number) {
   if (!chartMap.value) return
   const c = getOrInitMain(chartMap.value, 'map')
@@ -803,9 +737,6 @@ async function renderMainCharts(opts?: { soft?: boolean }) {
   const anim = soft ? 120 : 320
   if (!soft) {
     disposeMainChartsOnly()
-  } else if (globeScheduleTimer != null) {
-    clearTimeout(globeScheduleTimer)
-    globeScheduleTimer = null
   }
 
   const ts = timeseries.value
@@ -979,15 +910,6 @@ async function renderMainCharts(opts?: { soft?: boolean }) {
   }
 
   await ensureMapChart(soft, anim)
-
-  if (soft) {
-    void ensureGlobeChart(true, anim)
-  } else {
-    globeScheduleTimer = window.setTimeout(() => {
-      globeScheduleTimer = null
-      void ensureGlobeChart(false, anim)
-    }, 120)
-  }
 }
 
 function updateKpiText() {
@@ -1389,6 +1311,16 @@ onUnmounted(() => {
 .rollup-hint--warn code {
   background: rgba(251, 191, 36, 0.25);
 }
+.rollup-hint--info {
+  color: #1e40af;
+  background: #eff6ff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #bfdbfe;
+}
+.rollup-hint--info code {
+  background: rgba(59, 130, 246, 0.15);
+}
 .custom-range-picker {
   width: 320px;
   margin-left: 4px;
@@ -1581,9 +1513,6 @@ onUnmounted(() => {
 .echart {
   width: 100%;
   height: 260px;
-}
-.globe-wrap .globe {
-  height: 280px;
 }
 .map-h {
   height: 260px;

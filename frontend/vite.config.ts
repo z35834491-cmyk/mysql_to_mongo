@@ -45,8 +45,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          // echarts-gl 2.x 仅官方支持 ECharts 5；与 echarts 同 chunk，避免 globe 注册错乱
-          'echarts': ['echarts', 'echarts-gl', 'vue-echarts'],
+          'echarts': ['echarts', 'vue-echarts'],
           'element-plus': ['element-plus'],
         }
       }

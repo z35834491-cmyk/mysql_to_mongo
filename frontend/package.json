@@ -15,7 +15,6 @@
     "@types/node": "^25.0.10",
     "axios": "^1.13.2",
     "echarts": "~5.5.1",
-    "echarts-gl": "^2.0.9",
     "element-plus": "^2.13.1",
     "monaco-editor": "^0.52.2",
     "pinia": "^3.0.4",
