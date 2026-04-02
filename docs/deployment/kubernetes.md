@@ -269,10 +269,16 @@ kubectl create clusterrolebinding shark-platform-kubeconfig-binding \
 ### 2.3 导出 token/CA/apiserver 并生成 kubeconfig
 
 ```bash
-TOKEN=$(kubectl get secret shark-platform-kubeconfig-token -n middleware-system -o jsonpath='{.data.token}')
+# 1. 提取并解码 token
+TOKEN=$(kubectl get secret shark-platform-kubeconfig-token -n middleware-system -o jsonpath='{.data.token}' | base64 --decode)
+
+# 2. 提取 CA（保持编码状态！）
 CA=$(kubectl get secret shark-platform-kubeconfig-token -n middleware-system -o jsonpath='{.data.ca\.crt}')
+
+# 3. 获取 API Server 地址
 APISERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 
+# 4. 生成 kubeconfig
 cat > shark-platform-kubeconfig.yaml <<EOF
 apiVersion: v1
 kind: Config
