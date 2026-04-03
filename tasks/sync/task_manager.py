@@ -4,7 +4,7 @@ import os
 
 from tasks.schemas import SyncTaskRequest
 from tasks.models import SyncTask
-from tasks.utils import save_task_config, delete_task_config
+from tasks.utils import save_task_config, delete_task_config, display_task_metrics
 from core.logging import log
 from .worker import SyncWorker
 from .turbo_runner import TurboPodRunner
@@ -150,7 +150,9 @@ class TaskManager:
                 res.append({
                     "task_id": t.task_id,
                     "status": t.status or "stopped",
-                    "metrics": t.state.get("metrics", {}),
+                    "metrics": display_task_metrics(
+                        t.state, int(t.turbo_shard_count or 1)
+                    ),
                     "config": {"mode": "turbo" if t.turbo_enabled else "normal"},
                     "turbo": turbo,
                 })
@@ -181,7 +183,9 @@ class TaskManager:
             return {
                 "task_id": t.task_id,
                 "status": t.status or "stopped",
-                "metrics": t.state.get("metrics", {}),
+                "metrics": display_task_metrics(
+                    t.state, int(t.turbo_shard_count or 1)
+                ),
                 "config": {"mode": "turbo" if t.turbo_enabled else "normal"},
                 "turbo": turbo,
             }

@@ -167,12 +167,18 @@ class SyncWorker:
     # -------------------------
     # basic helpers
     # -------------------------
-    def _maybe_save_state(self, log_file: str, log_pos: int):
+    def _maybe_save_state(self, log_file, log_pos):
         now = time.time()
         interval = max(1, int(self.cfg.state_save_interval_sec or 2))
         if now - self._last_state_save_ts >= interval:
-            if log_file and log_pos:
-                save_state(self.cfg.task_id, log_file, log_pos, self._metrics)
+            save_state(
+                self.cfg.task_id,
+                log_file,
+                log_pos,
+                self._metrics,
+                shard_total=self.shard_total,
+                shard_index=self.shard_index,
+            )
             self._last_state_save_ts = now
 
     def _maybe_progress_log(self, msg: str):
@@ -226,16 +232,19 @@ class SyncWorker:
         self._status = "running"
         try:
             self._auto_build_table_map_if_needed()
-            state = load_state(self.cfg.task_id)
+            state = load_state(
+                self.cfg.task_id, self.shard_total, self.shard_index
+            )
 
             # Sharded turbo workers are incremental-only to avoid duplicate full sync work.
             if self.shard_total > 1:
                 self._metrics["phase"] = "inc_sync"
                 log(self.cfg.task_id, f"Shard mode enabled shard={self.shard_index}/{self.shard_total}; skip full sync")
-                self.do_inc_sync_with_reconnect(
-                    self.cfg.binlog_filename or (state or {}).get("log_file"),
-                    self.cfg.binlog_position or (state or {}).get("log_pos"),
-                )
+                _bf = self.cfg.binlog_filename or (state or {}).get("log_file")
+                _bp = self.cfg.binlog_position
+                if _bp is None:
+                    _bp = (state or {}).get("log_pos")
+                self.do_inc_sync_with_reconnect(_bf, _bp)
                 return
 
             if not state or state.get("metrics", {}).get("phase") == "full_sync":
@@ -409,7 +418,7 @@ class SyncWorker:
 
                         self._metrics["processed_count"] = processed
                         self._maybe_progress_log(f"FullSync prog table={table} done={processed}")
-                        if start_log_file and start_log_pos:
+                        if start_log_file and start_log_pos is not None:
                             self._maybe_save_state(start_log_file, start_log_pos)
 
                     if ops:
@@ -430,9 +439,11 @@ class SyncWorker:
         backoff = float(self.cfg.inc_reconnect_backoff_base_sec or 1.0)
         backoff_max = float(self.cfg.inc_reconnect_backoff_max_sec or 30.0)
 
-        state = load_state(self.cfg.task_id) or {}
+        state = (
+            load_state(self.cfg.task_id, self.shard_total, self.shard_index) or {}
+        )
         cur_log_file = log_file or state.get("log_file")
-        cur_log_pos = log_pos or state.get("log_pos")
+        cur_log_pos = log_pos if log_pos is not None else state.get("log_pos")
 
         while not self.stop_event.is_set():
             try:
@@ -441,7 +452,10 @@ class SyncWorker:
             except MySQLOperationalError as e:
                 # Treat operational errors (connection lost) as retriable
                 retry += 1
-                state = load_state(self.cfg.task_id) or {}
+                state = (
+                    load_state(self.cfg.task_id, self.shard_total, self.shard_index)
+                    or {}
+                )
                 cur_log_file = state.get("log_file", cur_log_file)
                 cur_log_pos = state.get("log_pos", cur_log_pos)
                 log(self.cfg.task_id, f"MySQL OpErr. retry={retry} err={str(e)[:200]}")
@@ -460,7 +474,10 @@ class SyncWorker:
                     break
                 
                 retry += 1
-                state = load_state(self.cfg.task_id) or {}
+                state = (
+                    load_state(self.cfg.task_id, self.shard_total, self.shard_index)
+                    or {}
+                )
                 cur_log_file = state.get("log_file", cur_log_file)
                 cur_log_pos = state.get("log_pos", cur_log_pos)
                 log(self.cfg.task_id, f"IncSync crash. retry={retry} {type(e).__name__}: {str(e)[:200]}")
@@ -558,10 +575,6 @@ class SyncWorker:
 
                 # ---------------- Insert: base upsert ----------------
                 if isinstance(ev, WriteRowsEvent):
-                    try:
-                        self._metrics["inc_insert_count"] += max(1, len(getattr(ev, "rows", []) or []))
-                    except Exception:
-                        self._metrics["inc_insert_count"] += 1
                     for row in ev.rows:
                         data = row.get("values")
                         data = self.mysql_introspector.maybe_fix_row_unknown_cols(table, data)
@@ -570,6 +583,7 @@ class SyncWorker:
                         pk_val = self.mysql_introspector.extract_pk(table, data)
                         if not self._shard_match(pk_val):
                             continue
+                        self._metrics["inc_insert_count"] += 1
 
                         doc = self.converter.row_to_base_doc(data)
                         if self.cfg.use_pk_as_mongo_id:
@@ -583,10 +597,6 @@ class SyncWorker:
 
                 # ---------------- Update: new version doc ----------------
                 elif isinstance(ev, UpdateRowsEvent):
-                    try:
-                        self._metrics["update_count"] += max(1, len(getattr(ev, "rows", []) or []))
-                    except Exception:
-                        self._metrics["update_count"] += 1
                     for row in ev.rows:
                         data = row.get("after_values")
                         data = self.mysql_introspector.maybe_fix_row_unknown_cols(table, data)
@@ -599,6 +609,7 @@ class SyncWorker:
                             continue
                         if not self._shard_match(pk_val):
                             continue
+                        self._metrics["update_count"] += 1
 
                         base_id = pk_val  # use_pk_as_mongo_id 下 base _id=pk
                         if self.cfg.handle_updates_as_insert and not self.cfg.update_insert_new_doc:
@@ -631,10 +642,6 @@ class SyncWorker:
 
                 # ---------------- Delete: soft mark base doc only ----------------
                 elif isinstance(ev, DeleteRowsEvent) and self.cfg.handle_deletes:
-                    try:
-                        self._metrics["delete_count"] += max(1, len(getattr(ev, "rows", []) or []))
-                    except Exception:
-                        self._metrics["delete_count"] += 1
                     for row in ev.rows:
                         data = row.get("values")
                         data = self.mysql_introspector.maybe_fix_row_unknown_cols(table, data)
@@ -647,6 +654,7 @@ class SyncWorker:
                             continue
                         if not self._shard_match(pk_val):
                             continue
+                        self._metrics["delete_count"] += 1
 
                         if self.cfg.delete_append_new_doc:
                             vdoc = self.converter.row_to_delete_doc(data, pk_val=pk_val, base_id=pk_val)
