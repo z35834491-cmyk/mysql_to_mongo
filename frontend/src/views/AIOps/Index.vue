@@ -64,40 +64,20 @@
                 </div>
               </div>
 
-              <!-- Human-in-the-loop: paste command outputs -->
+              <!-- Agent trace (ReAct + tools) -->
               <div
-                v-if="currentDetail.status === 'awaiting_evidence' && (currentDetail.evidence_checklist?.length || 0) > 0"
-                class="evidence-box"
+                v-if="(currentDetail.agent_trace?.length || 0) > 0"
+                class="trace-box"
               >
-                <h3 class="section-title"><el-icon><Monitor /></el-icon> 人工排查证据（平台不执行命令）</h3>
-                <p class="evidence-intro">
-                  请在告警关联节点或集群上执行下列命令，将终端输出粘贴到对应文本框，提交后由模型结合 Prometheus 与上下文生成结论。
+                <h3 class="section-title"><el-icon><Monitor /></el-icon> Agent 排查轨迹</h3>
+                <p class="trace-intro">
+                  模型多轮调用只读工具（日志 / Prometheus / K8s）的过程摘要；完整 Observation 见下方 JSON。
                 </p>
-                <div
-                  v-for="step in currentDetail.evidence_checklist"
-                  :key="step.id"
-                  class="evidence-step"
-                >
-                  <div class="step-head">
-                    <span class="step-title">{{ step.title }}</span>
-                    <span class="step-purpose">{{ step.purpose }}</span>
-                  </div>
-                  <pre class="step-cmd">{{ step.command }}</pre>
-                  <p v-if="step.capture_hint" class="capture-hint">{{ step.capture_hint }}</p>
-                  <el-input
-                    v-model="evidenceDraft[step.id]"
-                    type="textarea"
-                    :rows="5"
-                    placeholder="在此粘贴该命令的完整输出…"
-                  />
-                </div>
-                <el-button
-                  type="primary"
-                  :loading="submittingEvidence"
-                  @click="submitEvidence"
-                >
-                  提交证据并生成分析
-                </el-button>
+                <el-collapse>
+                  <el-collapse-item title="展开查看 agent_trace" name="trace">
+                    <pre class="trace-json">{{ JSON.stringify(currentDetail.agent_trace, null, 2) }}</pre>
+                  </el-collapse-item>
+                </el-collapse>
               </div>
 
               <!-- AI Analysis -->
@@ -152,7 +132,7 @@
                 <span>{{ analyzingMessage }}</span>
               </div>
               <div v-else-if="currentDetail.status === 'awaiting_evidence'" class="no-report mild">
-                提交上方粘贴的证据后，将生成完整分析报告。
+                状态 awaiting_evidence 为旧数据；新告警由 Agent 自动分析，无需粘贴命令输出。
               </div>
               <div v-else class="no-report">
                 暂无分析报告
@@ -211,15 +191,18 @@
         <el-form-item label="启用 AI">
           <el-switch v-model="configForm.enable_ai_analysis" />
         </el-form-item>
-        <el-form-item label="证据先行流程">
-          <el-switch v-model="configForm.evidence_first_workflow" />
-          <span class="form-hint">关闭则恢复单次调用模型的旧流程</span>
+        <el-form-item label="Agent 最大轮次">
+          <el-input-number v-model="configForm.max_agent_iterations" :min="1" :max="24" />
         </el-form-item>
-        <el-form-item label="Prompt Template">
-          <el-input v-model="configForm.prompt_template" type="textarea" :rows="6" />
+        <el-form-item label="单事件工具上限">
+          <el-input-number v-model="configForm.max_tool_calls_per_incident" :min="1" :max="80" />
         </el-form-item>
-        <el-form-item label="最终分析 Prompt">
-          <el-input v-model="configForm.final_prompt_template" type="textarea" :rows="8" placeholder="留空使用内置模板；占位符含 {user_evidence} 等" />
+        <el-form-item label="Prompt 模板（遗留）">
+          <el-input v-model="configForm.prompt_template" type="textarea" :rows="4" />
+          <span class="form-hint">SRE Agent 使用内置系统提示；此项仅兼容旧配置存储</span>
+        </el-form-item>
+        <el-form-item label="最终 Prompt（遗留）">
+          <el-input v-model="configForm.final_prompt_template" type="textarea" :rows="4" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -247,9 +230,6 @@ const currentDetail = ref<any>(null)
 const chartRef = ref<HTMLElement>()
 let chartInstance: echarts.ECharts | null = null
 
-const evidenceDraft = reactive<Record<string, string>>({})
-const submittingEvidence = ref(false)
-
 const chartDataKeys = computed(() => {
   const m =
     currentDetail.value?.chart_metrics ||
@@ -258,7 +238,7 @@ const chartDataKeys = computed(() => {
   return Object.keys(m || {})
 })
 
-const analyzingMessage = computed(() => '正在拉取上下文或生成结论，请稍候…')
+const analyzingMessage = computed(() => 'SRE Agent 正在调用工具（日志 / Prom / K8s）并生成结论，请稍候…')
 
 // Config State
 const configVisible = ref(false)
@@ -272,7 +252,8 @@ const configForm = reactive({
   prompt_template: '',
   final_prompt_template: '',
   enable_ai_analysis: true,
-  evidence_first_workflow: true,
+  max_agent_iterations: 12,
+  max_tool_calls_per_incident: 36,
 })
 
 const openConfig = async () => {
@@ -305,14 +286,6 @@ const fetchIncidents = async () => {
   }
 }
 
-function initEvidenceDraft(res: any) {
-  Object.keys(evidenceDraft).forEach((k) => delete evidenceDraft[k])
-  const fromUser = res.user_evidence || {}
-  for (const s of res.evidence_checklist || []) {
-    evidenceDraft[s.id] = fromUser[s.id] != null ? String(fromUser[s.id]) : ''
-  }
-}
-
 const selectIncident = async (inc: any) => {
   selectedId.value = inc.id
   detailLoading.value = true
@@ -320,7 +293,6 @@ const selectIncident = async (inc: any) => {
   try {
     const res = await aiOpsApi.getIncidentDetail(inc.id) as any
     currentDetail.value = res
-    initEvidenceDraft(res)
     const metrics = res.chart_metrics || res.report?.related_metrics
     if (metrics && Object.keys(metrics).length) {
       nextTick(() => renderChart(metrics))
@@ -330,25 +302,10 @@ const selectIncident = async (inc: any) => {
   }
 }
 
-const submitEvidence = async () => {
-  if (!selectedId.value) return
-  submittingEvidence.value = true
-  try {
-    await aiOpsApi.submitIncidentEvidence(selectedId.value, { ...evidenceDraft })
-    ElMessage.success('已提交，正在生成分析')
-    await selectIncident({ id: selectedId.value })
-    await fetchIncidents()
-  } catch {
-    ElMessage.error('提交失败')
-  } finally {
-    submittingEvidence.value = false
-  }
-}
-
 const getStatusType = (status: string) => {
   if (status === 'analyzed') return 'success'
   if (status === 'analyzing') return 'warning'
-  if (status === 'awaiting_evidence') return 'info'
+  if (status === 'awaiting_evidence') return 'info' // legacy rows only
   if (status === 'resolved') return 'info'
   return 'danger'
 }
@@ -619,56 +576,30 @@ onUnmounted(() => {
 
 .empty-detail { height: 100%; }
 
-.evidence-box {
+.trace-box {
   margin-bottom: 24px;
   padding: 20px;
-  background: #fffbeb;
-  border: 1px solid #fcd34d;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
 }
-.evidence-intro {
+.trace-intro {
   font-size: 14px;
-  color: #78350f;
+  color: #475569;
   line-height: 1.6;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
 }
-.evidence-step {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px dashed #fde68a;
-}
-.evidence-step:last-of-type {
-  border-bottom: none;
-}
-.step-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-.step-title {
-  font-weight: 700;
-  color: #92400e;
-}
-.step-purpose {
-  font-size: 13px;
-  color: #a16207;
-}
-.step-cmd {
-  margin: 0 0 8px;
+.trace-json {
+  margin: 0;
   padding: 12px;
   background: #1e293b;
   color: #e2e8f0;
   border-radius: 8px;
-  font-size: 12px;
-  overflow-x: auto;
+  font-size: 11px;
+  max-height: 420px;
+  overflow: auto;
   white-space: pre-wrap;
-  word-break: break-all;
-}
-.capture-hint {
-  font-size: 12px;
-  color: #78716c;
-  margin: 0 0 8px;
+  word-break: break-word;
 }
 .no-report.mild {
   color: #64748b;

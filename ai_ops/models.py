@@ -38,7 +38,11 @@ class Incident(models.Model):
     )
     prefetched_metrics = models.JSONField(
         default=dict,
-        help_text="Prometheus snapshot from phase-1 for charts before final report.",
+        help_text="Legacy: optional Prometheus snapshot; agent may leave empty.",
+    )
+    agent_trace = models.JSONField(
+        default=list,
+        help_text="SRE Agent iterations, tool calls and observations for UI/debug.",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -125,8 +129,16 @@ class AIConfig(models.Model):
     is_active = models.BooleanField(default=True)
     enable_ai_analysis = models.BooleanField(default=True, help_text="Switch to enable/disable AI analysis. If disabled, uses Prometheus metrics only.")
     evidence_first_workflow = models.BooleanField(
-        default=True,
-        help_text="Phase 1: metrics + checklist only; final LLM after user pastes command outputs.",
+        default=False,
+        help_text="Deprecated: kept for DB compatibility; agent flow ignores this.",
+    )
+    max_agent_iterations = models.IntegerField(
+        default=12,
+        help_text="Max ReAct LLM rounds per incident (cap 24).",
+    )
+    max_tool_calls_per_incident = models.IntegerField(
+        default=36,
+        help_text="Max tool invocations per incident (cap 80).",
     )
     updated_at = models.DateTimeField(auto_now=True)
 

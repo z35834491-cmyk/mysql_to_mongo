@@ -39,7 +39,8 @@ def ai_config(request):
                 "prompt_template": config.prompt_template,
                 "final_prompt_template": config.final_prompt_template,
                 "enable_ai_analysis": config.enable_ai_analysis,
-                "evidence_first_workflow": config.evidence_first_workflow,
+                "max_agent_iterations": config.max_agent_iterations,
+                "max_tool_calls_per_incident": config.max_tool_calls_per_incident,
             }
         )
     config = AIConfig.get_active_config()
@@ -56,8 +57,12 @@ def ai_config(request):
     )
     if "enable_ai_analysis" in data:
         config.enable_ai_analysis = bool(data.get("enable_ai_analysis"))
-    if "evidence_first_workflow" in data:
-        config.evidence_first_workflow = bool(data.get("evidence_first_workflow"))
+    if "max_agent_iterations" in data:
+        config.max_agent_iterations = int(data.get("max_agent_iterations", 12))
+    if "max_tool_calls_per_incident" in data:
+        config.max_tool_calls_per_incident = int(
+            data.get("max_tool_calls_per_incident", 36)
+        )
     config.save()
     return Response({"msg": "Configuration updated"})
 
@@ -82,7 +87,7 @@ def prometheus_webhook(request):
             if status == "resolved":
                 Incident.objects.filter(
                     fingerprint=fingerprint,
-                    status__in=["open", "analyzing", "analyzed", "awaiting_evidence"],
+                    status__in=["open", "analyzing", "analyzed"],
                 ).update(status="resolved", resolved_at=timezone.now())
                 logger.info(f"Alert resolved: {alert_name} ({fingerprint})")
                 continue
@@ -201,11 +206,10 @@ def incident_detail(request, pk):
                 "status": incident.status,
                 "description": incident.description,
                 "raw_alert_data": incident.raw_alert_data,
-                "evidence_checklist": incident.evidence_checklist,
-                "user_evidence": incident.user_evidence,
                 "prefetched_metrics": incident.prefetched_metrics,
                 "chart_metrics": chart_metrics,
                 "report": report,
+                "agent_trace": getattr(incident, "agent_trace", None) or [],
             }
         )
     except Incident.DoesNotExist:
@@ -215,31 +219,9 @@ def incident_detail(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def submit_incident_evidence(request, pk):
-    try:
-        incident = Incident.objects.get(pk=pk)
-    except Incident.DoesNotExist:
-        return Response({"error": "Incident not found"}, status=404)
-
-    if incident.status != "awaiting_evidence":
-        return Response(
-            {"error": "Incident is not waiting for evidence"},
-            status=400,
-        )
-
-    evidence = request.data.get("evidence")
-    if not isinstance(evidence, dict):
-        return Response({"error": "evidence must be a JSON object"}, status=400)
-
-    non_empty = {k: v for k, v in evidence.items() if str(v or "").strip()}
-    if not non_empty:
-        return Response({"error": "At least one non-empty evidence field is required"}, status=400)
-
-    def run_finalize(inc_id, ev):
-        try:
-            inc = Incident.objects.get(pk=inc_id)
-            FaultAnalyzer(inc).finalize_with_user_evidence(ev)
-        except Exception as e:
-            logger.error(f"finalize_with_user_evidence failed: {e}", exc_info=True)
-
-    threading.Thread(target=run_finalize, args=(incident.id, non_empty)).start()
-    return Response({"msg": "Evidence submitted; analysis started"})
+    return Response(
+        {
+            "error": "人工粘贴证据流程已移除。告警由 SRE Agent（工具调用）自动分析；请查看 agent_trace 与报告。",
+        },
+        status=410,
+    )
