@@ -3,7 +3,9 @@
     <div class="page-header">
       <div class="header-info">
         <h2 class="page-title">智能故障分析</h2>
-        <p class="page-subtitle">基于大模型的智能故障诊断与根因分析</p>
+        <p class="page-subtitle">
+          基于大模型与工具调用的根因分析。列表数据来自 Alertmanager Webhook（<code>/api/ai_ops/webhook/prometheus</code>），与 Traffic 接入无关。
+        </p>
       </div>
       <div class="header-actions">
         <el-button @click="openConfig" :icon="Setting">配置</el-button>
@@ -33,7 +35,8 @@
                 <div class="inc-title">{{ inc.alert_name }}</div>
                 <div class="inc-meta">
                   <span :class="['severity-dot', inc.severity]"></span>
-                  {{ inc.severity.toUpperCase() }} • {{ new Date(inc.started_at).toLocaleString() }}
+                  {{ inc.severity.toUpperCase() }} • {{ listTimeLabel(inc) }}
+                  <span v-if="(inc.occurrence_count || 0) > 1" class="occ-badge">×{{ inc.occurrence_count }}</span>
                 </div>
               </div>
               <el-icon class="arrow-icon"><ArrowRight /></el-icon>
@@ -239,6 +242,12 @@ const chartDataKeys = computed(() => {
 })
 
 const analyzingMessage = computed(() => 'SRE Agent 正在调用工具（日志 / Prom / K8s）并生成结论，请稍候…')
+
+function listTimeLabel(inc: { last_received_at?: string; started_at?: string }) {
+  const raw = inc.last_received_at || inc.started_at
+  if (!raw) return '—'
+  return new Date(raw).toLocaleString()
+}
 
 // Config State
 const configVisible = ref(false)
@@ -456,7 +465,8 @@ onUnmounted(() => {
 
 .inc-info { flex: 1; }
 .inc-title { font-weight: 600; color: #334155; margin-bottom: 4px; }
-.inc-meta { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
+.inc-meta { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.occ-badge { font-size: 10px; color: #64748b; margin-left: 4px; }
 
 .severity-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .severity-dot.critical { background: #ef4444; box-shadow: 0 0 4px #ef4444; }

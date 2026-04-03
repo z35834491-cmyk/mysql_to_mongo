@@ -3,7 +3,11 @@ import json
 import logging
 import threading
 
+from django.db.models import DateTimeField
+from django.db.models.functions import Coalesce
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -12,6 +16,19 @@ from .models import AIConfig, Incident
 from .services.analyzer import FaultAnalyzer
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_starts_at(alert: dict):
+    raw = alert.get("startsAt")
+    if not raw:
+        return None
+    s = str(raw).replace("Z", "+00:00")
+    dt = parse_datetime(s)
+    if dt is None:
+        return None
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt)
+    return dt
 
 
 def get_alert_fingerprint(alert):
@@ -95,6 +112,11 @@ def prometheus_webhook(request):
             if status != "firing":
                 continue
 
+            now = timezone.now()
+            starts_at = _parse_starts_at(alert) or now
+            ann = alert.get("annotations", {}) or {}
+            desc = ann.get("description", "") if isinstance(ann, dict) else ""
+
             incident = Incident.objects.filter(fingerprint=fingerprint).exclude(
                 status="resolved"
             ).first()
@@ -103,12 +125,27 @@ def prometheus_webhook(request):
 
             if incident:
                 incident.occurrence_count += 1
+                incident.last_received_at = now
+                incident.started_at = starts_at
+                incident.raw_alert_data = alert
+                if desc:
+                    incident.description = desc
                 if incident.last_analyzed_at:
-                    time_since_analysis = timezone.now() - incident.last_analyzed_at
+                    time_since_analysis = now - incident.last_analyzed_at
                     if time_since_analysis.total_seconds() > 3600:
                         should_analyze = True
                 else:
                     should_analyze = True
+                if (
+                    not should_analyze
+                    and incident.status == "analyzed"
+                ):
+                    try:
+                        r = incident.report
+                        if starts_at > r.created_at:
+                            should_analyze = True
+                    except ObjectDoesNotExist:
+                        pass
                 incident.save()
                 logger.info(
                     f"Alert duplicated: {alert_name} ({fingerprint}), count: {incident.occurrence_count}"
@@ -117,17 +154,18 @@ def prometheus_webhook(request):
                 incident = Incident.objects.create(
                     alert_name=alert_name,
                     severity=severity,
-                    started_at=alert.get("startsAt", timezone.now()),
-                    description=alert.get("annotations", {}).get("description", ""),
+                    started_at=starts_at,
+                    description=desc,
                     raw_alert_data=alert,
                     fingerprint=fingerprint,
                     occurrence_count=1,
+                    last_received_at=now,
                 )
                 should_analyze = True
                 logger.info(f"New incident created: {alert_name} ({fingerprint})")
 
             if should_analyze:
-                incident.last_analyzed_at = timezone.now()
+                incident.last_analyzed_at = now
                 incident.save(update_fields=["last_analyzed_at"])
 
                 def run_analysis(inc):
@@ -150,7 +188,18 @@ def incident_list(request):
         status="resolved", resolved_at__isnull=False, resolved_at__lt=cutoff
     ).delete()
 
-    incidents = Incident.objects.exclude(status="resolved").order_by("-created_at")
+    incidents = (
+        Incident.objects.exclude(status="resolved")
+        .annotate(
+            _activity=Coalesce(
+                "last_received_at",
+                "last_analyzed_at",
+                "created_at",
+                output_field=DateTimeField(),
+            )
+        )
+        .order_by("-_activity", "-id")
+    )
     data = []
     for inc in incidents:
         data.append(
@@ -161,6 +210,8 @@ def incident_list(request):
                 "status": inc.status,
                 "started_at": inc.started_at,
                 "created_at": inc.created_at,
+                "last_received_at": getattr(inc, "last_received_at", None),
+                "occurrence_count": inc.occurrence_count,
             }
         )
     return Response({"incidents": data})
@@ -210,6 +261,8 @@ def incident_detail(request, pk):
                 "chart_metrics": chart_metrics,
                 "report": report,
                 "agent_trace": getattr(incident, "agent_trace", None) or [],
+                "last_received_at": getattr(incident, "last_received_at", None),
+                "occurrence_count": incident.occurrence_count,
             }
         )
     except Incident.DoesNotExist:

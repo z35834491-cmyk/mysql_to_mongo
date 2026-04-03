@@ -23,7 +23,9 @@ if not User.objects.filter(username='admin').exists():
 # Start Gunicorn (Backend) on port 8001
 # 1 worker is REQUIRED because TaskManager uses in-memory state (threads).
 echo "Starting Gunicorn on port 8001..."
-gunicorn shark_platform.wsgi:application --bind 127.0.0.1:8001 --workers 1 --timeout 600 --threads 4 --access-logfile - --error-logfile - --capture-output &
+gunicorn shark_platform.wsgi:application --bind 127.0.0.1:8001 --workers 1 --timeout 600 --threads 4 \
+  --logger-class shark_platform.gunicorn_logger.FilteredAccessLogger \
+  --access-logfile - --error-logfile - --capture-output &
 
 # Start Nginx (Frontend & Proxy)
 echo "Starting Nginx on port 8000..."

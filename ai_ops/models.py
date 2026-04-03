@@ -27,6 +27,12 @@ class Incident(models.Model):
     fingerprint = models.CharField(max_length=255, db_index=True, help_text="Unique hash of the alert labels", default='')
     occurrence_count = models.IntegerField(default=1)
     last_analyzed_at = models.DateTimeField(null=True, blank=True)
+    last_received_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="最近一次 Alertmanager 推送 firing 的时间（用于列表排序，与 created_at 解耦）",
+    )
 
     evidence_checklist = models.JSONField(
         default=list,
