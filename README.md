@@ -459,7 +459,7 @@ kubectl exec -n <namespace> deploy/shark-platform -- \
 ## 项目结构
 
 ```text
-mysql_to_mongo/
+shark-Platform/
 ├── ai_ops/                  # AIOps
 ├── api/                     # 登录、用户、角色、系统统计、health
 ├── core/                    # 通用工具
